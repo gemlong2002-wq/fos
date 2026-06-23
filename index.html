@@ -1,0 +1,2148 @@
+<!DOCTYPE html>
+<html lang="zh-TW" translate="no">
+<head>
+  <meta charset="UTF-8">
+  <meta name="google" content="notranslate">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Unified Terminal | Amber Asset + FOS Boss v12.2</title>
+
+  <!-- ===== 統一 CDN（單一份，避免重複載入）===== -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.6/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700;800&display=swap" rel="stylesheet">
+
+  <script>
+    // 統一 Tailwind 設定（Boss 的超集：darkMode class + fontFamily + animations）
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: { mono: ['Consolas', 'Monaco', 'Courier New', 'monospace'], sans: ['Inter', 'system-ui', 'sans-serif'] },
+          animation: {
+            'fade-in-up': 'fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+            'float': 'float 6s ease-in-out infinite',
+          },
+          keyframes: {
+            fadeInUp: { '0%': { opacity: '0', transform: 'translateY(15px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
+            float: { '0%, 100%': { transform: 'translateY(0)' }, '50%': { transform: 'translateY(-5px)' } }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* ============ 共用基底 ============ */
+    body { font-family: 'Inter', sans-serif; background-color: #f8fafc; color: #0f172a; min-height: 100vh; margin: 0; overflow-x: hidden; transition: background-color 0.4s ease, color 0.4s ease; }
+    html.dark body { background-color: #020617; }
+
+    input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    ::-webkit-scrollbar { width: 12px; height: 12px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; border: 3px solid #f8fafc; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    .dark ::-webkit-scrollbar-thumb { background: #475569; border: 3px solid #0f172a; }
+    .dark ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+
+    /* ============ AppShell 上方 Tab 列 ============ */
+    .app-tabbar { position: sticky; top: 0; z-index: 300; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); background: rgba(255,255,255,0.8); border-bottom: 1px solid rgba(226,232,240,0.8); transition: all 0.3s ease; }
+    html.dark .app-tabbar { background: rgba(2,6,23,0.8); border-bottom-color: rgba(51,65,85,0.8); }
+    .app-tab-btn { transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); cursor: pointer; }
+    .app-tab-btn:hover { transform: translateY(-2px); }
+
+    /* ============ Boss (FOS) 樣式 — 全 class-based，無外洩 ============ */
+    .clean-grid-bg {
+      background-color: #ffffff;
+      background-image:
+        linear-gradient(to right, #e2e8f0 1px, transparent 1px),
+        linear-gradient(to bottom, #e2e8f0 1px, transparent 1px);
+      background-size: 40px 40px;
+    }
+    .dark .clean-grid-bg {
+      background-color: #020617;
+      background-image:
+        linear-gradient(to right, #1e293b 1px, transparent 1px),
+        linear-gradient(to bottom, #1e293b 1px, transparent 1px);
+    }
+    .tech-panel {
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(226, 232, 240, 0.8);
+      box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.03);
+      border-radius: 2.5rem;
+      transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .tech-panel:hover {
+      transform: translateY(-8px) scale(1.02);
+      box-shadow: 0 20px 40px -5px rgba(0, 0, 0, 0.08), 0 10px 20px -5px rgba(14, 165, 233, 0.05);
+      border-color: rgba(186, 230, 253, 0.5); z-index: 50;
+    }
+    .dark .tech-panel {
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid rgba(51, 65, 85, 0.8);
+      box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.3);
+    }
+    .dark .tech-panel:hover {
+      box-shadow: 0 20px 40px -5px rgba(0, 0, 0, 0.5), 0 10px 20px -5px rgba(14, 165, 233, 0.15);
+      border-color: rgba(56, 189, 248, 0.4);
+    }
+    .scale-card .data-text { transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); display: inline-block; }
+    .scale-card:hover .data-text { transform: scale(1.15); text-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+    .dark .scale-card:hover .data-text { text-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+    .scale-card:hover .data-text-massive { transform: scale(1.25); }
+    .tech-input {
+      background: #f8fafc; border: 2px solid #e2e8f0; border-radius: 1.5rem;
+      font-size: 1.5rem; padding: 1rem 1.5rem; color: #0f172a; font-weight: 800;
+      transition: all 0.2s ease; outline: none;
+    }
+    .tech-input:focus { background: #ffffff; border-color: #38bdf8; box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.15); }
+    .dark .tech-input { background: #0f172a; border-color: #334155; color: #f8fafc; }
+    .dark .tech-input:focus { background: #020617; border-color: #38bdf8; box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.25); }
+    .tech-btn {
+      border-radius: 1.5rem; transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+      text-transform: uppercase; font-weight: 800; cursor: pointer;
+    }
+    .tech-btn:hover { transform: translateY(-4px); box-shadow: 0 10px 20px -5px rgba(0,0,0,0.15); }
+    .dark .tech-btn:hover { box-shadow: 0 10px 20px -5px rgba(0,0,0,0.4); }
+    .tech-btn:active { transform: translateY(0); box-shadow: none; }
+    .tech-toggle { position: relative; display: inline-block; width: 70px; height: 36px; flex-shrink: 0; }
+    .tech-toggle input { opacity: 0; width: 0; height: 0; }
+    .tech-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #e2e8f0; border-radius: 36px; transition: .3s; }
+    .dark .tech-slider { background-color: #334155; }
+    .tech-slider:before { position: absolute; content: ""; height: 28px; width: 28px; left: 4px; bottom: 4px; background-color: #fff; border-radius: 50%; transition: .3s cubic-bezier(0.68, -0.55, 0.265, 1.55); box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    input:checked + .tech-slider { background-color: #8b5cf6; }
+    input:checked + .tech-slider:before { transform: translateX(34px); }
+    .action-hover-effect { transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); cursor: crosshair; }
+    .action-hover-effect:hover {
+      transform: scale(1.08);
+      color: #b8860b !important;
+      border-color: rgba(184, 134, 11, 0.5) !important;
+      background-color: rgba(184, 134, 11, 0.05) !important;
+      box-shadow: 0 10px 25px -5px rgba(184, 134, 11, 0.2);
+    }
+    .dark .action-hover-effect:hover {
+      color: #d4af37 !important;
+      border-color: rgba(212, 175, 55, 0.5) !important;
+      background-color: rgba(212, 175, 55, 0.05) !important;
+      box-shadow: 0 10px 25px -5px rgba(212, 175, 55, 0.2);
+    }
+
+    /* ============ Amber 樣式 — 裸元素選擇器一律收進 .amber-scope，避免外洩 ============ */
+    html.dark .amber-scope { color: #f59e0b; }
+    .amber-scope .font-mono { font-family: 'JetBrains Mono', monospace; }
+
+    .cyber-grid { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background-image: linear-gradient(rgba(15, 23, 42, 0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(15, 23, 42, 0.05) 1px, transparent 1px); background-size: 40px 40px; z-index: -1; pointer-events: none; transition: all 0.4s ease; }
+    html.dark .cyber-grid { background-image: linear-gradient(rgba(245, 158, 11, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(245, 158, 11, 0.03) 1px, transparent 1px); }
+    .cyber-grid::after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.2) 0%, #f8fafc 80%); transition: all 0.4s ease; }
+    html.dark .cyber-grid::after { background: radial-gradient(circle at 50% 0%, rgba(30, 41, 59, 0.8) 0%, #020617 70%); }
+
+    .glass-card { background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(20px); border: 1px solid rgba(15, 23, 42, 0.1); box-shadow: 0 10px 40px -10px rgba(15, 23, 42, 0.1); transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+    html.dark .glass-card { background: rgba(15, 23, 42, 0.6); border-color: rgba(245, 158, 11, 0.15); box-shadow: 0 10px 30px -10px rgba(0,0,0,0.8); }
+    .glass-card:hover { transform: translateY(-8px) scale(1.01); box-shadow: 0 25px 50px -12px rgba(14, 165, 233, 0.25), 0 0 20px rgba(14, 165, 233, 0.1); border-color: rgba(14, 165, 233, 0.4); z-index: 10; }
+    html.dark .glass-card:hover { box-shadow: 0 25px 50px -12px rgba(245, 158, 11, 0.3), 0 0 20px rgba(245, 158, 11, 0.15); border-color: rgba(245, 158, 11, 0.5); }
+
+    .holo-card { position: relative; overflow: visible; transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+    .holo-card:hover { transform: translateY(-8px) scale(1.03); box-shadow: 0 25px 50px -15px rgba(14, 165, 233, 0.3), 0 0 25px rgba(14, 165, 233, 0.15); border-color: rgba(14, 165, 233, 0.5); z-index: 20; }
+    html.dark .holo-card:hover { box-shadow: 0 25px 50px -15px rgba(245, 158, 11, 0.4), 0 0 25px rgba(245, 158, 11, 0.2); border-color: rgba(245, 158, 11, 0.6); }
+    .holo-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: radial-gradient(600px circle at var(--mouse-x) var(--mouse-y), rgba(14, 165, 233, 0.05), transparent 40%); z-index: 1; pointer-events: none; opacity: 0; transition: opacity 0.3s ease; }
+    html.dark .holo-card::before { background: radial-gradient(600px circle at var(--mouse-x) var(--mouse-y), rgba(245, 158, 11, 0.08), transparent 40%); }
+    .holo-card:hover::before { opacity: 1; }
+
+    .vibe-hover-text { display: inline-block; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+    .vibe-hover-text:hover { transform: scale(1.05) translateY(-3px); text-shadow: 0 10px 20px rgba(14, 165, 233, 0.4), 0 0 10px rgba(14, 165, 233, 0.2); color: #0ea5e9; cursor: crosshair; }
+    html.dark .vibe-hover-text:hover { text-shadow: 0 10px 20px rgba(245, 158, 11, 0.5), 0 0 10px rgba(245, 158, 11, 0.3); color: #fbbf24; }
+
+    @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+    .animate-in { animation: slideUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+
+    .glass-text-premium { background: linear-gradient(180deg, #0f172a 0%, #334155 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; filter: drop-shadow(0px 4px 6px rgba(15, 23, 42, 0.1)); transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); display: inline-block; }
+    html.dark .glass-text-premium { background: linear-gradient(180deg, #fbbf24 0%, rgba(245, 158, 11, 0.6) 100%); -webkit-background-clip: text; filter: drop-shadow(0px 4px 12px rgba(245, 158, 11, 0.25)); }
+    .glass-text-premium:hover { filter: drop-shadow(0 15px 20px rgba(14, 165, 233, 0.4)) drop-shadow(0 0 10px rgba(14,165,233,0.2)); transform: scale(1.08) translateY(-4px); background: linear-gradient(180deg, #0ea5e9 0%, #0284c7 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    html.dark .glass-text-premium:hover { filter: drop-shadow(0 0 15px rgba(245, 158, 11, 0.5)) drop-shadow(2px 2px 0px rgba(245, 158, 11, 0.8)); background: linear-gradient(180deg, #fcd34d 0%, #f59e0b 100%); -webkit-background-clip: text; }
+
+    .odometer-digit-container { display: inline-block; position: relative; width: 36px; height: 54px; flex-shrink: 0; background: #ffffff; border: 2px solid rgba(15, 23, 42, 0.1); border-radius: 8px; margin: 0 4px; overflow: hidden; box-shadow: inset 0 2px 4px rgba(0,0,0,0.05), 0 4px 6px -1px rgba(0,0,0,0.05); transition: all 0.3s; }
+    html.dark .odometer-digit-container { background: #0f172a; border-color: rgba(245, 158, 11, 0.4); box-shadow: 0 4px 8px -2px rgba(0, 0, 0, 0.6); }
+    .odometer-digit-container:hover { border-color: rgba(14, 165, 233, 0.5); box-shadow: 0 0 15px rgba(14, 165, 233, 0.3); transform: translateY(-2px); }
+    html.dark .odometer-digit-container:hover { border-color: rgba(245, 158, 11, 0.8); box-shadow: 0 0 15px rgba(245, 158, 11, 0.4); }
+    .odometer-track { position: absolute; top: 0; left: 0; width: 100%; will-change: transform; }
+    .odometer-num { height: 54px; display: flex; align-items: center; justify-content: center; font-family: 'JetBrains Mono', monospace; font-size: 32px; font-weight: 800; color: #0f172a; line-height: 54px; }
+    html.dark .odometer-num { color: #f59e0b; }
+
+    .neon-bar { animation: neon-pulse 2s infinite; }
+    @keyframes neon-pulse { 0%, 100% { box-shadow: 0 0 10px rgba(14, 165, 233, 0.2), 0 0 20px rgba(14, 165, 233, 0.1); } 50% { box-shadow: 0 0 20px rgba(14, 165, 233, 0.4), 0 0 40px rgba(14, 165, 233, 0.2); } }
+    html.dark .neon-bar { animation: neon-pulse-dark 2s infinite; }
+    @keyframes neon-pulse-dark { 0%, 100% { box-shadow: 0 0 10px rgba(245, 158, 11, 0.2), 0 0 20px rgba(245, 158, 11, 0.1); } 50% { box-shadow: 0 0 20px rgba(245, 158, 11, 0.4), 0 0 40px rgba(245, 158, 11, 0.2); } }
+
+    .btn-glitch { position: relative; overflow: hidden; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+    .btn-glitch:hover { transform: translateY(-4px) scale(1.02); box-shadow: 0 15px 25px -5px rgba(15, 23, 42, 0.4); }
+    html.dark .btn-glitch:hover { box-shadow: 0 15px 25px -5px rgba(245, 158, 11, 0.4); }
+
+    .border-beam-container { position: relative; border-radius: 0.75rem; overflow: hidden; background: #e2e8f0; transition: all 0.3s; }
+    html.dark .border-beam-container { background: #0f111a; }
+    .border-beam-container:hover { box-shadow: 0 10px 30px rgba(14, 165, 233, 0.15); transform: translateY(-2px); }
+    html.dark .border-beam-container:hover { box-shadow: 0 10px 30px rgba(245, 158, 11, 0.15); }
+    .border-beam-container::before { content: ''; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; background: conic-gradient(from 0deg, transparent 65%, #cbd5e1 75%, #94a3b8 100%); animation: rotate 4s linear infinite; opacity: 0.8; }
+    html.dark .border-beam-container::before { background: conic-gradient(from 0deg, transparent 65%, #78350f 75%, #d97706 100%); }
+    .border-beam-content { position: relative; margin: 2px; border-radius: calc(0.75rem - 2px); background: #ffffff; height: calc(100% - 4px); }
+    html.dark .border-beam-content { background: #0a0c10; }
+    @keyframes rotate { 100% { transform: rotate(360deg); } }
+
+    .cyber-tag-up { color: #059669; border: 2px solid rgba(5, 150, 105, 0.2); background: rgba(5, 150, 105, 0.05); }
+    html.dark .cyber-tag-up { color: #f59e0b; border-color: rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.05); box-shadow: 0 0 12px rgba(245, 158, 11, 0.2); }
+    .cyber-tag-down { color: #e11d48; border: 2px solid rgba(225, 29, 72, 0.2); background: rgba(225, 29, 72, 0.05); }
+    html.dark .cyber-tag-down { color: #f43f5e; border-color: rgba(244, 63, 94, 0.4); background: rgba(244, 63, 94, 0.05); box-shadow: 0 0 12px rgba(244, 63, 94, 0.2); }
+
+    /* Amber 裸 input/select → 收進 .amber-scope */
+    .amber-scope input { background: #ffffff; border: 2px solid #e2e8f0; color: #0f172a; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); font-weight: 700; }
+    html.dark .amber-scope input { background: rgba(0,0,0,0.4); border-color: rgba(245, 158, 11, 0.3); color: #f59e0b; }
+    .amber-scope input:focus { outline: none; border-color: #0ea5e9; background: #ffffff; box-shadow: 0 10px 20px rgba(14, 165, 233, 0.15); transform: translateY(-2px); }
+    html.dark .amber-scope input:focus { border-color: #fbbf24; background: rgba(0,0,0,0.7); box-shadow: 0 0 20px rgba(245, 158, 11, 0.3); }
+    .amber-scope select { background-image: none; background: #ffffff; border: 2px solid #e2e8f0; color: #0f172a; font-weight: 700; }
+    html.dark .amber-scope select { background: rgba(0,0,0,0.4); border-color: rgba(245, 158, 11, 0.3); color: #f59e0b; }
+    .amber-scope select option { background-color: #ffffff; color: #0f172a; }
+    html.dark .amber-scope select option { background-color: #0f111a; color: #f59e0b; }
+    .cyber-select { appearance: none; background-color: #f1f5f9; border: 2px solid #cbd5e1; color: #334155; cursor: pointer; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+    html.dark .cyber-select { background-color: rgba(8, 51, 68, 0.8); border-color: rgba(6, 182, 212, 0.5); color: rgb(103, 232, 249); box-shadow: 0 0 10px rgba(6,182,212,0.2); }
+    .cyber-select:hover { border-color: #0ea5e9; background-color: #e0f2fe; transform: translateY(-2px); box-shadow: 0 5px 15px rgba(14, 165, 233, 0.2); }
+    html.dark .cyber-select:hover { border-color: rgb(6, 182, 212); background-color: rgba(8, 51, 68, 1); box-shadow: 0 0 15px rgba(6,182,212,0.4); transform: translateY(-2px); }
+    .cyber-select:focus { outline: none; border-color: #0ea5e9; box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.1); }
+    html.dark .cyber-select:focus { outline: none; border-color: rgb(34, 211, 238); box-shadow: 0 0 20px rgba(34,211,238,0.5); }
+
+    @keyframes rocketLaunch { 0%, 100% { transform: translateY(0); filter: drop-shadow(0 0 4px rgba(14,165,233,0.3)); } 50% { transform: translateY(-3px); filter: drop-shadow(0 0 8px rgba(14,165,233,0.5)); } }
+    .animate-rocket { animation: rocketLaunch 1.5s infinite; display: inline-block; }
+    @keyframes lightningPulse { 0%, 100% { filter: drop-shadow(0 0 4px rgba(202,138,4,0.3)); transform: scale(1); } 50% { filter: drop-shadow(0 0 8px rgba(202,138,4,0.6)); transform: scale(1.1); } }
+    .animate-lightning { animation: lightningPulse 1.5s infinite; display: inline-block; }
+    @keyframes dropPulse { 0%, 100% { filter: drop-shadow(0 0 4px rgba(225,29,72,0.3)); transform: translateY(0); } 50% { filter: drop-shadow(0 0 8px rgba(225,29,72,0.6)); transform: translateY(2px); } }
+    .animate-drop { animation: dropPulse 2s infinite; display: inline-block; }
+    @keyframes flameFlicker { 0% { transform: scale(1) rotate(-1deg); filter: drop-shadow(0 0 4px rgba(234,88,12,0.3)); } 50% { transform: scale(1.05) rotate(1deg); filter: drop-shadow(0 0 8px rgba(234,88,12,0.5)); } 100% { transform: scale(1) rotate(-1deg); filter: drop-shadow(0 0 4px rgba(234,88,12,0.3)); } }
+    .animate-flame { animation: flameFlicker 1.5s infinite; display: inline-block; transform-origin: center bottom; }
+
+    .brutalist-stamp { border: 4px solid #0f172a; color: #0f172a; background: #ffffff; text-transform: uppercase; font-weight: 800; letter-spacing: 0.1em; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); box-shadow: 6px 6px 0px #0f172a; }
+    html.dark .brutalist-stamp { border-color: #f59e0b; color: #f59e0b; background: transparent; box-shadow: 6px 6px 0px #f59e0b; }
+    .brutalist-stamp:hover { transform: translate(-4px, -4px) scale(1.05); box-shadow: 12px 12px 0px rgba(14, 165, 233, 0.8); background: #f8fafc; border-color: #0ea5e9; color: #0ea5e9; }
+    html.dark .brutalist-stamp:hover { box-shadow: 12px 12px 0px rgba(245, 158, 11, 0.8); background: rgba(245, 158, 11, 0.1); border-color: #fcd34d; color: #fcd34d; }
+
+    .table-row-vibe { transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+    .table-row-vibe:hover { transform: scale(1.01) translateX(10px); background-color: #f1f5f9; box-shadow: -5px 5px 15px rgba(15, 23, 42, 0.05); border-left: 4px solid #0ea5e9; }
+    html.dark .table-row-vibe:hover { background-color: rgba(245, 158, 11, 0.1); box-shadow: -5px 5px 15px rgba(0, 0, 0, 0.5); border-left: 4px solid #f59e0b; }
+
+    .modal-scroll::-webkit-scrollbar { width: 8px; }
+    .modal-scroll::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 10px; }
+    html.dark .modal-scroll::-webkit-scrollbar-track { background: #0f172a; }
+    .modal-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+    html.dark .modal-scroll::-webkit-scrollbar-thumb { background: #f59e0b; }
+    .modal-scroll::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+    .fire-bg { background: linear-gradient(45deg, #f59e0b, #ec4899, #8b5cf6); background-size: 400% 400%; animation: gradient 5s ease infinite; }
+    @keyframes gradient { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useRef, useMemo, Fragment } = React;
+
+    /* ===================================================================
+       共用工具
+    =================================================================== */
+    const safeGetStorage = (key, defVal) => { try { return localStorage.getItem(key) || defVal; } catch(e) { return defVal; } };
+    const safeSetStorage = (key, val) => { try { localStorage.setItem(key, val); } catch(e) {} };
+
+    /* ===================================================================
+       FOS (Boss) 後端路由
+    =================================================================== */
+    const GAS_URL_FOS = 'https://script.google.com/macros/s/AKfycbxWnT6COS2NuL5LmtRZql5UmvEHcFDEtdha2SY5-NI3RBjHxV5xz0oUWlQL1M7P-0GN/exec';
+    const gasAPI = (serverFunction, ...args) => {
+      return new Promise((resolve, reject) => {
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+          google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[serverFunction](...args);
+        } else {
+          fetch(GAS_URL_FOS, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            redirect: 'follow',
+            body: JSON.stringify({ action: serverFunction, args: args })
+          }).then(res => res.json()).then(data => {
+            if (data.error) reject(new Error(data.message)); else resolve(data);
+          }).catch(err => reject(err));
+        }
+      });
+    };
+
+    /* ===================================================================
+       總資產 (Amber) 後端路由
+    =================================================================== */
+    const API_GATEWAY_AMBER = "https://script.google.com/macros/s/AKfycbwOt2AAiwbySGqUHtCTLskVBYzg7F_vAoMLFFrNWVvfjoTpVh0i3ntD1rYgU6qtBcwIaw/exec";
+    const fetchMatrix = async (action, payload = {}) => {
+      if (typeof google !== 'undefined' && google.script && google.script.run) {
+        return new Promise((resolve, reject) => {
+          google.script.run
+            .withSuccessHandler((res) => { try { resolve(JSON.parse(res)); } catch(e) { resolve(res); } })
+            .withFailureHandler(reject)
+            .gasRouter(action, payload);
+        });
+      }
+      const response = await fetch(API_GATEWAY_AMBER, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ action, payload }),
+        redirect: "follow"
+      });
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      return await response.json();
+    };
+
+    /* ===================================================================
+       FOS 子元件 (Boss Terminal v12.2)  — isDarkMode / isEng 由 AppShell 注入
+    =================================================================== */
+    function FosTerminal({ isDarkMode, isEng }) {
+      function getMRZone(mr) {
+        const val = parseFloat(mr);
+        if (val === 0) return { dot: 'bg-slate-300 dark:bg-slate-600', text: 'text-slate-400', label: 'STANDBY', zone: 'STANDBY' };
+        if (val >= 350) return { dot: 'bg-emerald-500 shadow-[0_0_10px_#10b981]', text: 'text-emerald-500 dark:text-emerald-400', label: 'ZONE 1', zone: 'ZONE1' };
+        if (val >= 330) return { dot: 'bg-yellow-500 shadow-[0_0_10px_#eab308]', text: 'text-yellow-600 dark:text-yellow-400', label: 'ZONE 2', zone: 'ZONE2' };
+        if (val >= 310) return { dot: 'bg-orange-500 shadow-[0_0_10px_#f97316]', text: 'text-orange-500 dark:text-orange-400', label: 'ZONE 3', zone: 'ZONE3' };
+        return { dot: 'bg-rose-500 shadow-[0_0_10px_#f43f5e] animate-pulse', text: 'text-rose-500 dark:text-rose-400', label: 'DANGER', zone: 'DANGER' };
+      }
+
+      function getCryptoAction(asset, currentPrice, athPrice, drawdown, ethBtcRatio) {
+        const dd = parseFloat(drawdown);
+        const price = parseFloat(currentPrice);
+        const ath = parseFloat(athPrice);
+        const ratio = parseFloat(ethBtcRatio);
+
+        if (asset === 'ETH' && ratio > 0 && ratio < 0.020) {
+          if (price > 0 && ath > 0 && price >= ath) {
+            return { label: 'FROZEN NO-LOCK', msg: '冰凍狀態，ETH 只進不出，否決鎖利', ui: 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-600' };
+          }
+        }
+
+        if (price > 0 && ath > 0) {
+          if (price >= ath * 1.5) return { label: 'SHOT 3: LOCK', msg: 'SELL 10% → P2', ui: 'bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-900/50' };
+          if (price >= ath * 1.25) return { label: 'SHOT 2: LOCK', msg: 'SELL 10% → P2', ui: 'bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-900/50' };
+          if (price >= ath) return { label: 'SHOT 1: LOCK', msg: 'SELL 10% → P2', ui: 'bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-900/50' };
+        }
+
+        if (dd <= -60) return { label: 'TIER 4 REBUY', msg: 'USE 30% P2', ui: 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-900/50' };
+        if (dd <= -50) return { label: 'TIER 3 REBUY', msg: 'USE 30% P2', ui: 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-900/50' };
+        if (dd <= -40) return { label: 'TIER 2 REBUY', msg: 'USE 20% P2', ui: 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-900/50' };
+        if (dd <= -30) return { label: 'TIER 1 REBUY', msg: 'USE 20% P2', ui: 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-900/50' };
+        return { label: 'DEFENDING', msg: 'HOLD & OBSERVE', ui: 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700' };
+      }
+
+      function fixedRatioSplit(amount, mrZone) {
+        if (mrZone === 'ZONE3' || mrZone === 'DANGER') {
+          return { frozen: true, msg: mrZone === 'DANGER' ? '凍結提現，依4.3強制去槓桿' : '凍結注資，活水截留A帳戶', tsla: 0, spcx: 0, qld: 0 };
+        }
+        const releasable = amount;
+        return { frozen: false, tsla: releasable * 0.40, spcx: releasable * 0.30, qld: releasable * 0.30 };
+      }
+
+      function rateCircuitBreaker(R, Ydiv) {
+        const r = parseFloat(R);
+        const yd = parseFloat(Ydiv);
+        if (isNaN(r) || isNaN(yd) || r <= 0 || yd <= 0) return { state: 'N/A', msg: '請輸入 R 與 Y_div', color: 'text-slate-400' };
+        const ydCapped = Math.min(yd, 5.0);
+        const fuseLine = ydCapped + 1.0;
+        if (r <= ydCapped) return { state: 'GREEN', msg: `全功率，可增貸至0050×60%`, color: 'text-emerald-500', bg: 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900/50' };
+        if (r <= fuseLine) return { state: 'YELLOW', msg: `降速，新增L額度減半`, color: 'text-yellow-500', bg: 'bg-yellow-50 dark:bg-yellow-950/30 border-yellow-200 dark:border-yellow-900/50' };
+        return { state: 'RED', msg: `凍結增貸+純換血，生活費走6.5瀑布`, color: 'text-rose-500', bg: 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/50' };
+      }
+
+      function formatNumber(num) {
+        return isNaN(parseFloat(num)) ? '0' : parseFloat(num).toLocaleString('en-US', {maximumFractionDigits: 0});
+      }
+
+      const t = (zh, en) => isEng ? en : zh;
+
+      const [inputTab, setInputTab] = useState('A');
+      const [formDataB, setFormDataB] = useState({ tsla: '', qld: '', spcx: '', eth: '', btc: '', usdRate: safeGetStorage('fos_usdRate', '32.5') });
+
+      const [formData, setFormData] = useState({
+        lAmount: '', c0050: '', c00733: '',
+        p1_00675L: safeGetStorage('fos_p1_675', ''),
+        p1_00631L: safeGetStorage('fos_p1_631', ''),
+        p2Usdt: '0', btcAth: '73906.00', ethAth: '4956.62', emergencyWithdrawal: '',
+        rateR: safeGetStorage('fos_rateR', ''),
+        rateYdiv: safeGetStorage('fos_rateYdiv', '')
+      });
+
+      const [history, setHistory] = useState([]);
+      const [isSyncing, setIsSyncing] = useState(false);
+
+      const isGasEnvironment = typeof google !== 'undefined' && google.script && google.script.run;
+      const [terminalMsg, setTerminalMsg] = useState(`SYSTEM ONLINE. ${isGasEnvironment ? '[GAS NATIVE ENGINE]' : '[GITHUB DECOUPLED]'} - V12.2 (FIXED-RATIO)`);
+
+      const [isPart9, setIsPart9] = useState(safeGetStorage('fos_isPart9', 'false') === 'true');
+      const [escapeAmount, setEscapeAmount] = useState('');
+
+      const [liveCrypto, setLiveCrypto] = useState({ BTC: 0, ETH: 0 });
+      const [betaConfig, setBetaConfig] = useState({ b0050: '1.0', b00733: '1.35', mrLimit: '130' });
+
+      const chartRef = useRef(null);
+      const chartInstance = useRef(null);
+
+      useEffect(() => {
+        fetchHistory();
+        fetchHistoryB();
+        fetchCryptoConfig();
+      }, []);
+
+      // ★ 切 Tab 卸載時銷毀 Chart 實例，保證重掛乾淨重建
+      useEffect(() => () => {
+        if (chartInstance.current) { try { chartInstance.current.destroy(); } catch(e){} chartInstance.current = null; }
+      }, []);
+
+      const fetchCryptoConfig = async () => {
+        try {
+          const res = await gasAPI('getCryptoMatrix');
+          if (res.success) setFormData(p => ({ ...p, p2Usdt: res.p2Usdt, btcAth: res.btcAth, ethAth: res.ethAth }));
+        } catch (e) {}
+      };
+
+      useEffect(() => {
+        const fetchCrypto = async () => {
+          try {
+            const [btcRes, ethRes] = await Promise.all([ fetch('https://api.binance.us/api/v3/ticker/price?symbol=BTCUSDT'), fetch('https://api.binance.us/api/v3/ticker/price?symbol=ETHUSDT') ]);
+            const btcData = await btcRes.json();
+            const ethData = await ethRes.json();
+            setLiveCrypto({ BTC: parseFloat(btcData.price), ETH: parseFloat(ethData.price) });
+          } catch (e) {}
+        };
+        fetchCrypto();
+        const interval = setInterval(fetchCrypto, 10000);
+        return () => clearInterval(interval);
+      }, []);
+
+      useEffect(() => {
+        if (!chartRef.current || history.length === 0) return;
+        const chartData = [...history].reverse();
+        const labels = chartData.map(item => item.dateId ? String(item.dateId).substring(0, 10) : 'N/A');
+        const mrData = chartData.map(item => parseFloat(item.nominalMR || 0));
+        const p1Data = chartData.map(item => parseFloat(item.p1Ratio || 0));
+
+        if (chartInstance.current) chartInstance.current.destroy();
+        const ctx = chartRef.current.getContext('2d');
+
+        const gradientMR = ctx.createLinearGradient(0, 0, 0, 400);
+        gradientMR.addColorStop(0, isDarkMode ? 'rgba(14, 165, 233, 0.4)' : 'rgba(14, 165, 233, 0.3)');
+        gradientMR.addColorStop(1, 'rgba(14, 165, 233, 0)');
+
+        Chart.defaults.font.size = 16;
+        Chart.defaults.font.family = 'Inter, sans-serif';
+        Chart.defaults.font.weight = 'bold';
+        Chart.defaults.color = isDarkMode ? '#94a3b8' : '#64748b';
+
+        chartInstance.current = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: labels,
+            datasets: [
+              { label: t('維持率 (MR %)', 'MR %'), data: mrData, borderColor: '#0ea5e9', backgroundColor: gradientMR, borderWidth: 4, tension: 0.4, fill: true, yAxisID: 'y', pointBackgroundColor: isDarkMode ? '#0f172a' : '#ffffff', pointBorderColor: '#0ea5e9', pointBorderWidth: 3, pointRadius: 6, pointHoverRadius: 10 },
+              { label: t('資金池 (P1 %)', 'P1 %'), data: p1Data, borderColor: '#8b5cf6', borderWidth: 3, borderDash: [6, 6], tension: 0.4, fill: false, yAxisID: 'y1', pointBackgroundColor: isDarkMode ? '#0f172a' : '#ffffff', pointBorderColor: '#8b5cf6', pointBorderWidth: 3, pointRadius: 6, pointHoverRadius: 10 }
+            ]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+              x: { grid: { color: isDarkMode ? '#1e293b' : '#e2e8f0', lineWidth: 1 }, ticks: { color: isDarkMode ? '#94a3b8' : '#64748b' }, border: { display: false } },
+              y: { position: 'left', grid: { color: isDarkMode ? '#1e293b' : '#e2e8f0', lineWidth: 1 }, title: { display: true, text: 'MR %', color: '#0ea5e9', font: { size: 18, weight: '800' } }, border: { display: false } },
+              y1: { position: 'right', grid: { display: false }, title: { display: true, text: 'P1 %', color: '#8b5cf6', font: { size: 18, weight: '800' } }, border: { display: false } }
+            },
+            plugins: {
+              legend: { position: 'top', labels: { color: isDarkMode ? '#cbd5e1' : '#334155', font: { size: 16, weight: 'bold' }, usePointStyle: true, boxWidth: 12 } },
+              tooltip: { backgroundColor: isDarkMode ? 'rgba(15, 23, 42, 0.95)' : 'rgba(255, 255, 255, 0.95)', titleColor: isDarkMode ? '#38bdf8' : '#0f172a', bodyColor: isDarkMode ? '#cbd5e1' : '#334155', borderColor: isDarkMode ? '#334155' : '#e2e8f0', borderWidth: 1, padding: 12, titleFont: { size: 16 }, bodyFont: { size: 16 }, cornerRadius: 12, displayColors: true }
+            }
+          }
+        });
+      }, [history, isEng, isDarkMode]);
+
+      const fetchHistory = async () => {
+        try {
+          const res = await gasAPI('getHistoryData');
+          if (res.success && res.data.length > 0) {
+            setHistory(res.data);
+            const latest = res.data[0];
+            setFormData(p => {
+              let new675 = p.p1_00675L;
+              if (!p.p1_00675L && !p.p1_00631L && latest.p1Value) new675 = latest.p1Value;
+              return {
+                ...p,
+                lAmount: p.lAmount || latest.lAmount,
+                c0050: p.c0050 || latest.c0050,
+                c00733: p.c00733 || latest.c00733,
+                p1_00675L: new675
+              };
+            });
+          }
+        } catch (err) {}
+      };
+
+      const fetchHistoryB = async () => {
+        try {
+          const res = await gasAPI('getHistoryDataB');
+          if (res.success && res.data && Object.keys(res.data).length > 0) {
+            setFormDataB(p => ({ ...p, tsla: res.data.tsla ?? p.tsla, qld: res.data.qld ?? p.qld, spcx: res.data.spcx ?? p.spcx, eth: res.data.eth ?? p.eth, btc: res.data.btc ?? p.btc }));
+          }
+        } catch (err) {}
+      };
+
+      const handleInputChange = (e) => {
+        const { name, value } = e.target;
+        setFormData(p => ({ ...p, [name]: value }));
+        if (name === 'p1_00675L') safeSetStorage('fos_p1_675', value);
+        if (name === 'p1_00631L') safeSetStorage('fos_p1_631', value);
+        if (name === 'rateR') safeSetStorage('fos_rateR', value);
+        if (name === 'rateYdiv') safeSetStorage('fos_rateYdiv', value);
+      };
+
+      const handleInputBChange = (e) => { setFormDataB(p => ({ ...p, [e.target.name]: e.target.value })); if (e.target.name === 'usdRate') safeSetStorage('fos_usdRate', e.target.value); };
+      const handleBetaChange = (e) => setBetaConfig(p => ({ ...p, [e.target.name]: e.target.value }));
+
+      const updateAth = (coin) => {
+          const currentAth = coin === 'BTC' ? formData.btcAth : formData.ethAth;
+          const newVal = window.prompt(`[SYS.ADMIN] Override ${coin} ATH:`, currentAth);
+          if(newVal && !isNaN(newVal) && newVal.trim() !== '') setFormData(p => ({...p, [coin === 'BTC' ? 'btcAth' : 'ethAth']: newVal}));
+      };
+
+      const handleSyncCrypto = async () => {
+        setIsSyncing(true); setTerminalMsg('>> SYNCING DATA...');
+        try {
+          const res = await gasAPI('saveCryptoMatrix', formData.p2Usdt, formData.btcAth, formData.ethAth);
+          if (res.success) { setIsSyncing(false); setTerminalMsg('>> SYNC COMPLETE.'); setTimeout(() => setTerminalMsg(`SYSTEM ONLINE. V12.2 (FIXED-RATIO)`), 3000); }
+          else throw new Error();
+        } catch (e) { setTerminalMsg('>> SYNC FAILED.'); setIsSyncing(false); }
+      };
+
+      const L = parseFloat(formData.lAmount) || 0;
+      const c0050 = parseFloat(formData.c0050) || 0;
+      const c00733 = parseFloat(formData.c00733) || 0;
+      const C = c0050 + c00733;
+
+      const P1 = (parseFloat(formData.p1_00675L) || 0) + (parseFloat(formData.p1_00631L) || 0);
+
+      const nominalMR = L > 0 ? ((C / L) * 100).toFixed(2) : '0.00';
+      const p1Ratio = L > 0 ? ((P1 / L) * 100).toFixed(2) : '0.00';
+      const mrZoneInfo = getMRZone(nominalMR);
+
+      const b0050Val = parseFloat(betaConfig.b0050) || 1.0;
+      const b00733Val = parseFloat(betaConfig.b00733) || 1.35;
+      const limitMRVal = parseFloat(betaConfig.mrLimit) || 130;
+
+      let portfolioBeta = 0; let maxMarketDrop = 0;
+      if (C > 0 && L > 0) {
+          portfolioBeta = ((c0050 * b0050Val) + (c00733 * b00733Val)) / C;
+          const maxCollateralDrop = (C - (limitMRVal / 100) * L) / C;
+          maxMarketDrop = (maxCollateralDrop / portfolioBeta) * 100;
+      }
+      const isCrashSafe = maxMarketDrop > 0;
+
+      const currentBtc = liveCrypto.BTC || 0; const currentEth = liveCrypto.ETH || 0;
+      const ethBtcRatio = currentBtc > 0 ? (currentEth / currentBtc).toFixed(4) : '0.0000';
+
+      const btcAth = parseFloat(formData.btcAth) || 1;
+      const ethAth = parseFloat(formData.ethAth) || 1;
+      const btcDrawdown = (currentBtc > 0 && btcAth > 0) ? (((currentBtc - btcAth) / btcAth) * 100).toFixed(2) : '0.00';
+      const ethDrawdown = (currentEth > 0 && ethAth > 0) ? (((currentEth - ethAth) / ethAth) * 100).toFixed(2) : '0.00';
+
+      const btcAction = getCryptoAction('BTC', currentBtc, formData.btcAth, btcDrawdown, ethBtcRatio);
+      const ethAction = getCryptoAction('ETH', currentEth, formData.ethAth, ethDrawdown, ethBtcRatio);
+
+      const diffValue = Math.abs(c0050 - c00733);
+      let targetInjection = t('已平衡', 'BALANCED');
+      if (c0050 > 0 || c00733 > 0) { if (c0050 < c00733) targetInjection = '0050'; else if (c00733 < c0050) targetInjection = '00733'; }
+
+      const withdrawE = parseFloat(formData.emergencyWithdrawal) || 0;
+      let hdpResult = null;
+      if (withdrawE > 0 && L > 0 && C > 0) {
+        const psac = L - (C - withdrawE) / 3.3; const newL = L - psac; const newP1 = P1 - psac; const finalDeathLine = newL * 0.0606;
+        if (psac <= 0) hdpResult = { status: 'safe', msg: t('維持率極佳，無須犧牲 P1', 'Safe to cash out.'), psac: 0 };
+        else if (newP1 < finalDeathLine) hdpResult = { status: 'danger', msg: t(`❌ 擊穿 6.06% 死亡線！嚴禁執行！`, `❌ P1 Drops Below 6.06%!`), psac };
+        else hdpResult = { status: 'ok', msg: t(`犧牲 P1: ${psac.toLocaleString('en-US', {maximumFractionDigits:0})}`, `Sacrifice P1: ${psac.toLocaleString('en-US', {maximumFractionDigits:0})}`), psac };
+      }
+
+      const rateCB = rateCircuitBreaker(formData.rateR, formData.rateYdiv);
+
+      let consensusTarget = 'BTC'; let consensusColor = 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'; let consensusMsg = '...';
+      const ratioVal = parseFloat(ethBtcRatio);
+      if (ratioVal > 0.060) { consensusTarget = 'BTC'; consensusColor = 'bg-yellow-100 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400 border-yellow-200 dark:border-yellow-900/50'; consensusMsg = '> 0.060 (OVERHEATED)'; }
+      else if (ratioVal >= 0.020 && ratioVal <= 0.060) { consensusTarget = 'ETH'; consensusColor = 'bg-sky-100 dark:bg-sky-950/40 text-sky-700 dark:text-sky-400 border-sky-200 dark:border-sky-900/50'; consensusMsg = '0.020-0.060 (VALUE)'; }
+      else if (ratioVal > 0 && ratioVal < 0.020) { consensusTarget = 'BTC'; consensusColor = 'bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-900/50'; consensusMsg = '< 0.020 (FREEZE)'; }
+
+      const escapeVal = parseFloat(escapeAmount) || 0;
+      const stockInject = escapeVal * 0.8; const cryptoInject = escapeVal * 0.2;
+      const splitResult = fixedRatioSplit(stockInject, mrZoneInfo.zone);
+
+      const handleSave = async (e) => {
+        e.preventDefault(); if (L <= 0 || C <= 0) return;
+        const previousHistory = [...history];
+        const timezoneOffset = (new Date()).getTimezoneOffset() * 60000;
+        const localISOTime = (new Date(Date.now() - timezoneOffset)).toISOString().replace('T', ' ').slice(0, 19).replace(/-/g, '/');
+        const payload = { lAmount: L, c0050, c00733, p1Value: P1, btcPrice: currentBtc, ethPrice: currentEth, p2Usdt: formData.p2Usdt, nominalMR, p1Ratio, ethBtcRatio: ethBtcRatio };
+        setHistory([{ dateId: `(SYNC) ${localISOTime}`, ...payload }, ...history].slice(0, 10));
+        setTerminalMsg('>> SYNCING...');
+        try { const res = await gasAPI('saveFOSData', payload); if (res.success) { fetchHistory(); setTerminalMsg('>> DONE.'); } else throw new Error(); }
+        catch (err) { setHistory(previousHistory); setTerminalMsg('>> FAILED.'); }
+      };
+
+      const handleSaveB = async (e) => {
+        e.preventDefault(); setTerminalMsg('>> SYNCING B ACCOUNT...');
+        try { const res = await gasAPI('saveFOSDataB', formDataB); if (res.success) { fetchHistoryB(); setTerminalMsg('>> DONE.'); } else throw new Error(); }
+        catch (err) { setTerminalMsg('>> FAILED.'); }
+      };
+
+      const handleDelete = async (dateId) => {
+        if (!window.confirm(`ERASE: ${dateId}?`)) return;
+        const previousHistory = [...history]; setHistory(history.filter(item => item.dateId !== dateId)); setTerminalMsg('>> DELETING...');
+        try { const res = await gasAPI('deleteFOSData', dateId); if (res.success) setTerminalMsg('>> DONE.'); else throw new Error(); }
+        catch (err) { setHistory(previousHistory); setTerminalMsg('>> FAILED.'); }
+      };
+
+      const handleCopyReport = () => {
+        const report = `【A】\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} | P1: ${p1Ratio}%\n【美股固定比例分流 v12.2】\nTSLA 40% | SPCX 30% | QLD 30%\n燈號: ${mrZoneInfo.label} ${splitResult.frozen ? '→ 注資凍結' : '→ 放行'}\n【加密三態】\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}`;
+        navigator.clipboard.writeText(report).then(() => setTerminalMsg('>> REPORT COPIED.')).catch(() => setTerminalMsg('>> COPY FAILED.'));
+      };
+
+      return (
+        <div className="fos-scope clean-grid-bg min-h-screen text-slate-800 dark:text-slate-200 text-lg md:text-xl pt-8 pb-20 selection:bg-sky-200 dark:selection:bg-sky-900">
+          <div className="max-w-[1600px] mx-auto px-4 md:px-10 space-y-10 pb-24 relative tracking-wide">
+
+            <div className="fixed bottom-8 right-8 z-[9999]">
+              <button onClick={handleCopyReport} className="tech-btn w-16 h-16 rounded-full bg-sky-500 text-white flex items-center justify-center text-2xl shadow-lg hover:bg-sky-400">📋</button>
+            </div>
+
+            <header className="tech-panel p-8 md:p-12 mb-10 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-8 relative overflow-hidden">
+              <div className="absolute right-0 top-0 opacity-10 dark:opacity-20 text-[15rem] font-black leading-none pointer-events-none -mt-16 -mr-8 font-mono text-sky-900 dark:text-sky-300 drop-shadow-sm select-none">V12</div>
+
+              <div className="relative z-10">
+                <h1 className="text-4xl md:text-6xl font-black tracking-tight text-slate-800 dark:text-slate-100 uppercase flex items-center gap-4 mb-3">
+                  <span className="bg-sky-500 text-white px-3 py-1 rounded-xl text-3xl md:text-5xl shadow-md">FOS</span>
+                  TERMINAL
+                </h1>
+                <p className="text-sm md:text-base font-bold text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/50 inline-block px-4 py-1.5 rounded-full border border-sky-100 dark:border-sky-900/50 uppercase tracking-wider">{terminalMsg}</p>
+              </div>
+
+              <div className="flex flex-col items-end gap-6 w-full xl:w-auto relative z-10">
+                <div className="flex flex-wrap items-center gap-4">
+                  <div className="flex items-center gap-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-6 py-2.5 rounded-2xl shadow-sm">
+                    <span className="text-lg font-bold uppercase text-slate-500 dark:text-slate-400">PART 9</span>
+                    <label className="tech-toggle">
+                      <input type="checkbox" checked={isPart9} onChange={() => { setIsPart9(!isPart9); safeSetStorage('fos_isPart9', (!isPart9).toString()); }} />
+                      <span className="tech-slider"></span>
+                    </label>
+                  </div>
+                </div>
+
+                {isPart9 && (
+                  <div className="w-full xl:w-[500px] bg-slate-50 dark:bg-slate-900/50 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 mt-2">
+                    <label className="text-xl font-black uppercase mb-4 block text-slate-700 dark:text-slate-300 flex items-center gap-3">
+                      <span className="w-2 h-2 rounded-full bg-violet-500"></span> 80/20 INJECTION MATRIX
+                    </label>
+                    <input type="number" value={escapeAmount} onChange={e => setEscapeAmount(e.target.value)} className="w-full tech-input mb-6 text-center text-2xl text-violet-600 dark:text-violet-400 font-mono focus:border-violet-400 focus:shadow-[0_0_0_4px_rgba(139,92,246,0.15)] dark:focus:shadow-[0_0_0_4px_rgba(139,92,246,0.25)]" placeholder="FIAT AMOUNT" />
+
+                    {escapeVal > 0 && (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="bg-white dark:bg-slate-800 p-4 text-center rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm scale-card cursor-default">
+                            <div className="text-sm font-bold mb-1 text-slate-400 uppercase">80% 美股引擎</div>
+                            <div className="text-2xl font-black text-sky-500 dark:text-sky-400 font-mono data-text">{formatNumber(stockInject)}</div>
+                          </div>
+                          <div className="bg-white dark:bg-slate-800 p-4 text-center rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm scale-card cursor-default">
+                            <div className="text-sm font-bold mb-1 text-slate-400 uppercase">20% {consensusTarget}</div>
+                            <div className="text-2xl font-black text-violet-500 dark:text-violet-400 font-mono data-text">{formatNumber(cryptoInject)}</div>
+                          </div>
+                        </div>
+                        {!splitResult.frozen && (
+                          <div className="grid grid-cols-3 gap-3">
+                            <div className="bg-white dark:bg-slate-800 p-3 text-center rounded-xl border border-slate-200 dark:border-slate-700">
+                              <div className="text-xs font-bold text-slate-400">TSLA 40%</div>
+                              <div className="text-lg font-black text-sky-600 dark:text-sky-400 font-mono">{formatNumber(splitResult.tsla)}</div>
+                            </div>
+                            <div className="bg-white dark:bg-slate-800 p-3 text-center rounded-xl border border-slate-200 dark:border-slate-700">
+                              <div className="text-xs font-bold text-slate-400">SPCX 30%</div>
+                              <div className="text-lg font-black text-sky-600 dark:text-sky-400 font-mono">{formatNumber(splitResult.spcx)}</div>
+                            </div>
+                            <div className="bg-white dark:bg-slate-800 p-3 text-center rounded-xl border border-slate-200 dark:border-slate-700">
+                              <div className="text-xs font-bold text-slate-400">QLD 30%</div>
+                              <div className="text-lg font-black text-sky-600 dark:text-sky-400 font-mono">{formatNumber(splitResult.qld)}</div>
+                            </div>
+                          </div>
+                        )}
+                        {splitResult.frozen && (
+                          <div className="bg-rose-50 dark:bg-rose-950/30 p-4 rounded-2xl border border-rose-200 dark:border-rose-800 text-center">
+                            <span className="text-lg font-black text-rose-600 dark:text-rose-400">❄️ {splitResult.msg}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </header>
+
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
+              <div className="xl:col-span-4 space-y-8">
+
+                <div className="tech-panel p-8">
+                  <div className="flex justify-between items-center mb-8">
+                    <h2 className="text-2xl font-black uppercase text-slate-800 dark:text-slate-100 flex items-center gap-3">
+                      <span className="w-2.5 h-2.5 rounded-full bg-sky-500 animate-pulse"></span> {inputTab} INPUT
+                    </h2>
+                    <div className="flex bg-slate-100 dark:bg-slate-800 rounded-full p-1 border border-slate-200 dark:border-slate-700">
+                      <button onClick={() => setInputTab('A')} className={`px-5 py-1.5 text-sm font-black rounded-full transition-colors ${inputTab === 'A' ? 'bg-white dark:bg-slate-600 shadow-sm text-sky-600 dark:text-sky-300' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'}`}>A</button>
+                      <button onClick={() => setInputTab('B')} className={`px-5 py-1.5 text-sm font-black rounded-full transition-colors ${inputTab === 'B' ? 'bg-white dark:bg-slate-600 shadow-sm text-violet-600 dark:text-violet-300' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'}`}>B</button>
+                    </div>
+                  </div>
+
+                  {inputTab === 'A' ? (
+                    <div className="space-y-5">
+                      <div><label className="block text-sm font-bold mb-1.5 text-slate-500 uppercase tracking-wider">L AMOUNT</label><input type="number" name="lAmount" value={formData.lAmount} onChange={handleInputChange} className="w-full tech-input font-mono" placeholder="0" /></div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div><label className="block text-sm font-bold mb-1.5 text-slate-500 uppercase tracking-wider">C 0050</label><input type="number" name="c0050" value={formData.c0050} onChange={handleInputChange} className="w-full tech-input font-mono" placeholder="0" /></div>
+                        <div><label className="block text-sm font-bold mb-1.5 text-slate-500 uppercase tracking-wider">C 00733</label><input type="number" name="c00733" value={formData.c00733} onChange={handleInputChange} className="w-full tech-input font-mono" placeholder="0" /></div>
+                      </div>
+
+                      <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+                        <label className="block text-sm font-black mb-3 text-violet-500 dark:text-violet-400 uppercase tracking-widest flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-violet-500"></span> P1 TACTICAL POOL</label>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-bold mb-1 text-slate-400 uppercase">00675L</label>
+                            <input type="number" name="p1_00675L" value={formData.p1_00675L} onChange={handleInputChange} className="w-full tech-input font-mono text-lg py-2 focus:border-violet-400 focus:shadow-[0_0_0_4px_rgba(139,92,246,0.15)] dark:focus:shadow-[0_0_0_4px_rgba(139,92,246,0.25)]" placeholder="0" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold mb-1 text-slate-400 uppercase">00631L</label>
+                            <input type="number" name="p1_00631L" value={formData.p1_00631L} onChange={handleInputChange} className="w-full tech-input font-mono text-lg py-2 focus:border-violet-400 focus:shadow-[0_0_0_4px_rgba(139,92,246,0.15)] dark:focus:shadow-[0_0_0_4px_rgba(139,92,246,0.25)]" placeholder="0" />
+                          </div>
+                        </div>
+                        <div className="text-right mt-2 text-xs font-bold text-slate-500 dark:text-slate-400 tracking-wider">
+                          AGGREGATED TOTAL: <span className="text-violet-600 dark:text-violet-400 font-mono text-sm ml-1">{formatNumber(P1)}</span>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+                        <label className="block text-sm font-black mb-3 text-amber-500 dark:text-amber-400 uppercase tracking-widest flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-amber-500"></span> RATE CIRCUIT BREAKER</label>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-bold mb-1 text-slate-400 uppercase">R (質押利率%)</label>
+                            <input type="number" step="0.01" name="rateR" value={formData.rateR} onChange={handleInputChange} className="w-full tech-input font-mono text-lg py-2 focus:border-amber-400 focus:shadow-[0_0_0_4px_rgba(245,158,11,0.15)] dark:focus:shadow-[0_0_0_4px_rgba(245,158,11,0.25)]" placeholder="0.00" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold mb-1 text-slate-400 uppercase">Y_div (殖利率%)</label>
+                            <input type="number" step="0.01" name="rateYdiv" value={formData.rateYdiv} onChange={handleInputChange} className="w-full tech-input font-mono text-lg py-2 focus:border-amber-400 focus:shadow-[0_0_0_4px_rgba(245,158,11,0.15)] dark:focus:shadow-[0_0_0_4px_rgba(245,158,11,0.25)]" placeholder="0.00" />
+                          </div>
+                        </div>
+                        {rateCB.state !== 'N/A' && (
+                          <div className={`mt-3 p-3 rounded-xl text-center font-bold border ${rateCB.bg}`}>
+                            <span className={`text-lg font-black ${rateCB.color}`}>{rateCB.state === 'GREEN' ? '🟢' : rateCB.state === 'YELLOW' ? '🟡' : '🔴'} {rateCB.state}</span>
+                            <div className="text-sm mt-1 opacity-80">{rateCB.msg}</div>
+                          </div>
+                        )}
+                      </div>
+
+                      <button type="button" onClick={handleSave} className="w-full tech-btn bg-slate-800 dark:bg-slate-100 text-white dark:text-slate-900 hover:bg-slate-700 dark:hover:bg-white text-xl py-4 mt-4">INJECT A</button>
+                    </div>
+                  ) : (
+                    <div className="space-y-5">
+                      <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800 p-3 rounded-2xl border border-slate-200 dark:border-slate-700">
+                         <span className="font-bold text-sm text-slate-500 dark:text-slate-400 uppercase">USD RATE</span>
+                         <input type="number" name="usdRate" value={formDataB.usdRate} onChange={handleInputBChange} className="w-24 tech-input text-base p-1 text-center font-mono" />
+                      </div>
+                      <div className="grid grid-cols-3 gap-4 border-b border-slate-200 dark:border-slate-700 pb-4">
+                        <div><label className="block text-xs font-bold mb-1 text-slate-500 dark:text-slate-400">TSLA</label><input type="number" name="tsla" value={formDataB.tsla} onChange={handleInputBChange} className="w-full tech-input text-lg py-2 font-mono" placeholder="0" /></div>
+                        <div><label className="block text-xs font-bold mb-1 text-slate-500 dark:text-slate-400">SPCX</label><input type="number" name="spcx" value={formDataB.spcx} onChange={handleInputBChange} className="w-full tech-input text-lg py-2 font-mono" placeholder="0" /></div>
+                        <div><label className="block text-xs font-bold mb-1 text-slate-500 dark:text-slate-400">QLD</label><input type="number" name="qld" value={formDataB.qld} onChange={handleInputBChange} className="w-full tech-input text-lg py-2 font-mono" placeholder="0" /></div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div><label className="block text-sm font-bold mb-1 text-sky-500 dark:text-sky-400">ETH</label><input type="number" name="eth" value={formDataB.eth} onChange={handleInputBChange} className="w-full tech-input font-mono focus:border-sky-400 focus:shadow-[0_0_0_4px_rgba(56,189,248,0.15)] dark:focus:shadow-[0_0_0_4px_rgba(56,189,248,0.25)]" placeholder="0" /></div>
+                        <div><label className="block text-sm font-bold mb-1 text-amber-500 dark:text-amber-400">BTC</label><input type="number" name="btc" value={formDataB.btc} onChange={handleInputBChange} className="w-full tech-input font-mono focus:border-amber-400 focus:shadow-[0_0_0_4px_rgba(251,191,36,0.15)] dark:focus:shadow-[0_0_0_4px_rgba(251,191,36,0.25)]" placeholder="0" /></div>
+                      </div>
+                      <button type="button" onClick={handleSaveB} className="w-full tech-btn bg-slate-800 dark:bg-slate-100 text-white dark:text-slate-900 hover:bg-slate-700 dark:hover:bg-white text-xl py-4 mt-4">INJECT B</button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="tech-panel p-8 bg-gradient-to-br from-rose-50 to-white dark:from-rose-950/20 dark:to-slate-900 border-rose-100 dark:border-rose-900/50">
+                  <h2 className="text-xl font-black uppercase text-rose-600 dark:text-rose-500 mb-6 flex items-center gap-2">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                    LIQUIDITY DEFENSE
+                  </h2>
+                  <div className="mb-5"><label className="block text-sm font-bold mb-2 text-rose-400 uppercase tracking-wider">WITHDRAW (FIAT)</label><input type="number" name="emergencyWithdrawal" value={formData.emergencyWithdrawal} onChange={handleInputChange} className="w-full tech-input font-mono focus:border-rose-400 focus:shadow-[0_0_0_4px_rgba(244,63,94,0.15)] dark:focus:shadow-[0_0_0_4px_rgba(244,63,94,0.25)]" placeholder="0" /></div>
+                  {hdpResult && (
+                    <div className={`p-4 rounded-2xl text-sm font-bold flex items-center gap-3 ${hdpResult.status === 'danger' ? 'bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800' : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}`}>
+                      <span className="text-xl">{hdpResult.status === 'danger' ? '❌' : '✅'}</span> {hdpResult.msg}
+                    </div>
+                  )}
+                </div>
+
+              </div>
+
+              <div className="xl:col-span-8 space-y-8">
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+
+                  <div className={`tech-panel p-8 flex flex-col justify-between scale-card cursor-default overflow-hidden relative`}>
+                    <div className={`absolute top-0 right-0 w-32 h-32 blur-3xl opacity-20 -mr-10 -mt-10 rounded-full transition-colors ${mrZoneInfo.dot.split(' ')[0]}`}></div>
+                    <div className="flex justify-between items-start mb-4">
+                      <h2 className="text-lg font-black uppercase text-slate-400">NOMINAL MR</h2>
+                      <span className={`w-3 h-3 rounded-full ${mrZoneInfo.dot}`}></span>
+                    </div>
+
+                    <div className="flex-1 flex items-center justify-center py-6">
+                       <div className={`text-6xl sm:text-7xl lg:text-8xl xl:text-9xl font-black font-mono tracking-tighter data-text data-text-massive break-words px-2 ${mrZoneInfo.text}`}>
+                         {nominalMR}%
+                       </div>
+                    </div>
+
+                    <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+                      <div className="text-xs font-bold uppercase text-slate-400 tracking-widest">STATUS</div>
+                      <div className={`text-xl font-black uppercase mt-1 ${mrZoneInfo.text}`}>{mrZoneInfo.label}</div>
+                    </div>
+                  </div>
+
+                  <div className={`tech-panel p-8 scale-card cursor-default`}>
+                    <h2 className="text-lg font-black uppercase text-slate-400 mb-6">CRASH RESISTANCE</h2>
+
+                    <div className="grid grid-cols-3 gap-3 mb-6">
+                      <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-2 text-center border border-slate-100 dark:border-slate-700">
+                        <div className="font-bold text-xs text-slate-400 mb-1">0050 β</div>
+                        <input type="number" step="0.01" name="b0050" value={betaConfig.b0050} onChange={handleBetaChange} className="w-full text-center text-lg font-black font-mono bg-transparent outline-none text-slate-700 dark:text-slate-300 data-text" />
+                      </div>
+                      <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-2 text-center border border-slate-100 dark:border-slate-700">
+                        <div className="font-bold text-xs text-slate-400 mb-1">00733 β</div>
+                        <input type="number" step="0.01" name="b00733" value={betaConfig.b00733} onChange={handleBetaChange} className="w-full text-center text-lg font-black font-mono bg-transparent outline-none text-slate-700 dark:text-slate-300 data-text" />
+                      </div>
+                      <div className="bg-rose-50 dark:bg-rose-950/30 rounded-xl p-2 text-center border border-rose-100 dark:border-rose-900/50">
+                        <div className="font-bold text-xs text-rose-400 mb-1">LIMIT</div>
+                        <input type="number" name="mrLimit" value={betaConfig.mrLimit} onChange={handleBetaChange} className="w-full text-center text-lg font-black font-mono bg-transparent outline-none text-rose-500 data-text" />
+                      </div>
+                    </div>
+
+                    <div className={`rounded-2xl p-6 text-center border ${isCrashSafe ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-100 dark:border-emerald-900/50' : 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/50'}`}>
+                      <div className="text-xs font-bold mb-2 uppercase tracking-widest text-slate-500 dark:text-slate-400">MAX DROP TO LIQUIDATION</div>
+                      {C > 0 && L > 0 ? (
+                        <div className={`text-4xl sm:text-5xl font-black font-mono tracking-tight data-text break-words ${isCrashSafe ? 'text-emerald-500' : 'text-rose-500'}`}>
+                          {isCrashSafe ? `-${maxMarketDrop.toFixed(2)}%` : 'BREACHED'}
+                        </div>
+                      ) : (
+                        <div className="text-2xl font-black text-slate-300 dark:text-slate-600 mt-2">N/A</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="tech-panel p-8">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div className="scale-card cursor-default">
+                      <h2 className="text-lg font-black uppercase text-slate-400 mb-4">1:1 BALANCE</h2>
+                      <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4 flex justify-between items-center mb-3 border border-slate-100 dark:border-slate-700">
+                        <span className="text-sm font-bold text-slate-400 uppercase tracking-wider">DIFF</span>
+                        <span className="text-xl font-black font-mono text-slate-700 dark:text-slate-300 data-text">{formatNumber(diffValue)}</span>
+                      </div>
+                      <div className="bg-sky-50 dark:bg-sky-950/30 rounded-2xl p-5 flex justify-between items-center border border-sky-100 dark:border-sky-900/50">
+                        <span className="text-sm font-bold text-sky-500 dark:text-sky-400 uppercase tracking-wider">TARGET</span>
+                        <span className="text-3xl font-black text-sky-600 dark:text-sky-400 data-text">{targetInjection}</span>
+                      </div>
+                    </div>
+                    <div className="scale-card cursor-default">
+                      <h2 className="text-lg font-black uppercase text-slate-400 mb-4">P1 TACTICAL POOL</h2>
+                      <div className={`rounded-2xl p-6 text-center mb-3 border ${parseFloat(p1Ratio) < 33.3 ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-100 dark:border-rose-900/50 text-rose-500' : 'bg-violet-50 dark:bg-violet-950/30 border-violet-100 dark:border-violet-900/50 text-violet-600 dark:text-violet-400'}`}>
+                        <span className="text-5xl font-black font-mono data-text inline-block break-words">{p1Ratio}%</span>
+                      </div>
+                      <div className="flex justify-between font-bold text-sm px-2 text-slate-400 font-mono">
+                         <span><span className="text-rose-400">DEATH:</span> {formatNumber(L*0.0606)}</span>
+                         <span><span className="text-emerald-400">1/3:</span> {formatNumber(L/3)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="tech-panel p-0 overflow-hidden border-sky-500 dark:border-sky-500/50 shadow-[0_0_15px_rgba(14,165,233,0.15)]">
+                  <div className="bg-sky-50 dark:bg-slate-800/80 border-b border-sky-100 dark:border-slate-700 p-6 flex justify-between items-center">
+                    <h2 className="text-xl font-black uppercase text-sky-600 dark:text-sky-400 flex items-center gap-2">
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                      {t('美股固定比例分流引擎', 'FIXED-RATIO SPLIT ENGINE')} <span className="text-sm opacity-60 ml-2">v12.2</span>
+                    </h2>
+                    <span className={`px-4 py-1.5 rounded-full text-sm font-black border ${mrZoneInfo.zone === 'ZONE1' ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800' : mrZoneInfo.zone === 'ZONE2' ? 'bg-yellow-50 dark:bg-yellow-950/40 text-yellow-600 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800' : mrZoneInfo.zone === 'ZONE3' ? 'bg-orange-50 dark:bg-orange-950/40 text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800' : mrZoneInfo.zone === 'DANGER' ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700'}`}>
+                      {mrZoneInfo.label}
+                    </span>
+                  </div>
+
+                  {(mrZoneInfo.zone === 'ZONE3' || mrZoneInfo.zone === 'DANGER') ? (
+                    <div className="p-12 text-center bg-rose-50 dark:bg-rose-950/20">
+                      <div className="text-6xl mb-4">❄️</div>
+                      <div className="text-2xl font-black text-rose-600 dark:text-rose-400 uppercase">
+                        {mrZoneInfo.zone === 'DANGER' ? t('凍結提現，依4.3強制去槓桿', 'FROZEN: Forced Deleverage per 4.3') : t('注資凍結，活水截留 A 帳戶', 'INJECTION FROZEN: Funds Retained in A')}
+                      </div>
+                      <div className="text-sm text-rose-500/70 mt-2 font-bold">{t('鐵律 10-3: Part 10 服從 9.4 維持率燈號', 'Iron Law 10-3: Part 10 obeys 9.4 MR Signal')}</div>
+                    </div>
+                  ) : (
+                    <div className="p-6 md:p-8 bg-white dark:bg-slate-900">
+                      {mrZoneInfo.zone === 'ZONE2' && (
+                        <div className="mb-6 p-3 rounded-xl bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800 text-center">
+                          <span className="text-sm font-bold text-yellow-600 dark:text-yellow-400">⚠️ ZONE2: {t('理論上僅股息應注入，請自行確認此筆活水來源（系統不強制區分股息/增貸，全額放行）', 'Theoretically dividends-only — verify this inflow source yourself (system does not enforce; full release)')}</span>
+                        </div>
+                      )}
+                      <div className="grid grid-cols-3 gap-4 md:gap-6">
+                        <div className="rounded-2xl border border-slate-100 dark:border-slate-700 p-6 bg-slate-50 dark:bg-slate-800/50 text-center scale-card cursor-default">
+                          <div className="text-xs font-bold mb-3 uppercase text-slate-400 tracking-widest">TSLA</div>
+                          <div className="text-4xl font-black text-sky-600 dark:text-sky-400 font-mono data-text mb-2">40%</div>
+                          <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-3 overflow-hidden">
+                            <div className="bg-sky-500 h-full rounded-full" style={{width: '40%'}}></div>
+                          </div>
+                          <div className="text-xs font-bold text-slate-400 mt-2">{t('高β個股', 'High β Stock')}</div>
+                        </div>
+                        <div className="rounded-2xl border border-slate-100 dark:border-slate-700 p-6 bg-slate-50 dark:bg-slate-800/50 text-center scale-card cursor-default">
+                          <div className="text-xs font-bold mb-3 uppercase text-slate-400 tracking-widest">SPCX</div>
+                          <div className="text-4xl font-black text-violet-600 dark:text-violet-400 font-mono data-text mb-2">30%</div>
+                          <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-3 overflow-hidden">
+                            <div className="bg-violet-500 h-full rounded-full" style={{width: '30%'}}></div>
+                          </div>
+                          <div className="text-xs font-bold text-slate-400 mt-2">SpaceX (2026/6/12)</div>
+                        </div>
+                        <div className="rounded-2xl border border-slate-100 dark:border-slate-700 p-6 bg-slate-50 dark:bg-slate-800/50 text-center scale-card cursor-default">
+                          <div className="text-xs font-bold mb-3 uppercase text-slate-400 tracking-widest">QLD</div>
+                          <div className="text-4xl font-black text-emerald-600 dark:text-emerald-400 font-mono data-text mb-2">30%</div>
+                          <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-3 overflow-hidden">
+                            <div className="bg-emerald-500 h-full rounded-full" style={{width: '30%'}}></div>
+                          </div>
+                          <div className="text-xs font-bold text-slate-400 mt-2">Nasdaq 100 ×2</div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="bg-slate-50 dark:bg-slate-800/80 p-4 border-t border-slate-100 dark:border-slate-800 text-center">
+                    <span className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">
+                      {t('鐵律 10-4: 熊市仍按比例買入（含2x QLD），唯一煞車為 9.4 維持率燈號', 'Iron Law 10-4: Buy in bear markets too (incl 2x QLD). Only brake: 9.4 MR Signal')}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="tech-panel p-0 overflow-hidden">
+                  <div className="bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700 p-6 flex flex-wrap justify-between items-center gap-4">
+                    <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200 flex items-center gap-2">
+                      <svg className="w-5 h-5 text-violet-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
+                      CRYPTO 3-STATE
+                    </h2>
+                    <button onClick={handleSyncCrypto} className="tech-btn bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-300 hover:text-violet-500 dark:hover:text-violet-400 px-4 py-1.5 text-sm shadow-sm">SYNC P2/ATH</button>
+                  </div>
+
+                  <div className="p-6 md:p-8 grid grid-cols-1 md:grid-cols-2 gap-6 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
+                    <div className="rounded-2xl border border-slate-100 dark:border-slate-700 p-6 bg-slate-50 dark:bg-slate-800/50 flex flex-col scale-card cursor-default">
+                      <div className="flex justify-between items-center mb-4">
+                        <span className="text-2xl font-black text-amber-500">BTC</span>
+                        <span className="text-xs font-bold cursor-pointer text-slate-400 hover:text-amber-500 bg-white dark:bg-slate-700 px-3 py-1 rounded-full shadow-sm border border-slate-200 dark:border-slate-600 transition-colors" onClick={() => updateAth('BTC')}>ATH: {btcAth}</span>
+                      </div>
+                      <div className="text-5xl font-black font-mono text-slate-800 dark:text-slate-200 mb-2 data-text">${liveCrypto.BTC > 0 ? liveCrypto.BTC.toLocaleString('en-US',{maximumFractionDigits:0}) : '---'}</div>
+                      <div className="text-xl font-bold text-rose-500 mb-6 font-mono">{btcDrawdown}%</div>
+                      <div className={`mt-auto p-4 rounded-xl text-center text-sm font-bold border action-hover-effect ${btcAction.ui}`}>
+                        <span className="block text-lg font-black mb-1">{btcAction.label}</span>{btcAction.msg}
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-slate-100 dark:border-slate-700 p-6 bg-slate-50 dark:bg-slate-800/50 flex flex-col scale-card cursor-default">
+                      <div className="flex justify-between items-center mb-4">
+                        <span className="text-2xl font-black text-sky-500">ETH</span>
+                        <span className="text-xs font-bold cursor-pointer text-slate-400 hover:text-sky-500 bg-white dark:bg-slate-700 px-3 py-1 rounded-full shadow-sm border border-slate-200 dark:border-slate-600 transition-colors" onClick={() => updateAth('ETH')}>ATH: {ethAth}</span>
+                      </div>
+                      <div className="text-5xl font-black font-mono text-slate-800 dark:text-slate-200 mb-2 data-text">${liveCrypto.ETH > 0 ? liveCrypto.ETH.toLocaleString('en-US',{maximumFractionDigits:0}) : '---'}</div>
+                      <div className="text-xl font-bold text-rose-500 mb-6 font-mono">{ethDrawdown}%</div>
+                      <div className={`mt-auto p-4 rounded-xl text-center text-sm font-bold border action-hover-effect ${ethAction.ui}`}>
+                        <span className="block text-lg font-black mb-1">{ethAction.label}</span>{ethAction.msg}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-50 dark:bg-slate-800/80 p-6 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center">
+                    <span className="text-sm font-bold uppercase text-slate-400 tracking-widest">P2 (USDT)</span>
+                    <input type="number" name="p2Usdt" value={formData.p2Usdt} onChange={handleInputChange} className="w-48 tech-input text-right text-xl py-2 px-4" />
+                  </div>
+
+                  <div className={`p-6 flex flex-col md:flex-row justify-between items-center gap-4 ${consensusColor}`}>
+                    <div className="text-sm font-bold uppercase tracking-widest opacity-80">CONSENSUS {consensusMsg}</div>
+                    <div className="text-2xl font-black uppercase tracking-wider px-6 py-2 rounded-xl action-hover-effect">
+                      100% BUY {consensusTarget}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="tech-panel p-8 h-[500px] flex flex-col overflow-hidden">
+                  <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200 mb-6 flex items-center gap-2">
+                    <svg className="w-5 h-5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+                    RADAR (LAST 10)
+                  </h2>
+                  <div className="w-full flex-1 relative"><canvas ref={chartRef}></canvas></div>
+                </div>
+
+                <div className="tech-panel p-0 overflow-hidden border-violet-300 dark:border-violet-700">
+                  <h2 className="text-xl font-black uppercase bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 p-6 flex items-center gap-2">
+                    <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    HISTORY MATRIX
+                  </h2>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left whitespace-nowrap text-sm font-mono">
+                      <thead>
+                        <tr className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 text-slate-400">
+                          <th className="p-4 font-semibold uppercase tracking-wider">TIME</th>
+                          <th className="p-4 font-semibold uppercase tracking-wider text-right">L</th>
+                          <th className="p-4 font-semibold uppercase tracking-wider text-right">C50</th>
+                          <th className="p-4 font-semibold uppercase tracking-wider text-right">C733</th>
+                          <th className="p-4 font-semibold uppercase tracking-wider text-right">P1</th>
+                          <th className="p-4 font-semibold uppercase tracking-wider text-right">MR%</th>
+                          <th className="p-4 font-semibold uppercase tracking-wider text-right">P1%</th>
+                          <th className="p-4 text-center font-semibold uppercase tracking-wider">ACT</th>
+                        </tr>
+                      </thead>
+                      <tbody className="text-slate-600 dark:text-slate-300 font-bold bg-white dark:bg-slate-900">
+                        {history.map((item, idx) => (
+                          <tr key={idx} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                            <td className="p-4 text-sky-600 dark:text-sky-400">{item.dateId}</td>
+                            <td className="p-4 text-right">{formatNumber(item.lAmount)}</td>
+                            <td className="p-4 text-right">{formatNumber(item.c0050)}</td>
+                            <td className="p-4 text-right">{formatNumber(item.c00733)}</td>
+                            <td className="p-4 text-right">{formatNumber(item.p1Value)}</td>
+                            <td className="p-4 text-right text-emerald-500">{item.nominalMR}%</td>
+                            <td className="p-4 text-right text-violet-500 dark:text-violet-400">{item.p1Ratio}%</td>
+                            <td className="p-4 text-center">
+                              <button onClick={() => handleDelete(item.dateId)} className="text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 px-3 py-1 rounded-full transition-colors text-xs font-bold">DEL</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+            <div className="text-center mt-16 relative z-20 pb-8">
+              <div className="inline-block bg-white dark:bg-slate-900 text-slate-400 text-sm font-bold uppercase tracking-widest px-8 py-3 rounded-full border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all cursor-crosshair">
+                AUTHORIZED BY CHANGSHENG LIU
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    /* ===================================================================
+       總資產 (Amber Terminal) 子元件 — theme 由 AppShell 注入
+    =================================================================== */
+    const ScrambleText = ({ text }) => {
+        const [display, setDisplay] = useState(text);
+        useEffect(() => {
+            let iterations = 0;
+            const letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*";
+            const textStr = String(text);
+            const interval = setInterval(() => {
+                setDisplay(textStr.split("").map((letter, index) => {
+                    if(index < iterations) return textStr[index];
+                    return letters[Math.floor(Math.random() * letters.length)];
+                }).join(""));
+                if(iterations >= textStr.length) clearInterval(interval);
+                iterations += 1 / 2;
+            }, 30);
+            return () => clearInterval(interval);
+        }, [text]);
+        return <span className="vibe-hover-text">{display}</span>;
+    };
+
+    const OdometerDigit = ({ digit }) => {
+        const actualTarget = parseInt(digit);
+        const [displayTarget, setDisplayTarget] = useState(0);
+        const [transitionStyle, setTransitionStyle] = useState('transform 2s cubic-bezier(0.16, 1, 0.3, 1)');
+
+        useEffect(() => {
+            if (isNaN(actualTarget)) return;
+            let initTimer = setTimeout(() => { setDisplayTarget(actualTarget); }, 50);
+            const rollInterval = setInterval(() => {
+                const staggerDelay = Math.random() * 800;
+                setTimeout(() => {
+                    setTransitionStyle('transform 0.4s cubic-bezier(0.5, 0, 0.5, 1)');
+                    setDisplayTarget((actualTarget + Math.floor(Math.random() * 8) + 1) % 10);
+                    setTimeout(() => {
+                        setTransitionStyle('transform 0.7s cubic-bezier(0.16, 1, 0.3, 1)');
+                        setDisplayTarget(actualTarget);
+                    }, 400);
+                }, staggerDelay);
+            }, 4000);
+            return () => { clearTimeout(initTimer); clearInterval(rollInterval); };
+        }, [actualTarget]);
+
+        if (digit === '.') return <span className="text-3xl font-extrabold text-slate-800 dark:text-amber-500 mx-1 mb-1 self-end vibe-hover-text">.</span>;
+        if (isNaN(actualTarget)) return <span className="text-3xl font-extrabold text-slate-800 dark:text-amber-500 mx-1 mb-1 self-end vibe-hover-text">{digit}</span>;
+
+        return (
+            <div className="odometer-digit-container">
+                <div className="absolute inset-0 bg-gradient-to-b from-white dark:from-slate-900 via-transparent to-white dark:to-slate-900 z-10 pointer-events-none opacity-80"></div>
+                <div className="absolute top-1/2 left-0 right-0 h-[1px] bg-slate-200 dark:bg-amber-500/50 -translate-y-1/2 z-20 pointer-events-none shadow-[0_1px_0_rgba(255,255,255,0.8)] dark:shadow-[0_1px_0_rgba(0,0,0,0.8)]"></div>
+                <div className="odometer-track" style={{ transform: "translateY(-" + (displayTarget * 54) + "px)", transition: transitionStyle }}>
+                    {[0,1,2,3,4,5,6,7,8,9].map(n => ( <div key={n} className="odometer-num">{n}</div> ))}
+                </div>
+            </div>
+        );
+    };
+
+    const AirportNumberBoard = ({ value }) => {
+        return (
+            <span className="font-bold flex items-center justify-center font-mono relative z-10 h-[54px] vibe-hover-text">
+                {value.split('').map((char, index) => (<OdometerDigit key={index + "-" + char} digit={char} />))}
+                <span className="text-3xl font-bold text-slate-500 dark:text-amber-600/70 ml-2 mt-[6px]">%</span>
+            </span>
+        );
+    };
+
+    const parseYMD = (val) => {
+        if (!val) return new Date();
+        if (val instanceof Date) return val;
+        const s = String(val).trim();
+        if (/^\d{8}$/.test(s)) return new Date(s.slice(0, 4), parseInt(s.slice(4, 6), 10) - 1, s.slice(6, 8));
+        const parsed = new Date(s);
+        return isNaN(parsed.getTime()) ? new Date() : parsed;
+    };
+
+    const formatYMD = (val) => {
+        if (!val) return '';
+        if (val instanceof Date) {
+            const y = val.getFullYear();
+            const m = String(val.getMonth() + 1).padStart(2, '0');
+            const d = String(val.getDate()).padStart(2, '0');
+            return y + "/" + m + "/" + d;
+        }
+        const s = String(val).trim();
+        if (/^\d{8}$/.test(s)) return s.slice(0,4) + "/" + s.slice(4,6) + "/" + s.slice(6,8);
+        return s;
+    };
+
+    const getTodayYMD = () => {
+        const d = new Date();
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return y + m + day;
+    };
+
+    const compoundTargets = [
+        { level: 1, target: 2561979, age: 39, year: 2024 },
+        { level: 2, target: 3074375, age: 40, year: 2025 },
+        { level: 3, target: 3689250, age: 41, year: 2026 },
+        { level: 4, target: 4427100, age: 42, year: 2027 },
+        { level: 5, target: 4555067, age: 43, year: 2028 },
+        { level: 6, target: 4555067, age: 44, year: 2029 },
+        { level: 7, target: 5312519, age: 45, year: 2030 },
+        { level: 8, target: 5466080, age: 46, year: 2031 },
+        { level: 9, target: 5898080, age: 47, year: 2032 },
+        { level: 10, target: 6375023, age: 48, year: 2033 },
+        { level: 11, target: 6559296, age: 49, year: 2034 },
+        { level: 12, target: 7509696, age: 50, year: 2035 },
+        { level: 13, target: 7650028, age: 51, year: 2036 },
+        { level: 14, target: 7871156, age: 52, year: 2037 },
+        { level: 15, target: 9180034, age: 53, year: 2038 },
+        { level: 16, target: 9443636, age: 54, year: 2039 },
+        { level: 17, target: 9445387, age: 55, year: 2040 },
+        { level: 18, target: 11016040, age: 56, year: 2041 },
+        { level: 19, target: 11334464, age: 57, year: 2042 },
+        { level: 20, target: 11764363, age: 58, year: 2043 },
+        { level: 21, target: 13219248, age: 59, year: 2044 },
+        { level: 22, target: 13601357, age: 60, year: 2045 },
+        { level: 23, target: 14549236, age: 61, year: 2046 },
+        { level: 24, target: 15863098, age: 62, year: 2047 },
+        { level: 25, target: 16321629, age: 63, year: 2048 },
+        { level: 26, target: 17891083, age: 64, year: 2049 },
+        { level: 27, target: 19035718, age: 65, year: 2050 },
+        { level: 28, target: 19585954, age: 66, year: 2051 },
+        { level: 29, target: 21901299, age: 67, year: 2052 },
+        { level: 30, target: 22842861, age: 68, year: 2053 },
+        { level: 31, target: 23503145, age: 69, year: 2054 },
+        { level: 32, target: 26713559, age: 70, year: 2055 },
+        { level: 33, target: 27411433, age: 71, year: 2056 },
+        { level: 34, target: 28203774, age: 72, year: 2057 },
+        { level: 35, target: 32488271, age: 73, year: 2058 },
+        { level: 36, target: 32893720, age: 74, year: 2059 },
+        { level: 37, target: 33844529, age: 75, year: 2060 },
+        { level: 38, target: 39417925, age: 76, year: 2061 },
+        { level: 39, target: 39472464, age: 77, year: 2062 },
+        { level: 40, target: 40613435, age: 78, year: 2063 },
+        { level: 41, target: 47366957, age: 79, year: 2064 },
+        { level: 42, target: 47733510, age: 80, year: 2065 },
+        { level: 43, target: 48736122, age: 81, year: 2066 },
+        { level: 44, target: 56840348, age: 82, year: 2067 },
+        { level: 45, target: 57712212, age: 83, year: 2068 },
+        { level: 46, target: 58483346, age: 84, year: 2069 },
+        { level: 47, target: 68208418, age: 85, year: 2070 },
+        { level: 48, target: 69686654, age: 86, year: 2071 },
+        { level: 49, target: 70180016, age: 87, year: 2072 },
+        { level: 50, target: 81850101, age: 88, year: 2073 },
+        { level: 51, target: 84055985, age: 89, year: 2074 },
+        { level: 52, target: 84216019, age: 90, year: 2075 },
+        { level: 53, target: 101059222, age: 91, year: 2076 },
+        { level: 54, target: 101299182, age: 92, year: 2077 },
+        { level: 55, target: 121271067, age: 93, year: 2078 },
+        { level: 56, target: 121991019, age: 94, year: 2079 },
+        { level: 57, target: 145525280, age: 95, year: 2080 },
+        { level: 58, target: 146821222, age: 96, year: 2081 },
+        { level: 59, target: 176617467, age: 97, year: 2082 },
+        { level: 60, target: 212372960, age: 98, year: 2083 }
+    ];
+
+    const YtdAssetCell = ({ currentVal, baseVal, isBase }) => {
+        const valStr = Number(currentVal).toLocaleString();
+        if (isBase) {
+            return (
+                <div className="flex flex-col">
+                    <span className="text-2xl font-mono text-slate-500 dark:text-amber-200/70">{valStr}</span>
+                    <span className="text-xs font-mono text-slate-400/50 dark:text-amber-700/50 mt-1">BASE</span>
+                </div>
+            );
+        }
+        if (baseVal === 0) {
+            return (
+                <div className="flex flex-col">
+                    <span className="text-2xl font-mono text-slate-500 dark:text-amber-200/70">{valStr}</span>
+                    <span className={"text-sm font-mono font-bold mt-1 " + (currentVal > 0 ? "text-emerald-500 dark:text-emerald-400" : "text-slate-400 dark:text-amber-700/50")}>
+                        {currentVal > 0 ? <span>NEW</span> : <span>0.00%</span>}
+                    </span>
+                </div>
+            );
+        }
+        const diff = currentVal - baseVal;
+        const pct = (diff / baseVal) * 100;
+        return (
+            <div className="flex flex-col">
+                <span className="text-2xl font-mono text-slate-500 dark:text-amber-200/70">{valStr}</span>
+                <span className={"text-sm font-mono font-bold mt-1 " + (diff >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400")}>
+                    {diff >= 0 ? <span>▲ +{pct.toFixed(2)}%</span> : <span>▼ {pct.toFixed(2)}%</span>}
+                </span>
+            </div>
+        );
+    };
+
+    const AssetTerminal = ({ theme }) => {
+        const tierConfigs = useMemo(() => {
+            return compoundTargets.map((data, index) => {
+                let colorsLight = "from-cyan-500 via-blue-500 to-indigo-500";
+                let colorsDark = "from-amber-600 via-yellow-500 to-emerald-400";
+                if (index >= 10) { colorsLight = "from-emerald-500 via-teal-500 to-cyan-500"; colorsDark = "from-cyan-600 via-blue-500 to-purple-400"; }
+                if (index >= 20) { colorsLight = "from-violet-500 via-purple-500 to-fuchsia-500"; colorsDark = "from-indigo-600 via-purple-500 to-pink-500"; }
+                if (index >= 30) { colorsLight = "from-rose-500 via-pink-500 to-orange-500"; colorsDark = "from-rose-600 via-pink-500 to-orange-400"; }
+                if (index >= 40) { colorsLight = "from-amber-500 via-orange-500 to-rose-500"; colorsDark = "from-red-600 via-orange-500 to-yellow-400"; }
+                if (index >= 50) { colorsLight = "from-fuchsia-500 via-pink-500 to-rose-500"; colorsDark = "from-emerald-600 via-lime-400 to-cyan-400"; }
+                return {
+                    ...data,
+                    name: "PROJECT_LVL_" + data.level,
+                    colors: theme === 'dark' ? colorsDark : colorsLight
+                };
+            });
+        }, [theme]);
+
+        const [data, setData] = useState([]);
+        const [marketData, setMarketData] = useState(null);
+        const [loading, setLoading] = useState(true);
+        const [isSubmitting, setIsSubmitting] = useState(false);
+        const [expandedYears, setExpandedYears] = useState({});
+        const [visibleRows, setVisibleRows] = useState({});
+        const [chartFilter, setChartFilter] = useState('last20');
+        const [editingRow, setEditingRow] = useState(null);
+        const [editFormData, setEditFormData] = useState({});
+        const [barProgress, setBarProgress] = useState(0);
+        const [hoveredAsset, setHoveredAsset] = useState(null);
+        const [showDestinyModal, setShowDestinyModal] = useState(false);
+
+        const [timeShiftYear, setTimeShiftYear] = useState('ALL_TIME');
+
+        const lineChartRef = useRef(null);
+        const lineChartInstance = useRef(null);
+        const donutChartRef = useRef(null);
+        const donutChartInstance = useRef(null);
+
+        // ★ 切 Tab 卸載時銷毀 Chart 實例 + 取消彗星動畫 rAF
+        useEffect(() => () => {
+            if (lineChartInstance.current) { try { cancelAnimationFrame(lineChartInstance.current.animFrame); lineChartInstance.current.destroy(); } catch(e){} lineChartInstance.current = null; }
+            if (donutChartInstance.current) { try { donutChartInstance.current.destroy(); } catch(e){} donutChartInstance.current = null; }
+        }, []);
+
+        const [formData, setFormData] = useState({ date: getTodayYMD(), twStock: '', usStockUsd: '', crypto: '', note: '' });
+
+        const loadTerminalData = () => {
+            fetchMatrix('getDashboardData')
+                .then((res) => {
+                    const sortedData = [...res].sort((a, b) => String(a.日期).localeCompare(String(b.日期)));
+                    setData(sortedData);
+                    setLoading(false);
+                })
+                .catch((err) => {
+                    console.error("Data Fetch Error:", err);
+                    setLoading(false);
+                });
+
+            fetchMatrix('getMarketStatus')
+                .then((res) => { if(res.status === 'success') setMarketData(res); })
+                .catch(console.error);
+        };
+
+        useEffect(() => { loadTerminalData(); }, []);
+
+        const processedData = useMemo(() => {
+            if (!data || data.length === 0) return [];
+            let currentTier = 0;
+            for (let item of data) {
+                let year = item.日期 instanceof Date ? String(item.日期.getFullYear()) : String(item.日期).substring(0, 4);
+                if (year < '2024') {
+                    const total = Number(item.總資產) || 0;
+                    let lvl = compoundTargets.findIndex(t => total < t.target);
+                    currentTier = lvl === -1 ? 60 : lvl + 1;
+                } else break;
+            }
+            return data.map((item, index) => {
+                const newItem = { ...item };
+                let year = item.日期 instanceof Date ? String(item.日期.getFullYear()) : String(item.日期).substring(0, 4);
+                const total = Number(newItem.總資產) || 0;
+
+                let lvlIdx = compoundTargets.findIndex(t => total < t.target);
+                let tier = lvlIdx === -1 ? 60 : lvlIdx + 1;
+
+                if (year >= '2024') {
+                    if (tier > currentTier) { newItem.milestone = 'up'; newItem.tier = tier; currentTier = tier; }
+                    else if (tier < currentTier) { newItem.milestone = 'down'; newItem.prevTier = currentTier; currentTier = tier; }
+                }
+                return newItem;
+            });
+        }, [data]);
+
+        const groupedRecords = useMemo(() => {
+            const groups = {};
+            for (let i = processedData.length - 1; i >= 0; i--) {
+                const item = processedData[i];
+                let year = item.日期 instanceof Date ? String(item.日期.getFullYear()) : String(item.日期).substring(0, 4);
+                if (!groups[year]) groups[year] = [];
+                groups[year].push(item);
+            }
+            return groups;
+        }, [processedData]);
+
+        const sortedYears = Object.keys(groupedRecords).sort((a, b) => b - a);
+        const timeShiftOptions = ['ALL_TIME', ...sortedYears];
+
+        useEffect(() => {
+            if (sortedYears.length > 0 && Object.keys(expandedYears).length === 0) {
+                setExpandedYears({ [sortedYears[0]]: true });
+                setVisibleRows({ [sortedYears[0]]: 30 });
+            }
+        }, [sortedYears, expandedYears]);
+
+        const toggleYear = (year) => {
+            setExpandedYears(prev => ({ ...prev, [year]: !prev[year] }));
+            if (!visibleRows[year]) setVisibleRows(prev => ({ ...prev, [year]: 30 }));
+        };
+
+        const loadMoreRows = (year) => { setVisibleRows(prev => ({ ...prev, [year]: (prev[year] || 30) + 50 })); };
+
+        const fxRate = marketData ? marketData.fxRate : 32.5;
+
+        useEffect(() => {
+            if (data.length > 0 && lineChartRef.current && donutChartRef.current) {
+                const latestRecord = data[data.length - 1];
+                const tw = Number(latestRecord.台股) || 0;
+                const us = Number(latestRecord.美股) || 0;
+                const cr = Number(latestRecord.加密貨幣) || 0;
+                const totalAssets = Number(latestRecord.總資產) || 0;
+
+                if (lineChartInstance.current) {
+                    cancelAnimationFrame(lineChartInstance.current.animFrame);
+                    lineChartInstance.current.destroy();
+                }
+
+                const isDark = theme === 'dark';
+                const ctx = lineChartRef.current.getContext('2d');
+                const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+                gradient.addColorStop(0, isDark ? 'rgba(245, 158, 11, 0.3)' : 'rgba(14, 165, 233, 0.3)');
+                gradient.addColorStop(1, isDark ? 'rgba(245, 158, 11, 0.0)' : 'rgba(14, 165, 233, 0.0)');
+                let filteredChartData = chartFilter === 'last20' ? data.slice(-20) : chartFilter === 'all' ? data : data.filter(d => {
+                    let y = d.日期 instanceof Date ? String(d.日期.getFullYear()) : String(d.日期).substring(0, 4);
+                    return y === chartFilter;
+                });
+                if (filteredChartData.length === 0) filteredChartData = data.slice(-20);
+
+                const movingDotPlugin = {
+                    id: 'movingComet',
+                    afterDraw(chart) {
+                        const ctx = chart.ctx;
+                        const meta = chart.getDatasetMeta(0);
+                        if (!meta || !meta.data || meta.data.length < 2) return;
+
+                        const duration = 4000;
+                        const time = performance.now() % duration;
+                        const progress = time / duration;
+
+                        const points = meta.data.map(p => ({ x: p.x, y: p.y }));
+                        let totalLen = 0;
+                        const segments = [];
+                        for (let i = 0; i < points.length - 1; i++) {
+                            const dx = points[i + 1].x - points[i].x;
+                            const dy = points[i + 1].y - points[i].y;
+                            const len = Math.sqrt(dx * dx + dy * dy);
+                            totalLen += len;
+                            segments.push({ len, dx, dy, x1: points[i].x, y1: points[i].y });
+                        }
+
+                        if (totalLen === 0) return;
+
+                        const getPointAtProgress = (p) => {
+                            if (p < 0) return { x: points[0].x, y: points[0].y };
+                            if (p > 1) return { x: points[points.length - 1].x, y: points[points.length - 1].y };
+                            let targetLen = p * totalLen;
+                            let currentLen = 0;
+                            for (let i = 0; i < segments.length; i++) {
+                                const seg = segments[i];
+                                if (currentLen + seg.len >= targetLen) {
+                                    const ratio = seg.len > 0 ? (targetLen - currentLen) / seg.len : 0;
+                                    return { x: seg.x1 + seg.dx * ratio, y: seg.y1 + seg.dy * ratio };
+                                }
+                                currentLen += seg.len;
+                            }
+                            return { x: points[points.length - 1].x, y: points[points.length - 1].y };
+                        };
+
+                        const pos = getPointAtProgress(progress);
+
+                        ctx.save();
+                        for (let i = 1; i <= 40; i++) {
+                            const pastProgress = progress - (i * 0.002);
+                            if (pastProgress < 0) continue;
+                            const pastPos = getPointAtProgress(pastProgress);
+                            const opacity = Math.pow(1 - (i / 40), 1.5);
+                            ctx.fillStyle = isDark ? "rgba(245, 158, 11, " + opacity + ")" : "rgba(14, 165, 233, " + opacity + ")";
+                            ctx.beginPath();
+                            ctx.arc(pastPos.x, pastPos.y, 4.5 * (1 - (i / 40)), 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+
+                        ctx.shadowColor = isDark ? 'rgba(245, 158, 11, 0.6)' : 'rgba(14, 165, 233, 0.6)';
+                        ctx.shadowBlur = 15;
+                        ctx.fillStyle = isDark ? '#fdfefe' : '#ffffff';
+                        ctx.beginPath(); ctx.arc(pos.x, pos.y, 5, 0, Math.PI * 2); ctx.fill();
+
+                        ctx.fillStyle = isDark ? '#fdefb0' : '#0ea5e9';
+                        ctx.beginPath(); ctx.arc(pos.x, pos.y, 2.5, 0, Math.PI * 2); ctx.fill();
+                        ctx.restore();
+
+                        if (chart.canvas && chart.canvas.isConnected) {
+                            cancelAnimationFrame(chart.animFrame);
+                            chart.animFrame = requestAnimationFrame(() => chart.draw());
+                        }
+                    }
+                };
+
+                lineChartInstance.current = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: filteredChartData.map(d => formatYMD(d.日期)),
+                        datasets: [{ data: filteredChartData.map(d => Number(d.總資產) || 0), borderColor: isDark ? '#f59e0b' : '#0ea5e9', borderWidth: 4, fill: true, backgroundColor: gradient, tension: 0.3, pointRadius: 3, pointHoverRadius: 8, pointBackgroundColor: '#fff' }]
+                    },
+                    plugins: [movingDotPlugin],
+                    options: {
+                        responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+                        plugins: { legend: { display: false }, tooltip: { backgroundColor: isDark ? 'rgba(15, 23, 42, 0.95)' : 'rgba(255, 255, 255, 0.95)', titleColor: isDark ? '#f59e0b' : '#0f172a', bodyColor: isDark ? '#fdfefe' : '#0f172a', borderColor: isDark ? '#334155' : '#e2e8f0', borderWidth: 1, titleFont: { family: 'JetBrains Mono', size: 18 }, bodyFont: { family: 'JetBrains Mono', weight: 'bold', size: 18 } } },
+                        scales: { y: { grid: { color: isDark ? 'rgba(245,158,11,0.05)' : 'rgba(15,23,42,0.05)' }, ticks: { color: isDark ? '#f59e0b' : '#64748b', font: {family: 'JetBrains Mono', size: 16, weight: 'bold'} } }, x: { grid: { display: false }, ticks: { color: isDark ? '#f59e0b' : '#64748b', font: {family: 'JetBrains Mono', size: 16, weight: 'bold'} } } }
+                    }
+                });
+
+                if (donutChartInstance.current) donutChartInstance.current.destroy();
+                const ctxDonut = donutChartRef.current.getContext('2d');
+                const gradTW = ctxDonut.createLinearGradient(0, 0, 0, 400); gradTW.addColorStop(0, isDark ? '#fef08a' : '#38bdf8'); gradTW.addColorStop(1, isDark ? '#eab308' : '#0284c7');
+                const gradUS = ctxDonut.createLinearGradient(0, 0, 0, 400); gradUS.addColorStop(0, isDark ? '#fbbf24' : '#818cf8'); gradUS.addColorStop(1, isDark ? '#b45309' : '#4f46e5');
+                const gradCR = ctxDonut.createLinearGradient(0, 0, 0, 400); gradCR.addColorStop(0, isDark ? '#f59e0b' : '#34d399'); gradCR.addColorStop(1, isDark ? '#78350f' : '#059669');
+                const emptyBg = isDark ? 'rgba(245, 158, 11, 0.05)' : 'rgba(241, 245, 249, 1)';
+                const donutBorder = isDark ? '#020617' : '#ffffff';
+
+                donutChartInstance.current = new Chart(ctxDonut, {
+                    type: 'doughnut',
+                    data: { labels: ['TW', 'US', 'Crypto'], datasets: [
+                        { label: 'TW', data: [tw, Math.max(totalAssets - tw, 0)], backgroundColor: [gradTW, emptyBg], borderWidth: 3, borderColor: donutBorder, borderRadius: [8, 0] },
+                        { label: 'US', data: [us, Math.max(totalAssets - us, 0)], backgroundColor: [gradUS, emptyBg], borderWidth: 3, borderColor: donutBorder, borderRadius: [8, 0] },
+                        { label: 'Crypto', data: [cr, Math.max(totalAssets - cr, 0)], backgroundColor: [gradCR, emptyBg], borderWidth: 3, borderColor: donutBorder, borderRadius: [8, 0] }
+                    ]},
+                    options: { responsive: true, maintainAspectRatio: false, cutout: '30%', layout: { padding: 10 }, plugins: { legend: { display: false }, tooltip: { enabled: false } } }
+                });
+            }
+        }, [data, fxRate, chartFilter, theme]);
+
+        const handleInputChange = (e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+
+        const handleSubmit = (e) => {
+            e.preventDefault();
+            setIsSubmitting(true);
+            const usStockUsd = Number(formData.usStockUsd || 0);
+            const usStockTwd = Math.round(usStockUsd * fxRate);
+            const payload = { date: formData.date, twStock: formData.twStock, usStock: usStockTwd, crypto: formData.crypto, note: formData.note, total: Math.round(Number(formData.twStock || 0) + usStockTwd + Number(formData.crypto || 0)) };
+
+            const previousData = [...data];
+            const tempId = 'temp-' + Date.now();
+            setData(prev => [...prev, { _rowIndex: tempId, 日期: payload.date, 台股: payload.twStock, 美股: payload.usStock, 加密貨幣: payload.crypto, 總資產: payload.total, 備註: payload.note }].sort((a, b) => String(a.日期).localeCompare(String(b.日期))));
+            setFormData({ date: getTodayYMD(), twStock: '', usStockUsd: '', crypto: '', note: '' });
+
+            fetchMatrix('addEntry', payload)
+                .then((res) => {
+                    setIsSubmitting(false);
+                    if (res.status === 'success') {
+                        setData(prev => prev.map(item => item._rowIndex === tempId ? { ...item, _rowIndex: res.newRowIndex } : item));
+                    } else {
+                        setData(previousData);
+                        alert("SYNC ERROR");
+                    }
+                })
+                .catch((err) => {
+                    setIsSubmitting(false);
+                    setData(previousData);
+                    alert("NETWORK ERROR");
+                });
+        };
+
+        const handleDelete = (rowIndex) => {
+            if(window.confirm("CONFIRM DELETE?")) {
+                const previousData = [...data];
+                setData(prev => prev.filter(item => item._rowIndex !== rowIndex));
+
+                fetchMatrix('deleteEntry', { rowIndex })
+                    .then((res) => {
+                        if(res.status !== 'success') {
+                            setData(previousData);
+                            alert("DELETE ERROR");
+                        }
+                    })
+                    .catch(() => setData(previousData));
+            }
+        };
+
+        const startEdit = (item) => { setEditingRow(item._rowIndex); setEditFormData({ date: formatYMD(item.日期).replace(/\//g, ''), twStock: item.台股, usStock: item.美股, crypto: item.加密貨幣, note: item.備註 || '' }); };
+        const handleEditChange = (e) => setEditFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+
+        const saveEdit = (rowIndex) => {
+            const total = Math.round(Number(editFormData.twStock || 0) + Number(editFormData.usStock || 0) + Number(editFormData.crypto || 0));
+            const previousData = [...data];
+            setData(prev => prev.map(item => item._rowIndex === rowIndex ? { ...item, 日期: editFormData.date, 台股: editFormData.twStock, 美股: editFormData.usStock, 加密貨幣: editFormData.crypto, 總資產: total, 備註: editFormData.note } : item).sort((a, b) => String(a.日期).localeCompare(String(b.日期))));
+            setEditingRow(null);
+
+            fetchMatrix('updateEntry', { rowIndex, ...editFormData, total })
+                .then((res) => {
+                    if(res.status !== 'success') {
+                        setData(previousData);
+                        alert("UPDATE ERROR");
+                    }
+                })
+                .catch(() => setData(previousData));
+        };
+
+        const handleMouseMove = (e) => { const { currentTarget, clientX, clientY } = e; const { left, top } = currentTarget.getBoundingClientRect(); currentTarget.style.setProperty('--mouse-x', (clientX - left) + "px"); currentTarget.style.setProperty('--mouse-y', (clientY - top) + "px"); };
+
+        const latestForStats = data.length > 0 ? data[data.length - 1] : { 台股: 0, 美股: 0, 加密貨幣: 0, 總資產: 0, 日期: '' };
+        const totalAssets = Number(latestForStats.總資產) || 0;
+
+        const prevRecord = data.length > 1 ? data[data.length - 2] : latestForStats;
+        const momDeltaAmt = totalAssets - (Number(prevRecord.總資產) || 0);
+        const momDeltaPct = (Number(prevRecord.總資產) || 0) > 0 ? (momDeltaAmt / Number(prevRecord.總資產)) * 100 : 0;
+
+        const athRecord = useMemo(() => {
+            if (!data || data.length === 0) return null;
+            return data.reduce((maxItem, item) => {
+                return (Number(item.總資產) || 0) > (Number(maxItem.總資產) || 0) ? item : maxItem;
+            }, data[0]);
+        }, [data]);
+
+        const ath = athRecord ? (Number(athRecord.總資產) || 0) : 0;
+        const athDate = athRecord ? formatYMD(athRecord.日期) : '--';
+        const isATH = totalAssets >= ath && totalAssets > 0;
+        const previousDataForAth = data.length > 1 ? data.slice(0, -1) : data;
+        const prevAth = useMemo(() => previousDataForAth.reduce((max, item) => Math.max(max, Number(item.總資產) || 0), 0), [previousDataForAth]);
+        const athBreakoutAmount = totalAssets - prevAth;
+        const athDeficitAmt = ath - totalAssets;
+        const athDeficitPct = ath > 0 ? (athDeficitAmt / ath) * 100 : 0;
+
+        const targetRecords = useMemo(() => {
+            if (!data || data.length === 0) return [];
+            if (timeShiftYear === 'ALL_TIME') return data;
+            return data.filter(d => {
+                let y = d.日期 instanceof Date ? String(d.日期.getFullYear()) : String(d.日期).substring(0, 4);
+                return y === timeShiftYear;
+            });
+        }, [data, timeShiftYear]);
+
+        const timeShiftBaseAsset = targetRecords.length > 0 ? (Number(targetRecords[0].總資產) || 1) : 1;
+        const timeShiftLatestAsset = targetRecords.length > 0 ? (Number(targetRecords[targetRecords.length - 1].總資產) || 0) : 0;
+        const dynamicPlAmt = targetRecords.length > 0 ? (timeShiftLatestAsset - timeShiftBaseAsset) : 0;
+        const dynamicGrowthPct = targetRecords.length > 0 && timeShiftBaseAsset > 0 ? ((timeShiftLatestAsset - timeShiftBaseAsset) / timeShiftBaseAsset) * 100 : 0;
+
+        const { cagr, holdingYears } = useMemo(() => {
+            if (targetRecords.length < 2) return { cagr: 0, holdingYears: 0 };
+            const firstData = targetRecords[0];
+            const lastData = targetRecords[targetRecords.length - 1];
+            const beginAsset = Number(firstData.總資產) || 1;
+            const endAsset = Number(lastData.總資產) || 0;
+
+            const firstDateObj = parseYMD(firstData.日期);
+            const lastDateObj = parseYMD(lastData.日期);
+
+            const msPerDay = 1000 * 60 * 60 * 24;
+            let days = (lastDateObj - firstDateObj) / msPerDay;
+            if (days <= 0) days = 1;
+
+            const years = days / 365.25;
+            const cagrValue = (Math.pow(endAsset / beginAsset, 1 / years) - 1) * 100;
+
+            return { cagr: cagrValue, holdingYears: years };
+        }, [targetRecords]);
+
+        const extremesCalc = useMemo(() => {
+            if (targetRecords.length === 0) return { h: 0, hDate: '--', l: 0, lDate: '--' };
+            let hItem = targetRecords[0];
+            let lItem = targetRecords[0];
+            targetRecords.forEach(item => {
+                const val = Number(item.總資產) || 0;
+                if (val > (Number(hItem.總資產) || 0)) hItem = item;
+                if (val < (Number(lItem.總資產) || Infinity)) lItem = item;
+            });
+            return {
+                h: Number(hItem.總資產) || 0,
+                hDate: formatYMD(hItem.日期),
+                l: Number(lItem.總資產) || 0,
+                lDate: formatYMD(lItem.日期)
+            };
+        }, [targetRecords]);
+
+        const extHigh = extremesCalc.h;
+        const extHighDate = extremesCalc.hDate;
+        const extLow = extremesCalc.l;
+        const extLowDate = extremesCalc.lDate;
+
+        const { opDays, dailyVelocity } = useMemo(() => {
+            if (targetRecords.length < 2) return { opDays: 1, dailyVelocity: 0 };
+            const firstData = targetRecords[0];
+            const lastData = targetRecords[targetRecords.length - 1];
+
+            const firstDateObj = parseYMD(firstData.日期);
+            const lastDateObj = parseYMD(lastData.日期);
+            const msPerDay = 1000 * 60 * 60 * 24;
+            let days = Math.ceil((lastDateObj - firstDateObj) / msPerDay);
+            if (days <= 0) days = 1;
+
+            const beginAsset = Number(firstData.總資產) || 1;
+            const endAsset = Number(lastData.總資產) || 0;
+            const plAmt = endAsset - beginAsset;
+
+            return { opDays: days, dailyVelocity: plAmt / days };
+        }, [targetRecords]);
+
+        let currentTierIndex = tierConfigs.findIndex(t => totalAssets < t.target);
+        if (currentTierIndex === -1) currentTierIndex = tierConfigs.length - 1;
+        const activeTier = tierConfigs[currentTierIndex];
+
+        const progressPercent = activeTier.target > 0 ? Math.min((totalAssets / activeTier.target) * 100, 100).toFixed(2) : 0;
+
+        const currentYear = new Date().getFullYear();
+        const yearsAhead = activeTier.year > currentYear ? activeTier.year - currentYear : 0;
+
+        const momDeltaIsPos = momDeltaAmt >= 0;
+        const velocityIsPos = dailyVelocity >= 0;
+        const growthIsPos = dynamicGrowthPct >= 0;
+        const cagrIsPos = cagr >= 0;
+        const isFIRE = totalAssets >= 30000000;
+
+        useEffect(() => {
+            if (!loading && totalAssets > 0) {
+                setBarProgress(0);
+                setTimeout(() => { setBarProgress(progressPercent); }, 300);
+            }
+        }, [loading, totalAssets, progressPercent, currentTierIndex]);
+
+        if (loading && data.length === 0) return ( <div className="amber-scope flex h-screen items-center justify-center font-mono text-4xl text-slate-800 dark:text-amber-500 tracking-widest font-bold"><ScrambleText text="INITIALIZING_AMBER_ MATRIX..." /></div> );
+
+        const twVal = Number(latestForStats.台股) || 0;
+        const usVal = Number(latestForStats.美股) || 0;
+        const crVal = Number(latestForStats.加密貨幣) || 0;
+
+        return (
+            <div className="amber-scope p-6 md:p-10 max-w-7xl mx-auto space-y-12 animate-in relative pb-24">
+                <div className="cyber-grid"></div>
+
+                {isFIRE && (
+                    <div className="w-full fire-bg p-1 rounded-2xl mb-8 shadow-2xl animate-pulse">
+                        <div className="bg-white/90 dark:bg-slate-900/90 backdrop-blur rounded-xl p-6 text-center">
+                            <span className="text-3xl md:text-5xl font-black font-mono bg-clip-text text-transparent bg-gradient-to-r from-amber-500 via-pink-500 to-purple-600 tracking-[0.2em] drop-shadow-sm">
+                                <span>🎉 FINANCIAL FREEDOM ACHIEVED 🎉</span>
+                            </span>
+                        </div>
+                    </div>
+                )}
+
+                {showDestinyModal && (
+                    <div className="fixed inset-0 bg-slate-900/40 dark:bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100]" onClick={() => setShowDestinyModal(false)}>
+                        <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl max-w-lg w-full max-h-[80vh] overflow-y-auto shadow-2xl border border-slate-200 dark:border-amber-500/30 modal-scroll" onClick={e => e.stopPropagation()}>
+                            <div className="flex justify-between items-center mb-6 border-b border-slate-100 dark:border-amber-500/20 pb-4 sticky top-0 bg-white dark:bg-slate-900 z-10">
+                                <h2 className="text-2xl font-black font-mono text-slate-800 dark:text-amber-500">DESTINY MATRIX (60 LEVELS)</h2>
+                                <button onClick={() => setShowDestinyModal(false)} className="text-slate-400 dark:text-amber-500/50 hover:text-slate-600 dark:hover:text-amber-400 font-bold text-3xl outline-none transition-colors">&times;</button>
+                            </div>
+                            <div className="space-y-2">
+                                {tierConfigs.map((t, i) => {
+                                    const isCurrent = activeTier.level === t.level;
+                                    const isPassed = totalAssets >= t.target;
+                                    return (
+                                        <div key={i} className={"p-4 flex justify-between items-center rounded-lg border transition-all " + (isCurrent ? "bg-cyan-50 dark:bg-amber-900/30 border-cyan-300 dark:border-amber-400 shadow-md scale-[1.02] my-4" : (isPassed ? "bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-amber-500/20 opacity-50" : "bg-white dark:bg-slate-900 border-slate-100 dark:border-amber-500/10"))}>
+                                            <div className="flex flex-col">
+                                                <span className={"font-mono font-bold " + (isCurrent ? "text-cyan-700 dark:text-amber-400 text-lg" : "text-slate-600 dark:text-amber-500/70")}>LVL {t.level} {isCurrent && <span className="animate-pulse ml-2 text-cyan-600 dark:text-amber-300">👈 CURRENT</span>}</span>
+                                                <span className={"font-mono text-xs " + (isCurrent ? "text-cyan-600 dark:text-amber-300" : "text-slate-400 dark:text-amber-600/50")}>{t.year} (AGE {t.age})</span>
+                                            </div>
+                                            <span className={"font-mono font-black " + (isCurrent ? "text-cyan-700 dark:text-amber-400 text-xl" : "text-slate-700 dark:text-amber-500/80")}>{t.target.toLocaleString()} TWD</span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                <div className="flex flex-col xl:flex-row justify-between items-start gap-12">
+                    <div className="w-full xl:w-5/12">
+                        <h1 className="text-3xl font-bold tracking-widest text-slate-800 dark:text-amber-500 font-mono mb-4 vibe-hover-text"><ScrambleText text="AMBER_ TERMINAL_V9.6 [MATRIX_CORE]" /></h1>
+
+                        <div className="relative z-10 flex flex-wrap items-baseline gap-4 mb-8 cursor-pointer hover:scale-105 transition-transform group" onClick={() => setShowDestinyModal(true)} title="Click to view Destiny Matrix">
+                            <span className="text-7xl md:text-8xl font-bold tracking-tight glass-text-premium block group-hover:text-cyan-600 dark:group-hover:text-amber-300 transition-colors">
+                                <ScrambleText text={totalAssets.toLocaleString()} />
+                            </span>
+                            <span className="text-4xl font-extrabold text-slate-400 dark:text-amber-700 font-mono tracking-wider opacity-80 mt-2 vibe-hover-text">TWD</span>
+                        </div>
+
+                        <div className="w-full glass-card p-6 rounded-xl border-t-[6px] border-slate-800 dark:border-amber-500 relative overflow-hidden transition-all duration-700 shadow-xl">
+                            <div className="absolute top-0 right-0 px-4 py-1 bg-slate-800 dark:bg-amber-600 border-b border-l border-slate-700 dark:border-amber-500 rounded-bl-lg text-xs font-mono font-bold text-white dark:text-slate-900 animate-pulse z-20 shadow-md">OVERDRIVE: LEVEL {activeTier.level}</div>
+
+                            <div className="flex flex-wrap justify-between items-end mb-4 relative z-10 gap-2 mt-4">
+                                <div className="flex items-center gap-3">
+                                    <span className="text-xl font-mono text-slate-800 dark:text-amber-400 font-bold uppercase tracking-widest relative z-10 transition-colors duration-700 vibe-hover-text">{activeTier.name}</span>
+                                    {yearsAhead > 0 && (
+                                        <span className="text-xs md:text-sm font-mono tracking-widest font-bold border border-emerald-500/50 dark:border-cyan-500/50 bg-emerald-50 dark:bg-cyan-900/30 text-emerald-600 dark:text-cyan-400 px-2 py-1 rounded shadow-sm animate-pulse">
+                                            <span>🚀 TIME SKIP: +</span>{yearsAhead}<span> YRS</span>
+                                        </span>
+                                    )}
+                                </div>
+                                <span className="text-4xl font-mono font-bold text-slate-800 dark:text-amber-400 vibe-hover-text">{progressPercent}%</span>
+                            </div>
+                            <div className="h-8 w-full bg-slate-100 dark:bg-slate-800/80 rounded-full overflow-hidden border border-slate-200 dark:border-amber-500/30 relative z-10 shadow-inner">
+                                <div className={"h-full bg-gradient-to-r relative transition-all duration-1000 shadow-md neon-bar " + activeTier.colors} style={{ width: barProgress + "%" }}>
+                                    <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
+                                </div>
+                            </div>
+                            <div className="mt-4 flex flex-col sm:flex-row justify-between text-lg md:text-xl font-mono relative z-10 font-bold opacity-80 gap-2">
+                                <span className="text-slate-600 dark:text-amber-500/80 vibe-hover-text">TARGET: {(activeTier.target).toLocaleString()} TWD</span>
+                                <span className="text-cyan-700 dark:text-cyan-400 text-right vibe-hover-text">ETA: {activeTier.year} [AGE {activeTier.age}]</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="w-full xl:w-7/12 flex flex-col gap-4 relative z-10 pb-4">
+
+                        <div className="flex justify-between items-end border-b-2 border-slate-200 dark:border-amber-500/30 pb-3 mb-2">
+                            <span className="text-xl md:text-2xl font-mono text-slate-800 dark:text-cyan-400 font-extrabold uppercase tracking-widest flex items-center gap-3 vibe-hover-text">
+                                <div className="w-2.5 h-2.5 rounded-full bg-cyan-500 dark:bg-cyan-400 shadow-[0_0_8px_rgba(6,182,212,0.6)] animate-pulse"></div>
+                                戰術矩陣 TACTICAL MATRIX
+                            </span>
+                            <div className="flex items-center gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-amber-500/30 rounded-lg px-3 py-1.5 shadow-sm">
+                                <span className="text-slate-500 dark:text-amber-500/70 font-mono text-xs md:text-sm font-bold tracking-widest hidden sm:block">TIME_SYNC:</span>
+                                <div className="relative pointer-events-auto">
+                                    <select value={timeShiftYear} onChange={(e) => setTimeShiftYear(e.target.value)} className="appearance-none bg-transparent text-cyan-600 dark:text-cyan-400 text-sm md:text-base font-mono font-bold outline-none cursor-pointer hover:text-cyan-700 dark:hover:text-cyan-300 transition-colors pr-5 pl-1 border-none focus:ring-0">
+                                        {timeShiftOptions.map(y => <option key={"sync-" + y} value={y}>[{y}]</option>)}
+                                    </select>
+                                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center text-cyan-500 dark:text-cyan-400">
+                                        <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card" onMouseMove={handleMouseMove}>
+                                <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
+                                    <span className="text-slate-500 dark:text-emerald-500/80 text-sm md:text-base font-mono uppercase tracking-wider font-extrabold shrink-0 vibe-hover-text">動能差值 MOMENTUM DELTA</span>
+                                </div>
+                                <div className="group relative flex-grow cursor-crosshair">
+                                    <div className={"absolute inset-0 px-5 pb-4 flex flex-col justify-center border-l-[6px] transition-all duration-300 group-hover:opacity-0 group-hover:scale-95 bg-slate-50/50 dark:bg-slate-900/50 " + (momDeltaIsPos ? "border-emerald-500" : "border-rose-500")}>
+                                        <span className={"text-3xl md:text-4xl font-mono font-extrabold whitespace-nowrap mb-2 vibe-hover-text " + (momDeltaIsPos ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400")}>
+                                            {momDeltaIsPos ? <span>▲ +</span> : <span>▼ </span>}{Math.abs(momDeltaAmt).toLocaleString()}
+                                        </span>
+                                        <span className={"text-xl md:text-2xl font-mono font-bold vibe-hover-text " + (momDeltaIsPos ? "text-emerald-600/70 dark:text-emerald-500/70" : "text-rose-600/70 dark:text-rose-500/70")}>
+                                            ({momDeltaIsPos ? <span>+</span> : null}{momDeltaPct.toFixed(2)}%)
+                                        </span>
+                                    </div>
+                                    <div className="absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 border-emerald-500 flex flex-col justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl">
+                                        <span className="text-emerald-600 dark:text-emerald-400 text-lg font-bold tracking-widest mb-1">[PULSE_SCAN]</span>
+                                        <span className="text-slate-600 dark:text-emerald-200/80 text-sm md:text-base font-semibold leading-tight">單筆瞬態動能。與前次系統快照對比之絕對金額與增幅比例。</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card" onMouseMove={handleMouseMove}>
+                                <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
+                                    <span className={"text-sm md:text-base font-mono uppercase tracking-wider font-extrabold shrink-0 vibe-hover-text " + (isATH ? "text-cyan-600/70 dark:text-cyan-400/80" : "text-rose-500/70")}>戰損裝甲 ATH RADAR</span>
+                                </div>
+                                <div className="group relative flex-grow cursor-crosshair">
+                                    <div className={"absolute inset-0 px-5 pb-4 flex flex-col justify-center border-l-[6px] transition-all duration-300 group-hover:opacity-0 group-hover:scale-95 bg-slate-50/50 dark:bg-slate-900/50 " + (isATH ? "border-cyan-500 dark:border-cyan-400" : "border-rose-500")}>
+                                        {isATH ? (
+                                            <Fragment>
+                                                <span className="text-3xl md:text-4xl font-mono font-extrabold text-cyan-600 dark:text-cyan-400 whitespace-nowrap mb-1 vibe-hover-text">
+                                                    <span>🚀 ATH SECURED</span>
+                                                </span>
+                                                <div className="w-full bg-slate-200 dark:bg-slate-800/80 h-2 rounded mt-2 overflow-hidden shadow-inner">
+                                                    <div className="bg-cyan-500 dark:bg-cyan-400 h-full w-full shadow-[0_0_10px_rgba(6,182,212,0.8)]"></div>
+                                                </div>
+                                                <span className="text-xs font-mono text-cyan-600 dark:text-cyan-500 font-extrabold tracking-wider mt-1">SHIELD INTEGRITY: 100%</span>
+                                            </Fragment>
+                                        ) : (
+                                            <Fragment>
+                                                <div className="flex justify-between items-end mb-1">
+                                                    <span className="text-2xl md:text-3xl font-mono font-extrabold text-rose-600 dark:text-rose-400 whitespace-nowrap vibe-hover-text">
+                                                        <span>▼ -</span>{athDeficitAmt.toLocaleString()}
+                                                    </span>
+                                                    <span className="text-sm font-mono font-bold text-rose-500/70 vibe-hover-text">MDD: -{athDeficitPct.toFixed(2)}%</span>
+                                                </div>
+                                                <div className="w-full bg-slate-200 dark:bg-slate-800/80 h-3 rounded overflow-hidden shadow-inner relative mt-1 mb-1">
+                                                    <div className="bg-gradient-to-r from-rose-500 to-amber-500 h-full transition-all duration-1000" style={{ width: ((totalAssets / (ath || 1)) * 100) + "%" }}></div>
+                                                </div>
+                                                <div className="flex justify-between text-[10px] font-mono font-bold text-slate-500 dark:text-amber-500/70 mt-1">
+                                                    <span>INTEGRITY: {((totalAssets / (ath || 1)) * 100).toFixed(1)}%</span>
+                                                    <span>RECOVERY: +{((athDeficitAmt / (totalAssets || 1)) * 100).toFixed(1)}%</span>
+                                                </div>
+                                            </Fragment>
+                                        )}
+                                    </div>
+                                    <div className={"absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 flex flex-col justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl " + (isATH ? "border-cyan-500 dark:border-cyan-400/30" : "border-rose-500 dark:border-rose-500/30")}>
+                                        <span className="text-cyan-600 dark:text-cyan-400 text-lg font-bold tracking-widest mb-1">[ARMOR_STATUS]</span>
+                                        <span className="text-slate-600 dark:text-cyan-200/80 text-sm md:text-base font-semibold leading-tight">
+                                            {isATH ? <span>裝甲完好。突破天際，顯示碾壓舊歷史高點的動能金額。</span> : <span>裝甲受損。顯示重返歷史榮耀所需的相對漲幅與當前資本血量。</span>}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card" onMouseMove={handleMouseMove}>
+                                <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
+                                    <span className="text-slate-500 dark:text-amber-600/70 text-sm md:text-base font-mono uppercase tracking-wider font-extrabold shrink-0 vibe-hover-text">損益收益 P&L / YIELD</span>
+                                    <span className="text-slate-400 dark:text-cyan-400/80 text-xs md:text-sm font-mono tracking-widest font-bold vibe-hover-text">[{timeShiftYear}]</span>
+                                </div>
+                                <div className="group relative flex-grow cursor-crosshair">
+                                    <div className={"absolute inset-0 px-5 pb-4 flex flex-col justify-center border-l-[6px] transition-all duration-300 group-hover:opacity-0 group-hover:scale-95 bg-slate-50/50 dark:bg-slate-900/50 " + (dynamicPlAmt >= 0 ? "border-blue-500 dark:border-amber-500" : "border-rose-500")}>
+                                        <span className={"text-3xl md:text-4xl font-mono font-extrabold leading-none mb-3 whitespace-nowrap vibe-hover-text " + (dynamicPlAmt >= 0 ? "text-blue-600 dark:text-amber-400" : "text-rose-600 dark:text-rose-400")}>
+                                            {dynamicPlAmt >= 0 ? <span>▲ +</span> : <span>▼ </span>}{Math.abs(dynamicPlAmt).toLocaleString()}
+                                        </span>
+                                        <span className={"text-2xl md:text-3xl font-mono font-bold whitespace-nowrap vibe-hover-text " + (growthIsPos ? "text-indigo-600 dark:text-blue-400" : "text-rose-600 dark:text-rose-400")}>
+                                            {growthIsPos ? <span className="animate-rocket mr-1">🚀</span> : <span>⚠️ </span>}{growthIsPos ? <span>+</span> : null}{dynamicGrowthPct.toFixed(2)}%
+                                        </span>
+                                    </div>
+                                    <div className="absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 border-blue-500 dark:border-amber-500/30 flex flex-col justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl">
+                                        <span className="text-blue-600 dark:text-amber-500 text-lg font-bold tracking-widest mb-1">[PERFORMANCE_MATRIX]</span>
+                                        <span className="text-slate-600 dark:text-amber-300 text-sm md:text-base font-semibold leading-tight">綜合時空績效矩陣。連動全局年份，同步檢索期間內的絕對淨利與相對增幅。</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card" onMouseMove={handleMouseMove}>
+                                <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
+                                    <span className="text-slate-500 dark:text-blue-500/80 text-sm md:text-base font-mono uppercase tracking-wider font-extrabold shrink-0 vibe-hover-text">年化複利 CAGR ENGINE</span>
+                                    <span className="text-xs md:text-sm font-mono tracking-widest border px-2 py-0.5 rounded border-indigo-200 dark:border-blue-500/30 text-indigo-600 dark:text-blue-400 bg-indigo-50 dark:bg-blue-950/40 font-bold vibe-hover-text">[{holdingYears.toFixed(2)} YRS]</span>
+                                </div>
+                                <div className="group relative flex-grow cursor-crosshair">
+                                    <div className={"absolute inset-0 px-5 pb-4 flex flex-col justify-center border-l-[6px] transition-all duration-300 group-hover:opacity-0 group-hover:scale-95 bg-slate-50/50 dark:bg-slate-900/50 " + (cagrIsPos ? "border-indigo-500 dark:border-blue-500" : "border-rose-500")}>
+                                        <span className={"text-4xl md:text-5xl font-mono font-extrabold whitespace-nowrap vibe-hover-text " + (cagrIsPos ? "text-indigo-600 dark:text-blue-400" : "text-rose-600 dark:text-rose-400")}>
+                                            {cagrIsPos ? <span className="animate-flame mr-1">🔥</span> : <span>❄️ </span>}{cagrIsPos ? <span>+</span> : null}{(isNaN(cagr) ? 0 : cagr).toFixed(2)}%
+                                        </span>
+                                    </div>
+                                    <div className={"absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 flex flex-col justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl " + (cagrIsPos ? "border-indigo-500 dark:border-blue-500/30" : "border-rose-500 dark:border-rose-500/30")}>
+                                        <span className="text-indigo-600 dark:text-blue-400 text-lg font-bold tracking-widest mb-1">[COMPOUND_YIELD]</span>
+                                        <span className="text-slate-600 dark:text-blue-200/80 text-sm md:text-base font-semibold leading-tight">真實年化複利。將期間總增幅依據實際在市天數進行年化權重換算。</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card" onMouseMove={handleMouseMove}>
+                                <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
+                                    <span className="text-slate-500 dark:text-cyan-500/80 text-sm md:text-base font-mono uppercase tracking-wider font-extrabold shrink-0 vibe-hover-text">時空極限 EXTREMES</span>
+                                    <span className="text-slate-400 dark:text-cyan-400/80 text-xs md:text-sm font-mono tracking-widest font-bold vibe-hover-text">[{timeShiftYear}]</span>
+                                </div>
+                                <div className="group relative flex-grow cursor-crosshair">
+                                    <div className="absolute inset-0 px-5 py-2 flex flex-col justify-center border-l-[6px] border-violet-500 dark:border-cyan-500 transition-all duration-300 group-hover:opacity-0 group-hover:scale-95 bg-slate-50/50 dark:bg-slate-900/50">
+                                        <div className="flex justify-between items-center mb-1">
+                                            <div>
+                                                <span className="text-xl font-mono font-extrabold text-violet-600 dark:text-amber-400 block vibe-hover-text">▲ {extHigh.toLocaleString()}</span>
+                                                <span className="text-[10px] font-mono text-slate-400 dark:text-slate-400 font-bold">HIGH: {extHighDate}</span>
+                                            </div>
+                                            <div className="text-right">
+                                                <span className="text-xl font-mono font-extrabold text-violet-400 dark:text-amber-500 block vibe-hover-text">▼ {extLow.toLocaleString()}</span>
+                                                <span className="text-[10px] font-mono text-slate-400 dark:text-slate-400 font-bold">LOW: {extLowDate}</span>
+                                            </div>
+                                        </div>
+                                        <div className="border-t border-violet-200/50 dark:border-cyan-500/30 pt-1 mt-1">
+                                            <span className="text-[10px] font-mono text-slate-400 dark:text-slate-400 font-bold block">期末結算 (FINAL)</span>
+                                            <span className="text-2xl font-mono font-extrabold text-slate-700 dark:text-cyan-400 block vibe-hover-text">{timeShiftLatestAsset.toLocaleString()} TWD</span>
+                                        </div>
+                                    </div>
+                                    <div className="absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 border-violet-500 dark:border-cyan-500/30 flex flex-col justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl">
+                                        <span className="text-violet-600 dark:text-cyan-400 text-lg font-bold tracking-widest mb-1">[TIME_SHIFT_LIMITS]</span>
+                                        <span className="text-slate-600 dark:text-cyan-200/80 text-sm md:text-base font-semibold leading-tight">動態時空極限。連動全局年份，檢索指定期間內的資產最高、最低與期末餘額。</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card" onMouseMove={handleMouseMove}>
+                                <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
+                                    <span className="text-slate-500 dark:text-yellow-500/80 text-sm md:text-base font-mono uppercase tracking-wider font-extrabold shrink-0 vibe-hover-text">資本流速 VELOCITY</span>
+                                    <span className="text-amber-600 dark:text-yellow-500/50 text-xs md:text-sm font-mono tracking-widest border border-amber-200 dark:border-yellow-500/30 px-2 py-1 rounded bg-amber-50 dark:bg-yellow-950/40 font-bold vibe-hover-text">[{opDays} OP_DAYS]</span>
+                                </div>
+                                <div className="group relative flex-grow cursor-crosshair">
+                                    <div className={"absolute inset-0 px-5 pb-4 flex flex-col justify-center border-l-[6px] transition-all duration-300 group-hover:opacity-0 group-hover:scale-95 bg-slate-50/50 dark:bg-slate-900/50 " + (velocityIsPos ? "border-amber-500 dark:border-yellow-400" : "border-rose-500")}>
+                                        <span className={"text-4xl md:text-5xl font-mono font-extrabold whitespace-nowrap mb-1 vibe-hover-text " + (velocityIsPos ? "text-amber-500 dark:text-yellow-400" : "text-rose-600 dark:text-rose-400")}>
+                                            {velocityIsPos ? <span className="animate-lightning mr-2">⚡</span> : <span className="animate-drop mr-2">🩸</span>}
+                                            {velocityIsPos ? <span>+</span> : null}{(isNaN(dailyVelocity) ? 0 : Math.round(dailyVelocity)).toLocaleString()}
+                                        </span>
+                                        <span className={"text-xl font-mono font-bold vibe-hover-text " + (velocityIsPos ? "text-amber-600/70 dark:text-yellow-500/70" : "text-rose-600/70 dark:text-rose-500/70")}>TWD / DAY</span>
+                                    </div>
+                                    <div className={"absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 flex flex-col justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl " + (velocityIsPos ? "border-amber-500 dark:border-yellow-500/30" : "border-rose-500 dark:border-rose-500/30")}>
+                                        <span className={"text-lg font-bold tracking-widest mb-1 " + (velocityIsPos ? "text-amber-600 dark:text-yellow-400" : "text-rose-600 dark:text-rose-400")}>[DAILY_PRINT_RATE]</span>
+                                        <span className="text-slate-600 dark:text-yellow-200/80 text-sm md:text-base font-semibold leading-tight">資本流速 (日均印鈔力)。連動全局年份，將期間總損益除以實際運作天數，顯示平均每天的絕對資金進出量。</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-10 relative z-10">
+                    <div className="glass-card p-8 rounded-2xl lg:col-span-1 border-t-[6px] border-slate-800 dark:border-amber-500/50 flex flex-col stagger-1 relative overflow-hidden group shadow-lg">
+                        <h3 className="text-xl font-mono text-slate-800 dark:text-amber-400 mb-8 uppercase tracking-widest font-extrabold flex justify-between relative z-10"><span className="vibe-hover-text">+ 寫入協議 WRITE</span><span className="text-base text-slate-400 dark:text-amber-800 vibe-hover-text">BYPASS MODE</span></h3>
+                        <form onSubmit={handleSubmit} className="space-y-6 flex-grow relative z-10">
+                            <div><label className="block text-lg font-mono text-slate-600 dark:text-amber-700 mb-2 font-bold vibe-hover-text">DATE [YYYYMMDD]</label><input required name="date" value={formData.date} onChange={handleInputChange} className="w-full px-5 py-4 text-xl rounded-lg font-mono shadow-sm" /></div>
+
+                            <div className="border-beam-container mt-8 mb-8 shadow-sm">
+                                <div className="border-beam-content p-6 space-y-6">
+                                    <div>
+                                        <div className="flex justify-between items-center mb-3">
+                                            <span className="text-lg font-extrabold text-slate-700 dark:text-amber-700 font-mono tracking-widest uppercase vibe-hover-text">TW_Equity (TWD)</span>
+                                        </div>
+                                        <input required type="number" step="any" name="twStock" value={formData.twStock} onChange={handleInputChange} className="w-full px-5 py-4 text-xl rounded-lg font-mono shadow-inner" />
+                                    </div>
+
+                                    <div className="pt-6 border-t border-slate-200 dark:border-amber-800/30">
+                                        <div className="flex justify-between items-center mb-3">
+                                            <span className="text-lg font-extrabold text-slate-700 dark:text-amber-700 font-mono tracking-widest uppercase vibe-hover-text">US_Equity (USD)</span>
+                                            {Number(formData.usStockUsd) > 0 && <span className="text-sm font-mono text-cyan-700 dark:text-amber-600 bg-cyan-50 dark:bg-amber-900/20 border border-cyan-200 dark:border-amber-700/30 px-3 py-1 rounded font-bold vibe-hover-text">≈ {Math.round(Number(formData.usStockUsd) * fxRate).toLocaleString()} TWD</span>}
+                                        </div>
+                                        <input required type="number" step="any" name="usStockUsd" value={formData.usStockUsd} onChange={handleInputChange} className="w-full px-5 py-4 text-xl rounded-lg font-mono shadow-inner" />
+                                    </div>
+
+                                    <div className="pt-6 border-t border-slate-200 dark:border-amber-800/30">
+                                        <div className="flex justify-between items-center mb-3">
+                                            <span className="text-lg font-extrabold text-slate-700 dark:text-amber-700 font-mono tracking-widest uppercase vibe-hover-text">Crypto_Asset (TWD)</span>
+                                        </div>
+                                        <input required type="number" step="any" name="crypto" value={formData.crypto} onChange={handleInputChange} className="w-full px-5 py-4 text-xl rounded-lg font-mono shadow-inner" />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div><label className="block text-lg font-mono text-slate-600 dark:text-amber-700 mb-2 font-bold vibe-hover-text">SYS_NOTE</label><input type="text" name="note" value={formData.note} onChange={handleInputChange} className="w-full px-5 py-4 text-xl rounded-lg font-bold shadow-sm" /></div>
+                            <button type="submit" disabled={isSubmitting} className="btn-glitch w-full mt-10 py-5 rounded-xl bg-slate-800 dark:bg-amber-600 hover:bg-slate-700 dark:hover:bg-amber-500 text-white font-mono text-2xl font-bold transition-all disabled:opacity-50 tracking-widest shadow-lg">{isSubmitting ? <span>UPLOADING...</span> : <span>COMMIT DATA</span>}</button>
+                        </form>
+                    </div>
+
+                    <div className="glass-card p-8 rounded-2xl lg:col-span-2 flex flex-col stagger-2 shadow-lg border border-slate-200 dark:border-transparent">
+                        <div className="flex justify-between items-center mb-8 relative z-10"><h3 className="text-2xl font-mono text-slate-800 dark:text-amber-600 uppercase tracking-widest font-extrabold vibe-hover-text">軌跡 Trajectory</h3><select value={chartFilter} onChange={(e) => setChartFilter(e.target.value)} className="bg-white border-2 border-slate-200 text-slate-700 text-lg font-mono rounded-lg px-4 py-2 outline-none relative z-10 font-bold focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/10 transition-all cyber-select"><option value="last20">Last 20</option><option value="all">All Time</option>{sortedYears.map(y => <option key={"chart-opt-" + y} value={y}>{y}</option>)}</select></div>
+                        <div className="flex-grow min-h-[400px] relative z-0"><canvas ref={lineChartRef}></canvas></div>
+                        <div className="mt-10 pt-10 border-t border-slate-200 dark:border-amber-700/50 grid grid-cols-1 md:grid-cols-4 gap-8 items-center relative z-10">
+
+                            <div className="col-span-1 h-64 lg:h-72 relative flex justify-center items-center drop-shadow-xl dark:drop-shadow-[0_0_20px_rgba(245,158,11,0.35)]">
+                                <canvas ref={donutChartRef} className="relative z-10 transition-opacity duration-300"></canvas>
+
+                                <div className={`absolute z-40 p-6 flex flex-col items-center justify-center rounded-2xl transition-all duration-300 ${hoveredAsset ? 'bg-white dark:bg-black/95 backdrop-blur-xl border border-slate-200 dark:border-amber-500/80 shadow-[0_20px_50px_rgba(15,23,42,0.15)] dark:shadow-[0_0_30px_rgba(245,158,11,0.4)] opacity-100 scale-100' : 'opacity-0 scale-95 pointer-events-none'}`} style={{ width: '280px', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
+                                    {hoveredAsset && (
+                                        <div className="flex flex-col items-center w-full">
+                                            <span className="text-xl font-extrabold font-mono tracking-widest mb-2 text-slate-500 dark:text-amber-500">[{hoveredAsset}_ASSET]</span>
+                                            <div className="flex items-baseline gap-3">
+                                                <span className="text-4xl font-extrabold font-mono text-slate-800 dark:text-amber-300 tracking-tighter whitespace-nowrap dark:drop-shadow-[0_0_8px_rgba(253,230,138,0.5)]">
+                                                    <ScrambleText text={ hoveredAsset === 'TW' ? twVal.toLocaleString() : hoveredAsset === 'US' ? usVal.toLocaleString() : crVal.toLocaleString() } />
+                                                </span>
+                                            </div>
+                                            <span className="text-lg font-mono text-slate-400 dark:text-amber-600 font-bold mt-1">TWD</span>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className={`absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-20 transition-opacity duration-300 ${hoveredAsset ? 'opacity-0' : 'opacity-100'}`}>
+                                    <div className="w-24 h-24 border-2 border-slate-200 dark:border-amber-500/30 rounded-full animate-ping absolute"></div>
+                                    <span className="text-slate-400 dark:text-amber-600/60 font-mono text-2xl tracking-widest font-extrabold">[ CORE ]</span>
+                                </div>
+                            </div>
+
+                            <div className="col-span-1 md:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-6">
+                                <div className="bg-white dark:bg-slate-900/50 p-6 rounded-xl border border-slate-200 dark:border-amber-400/20 text-center flex flex-col justify-center h-56 transition-all duration-300 hover:border-cyan-400 dark:hover:border-yellow-400/60 hover:-translate-y-2 hover:shadow-[0_15px_30px_rgba(6,182,212,0.2)] dark:hover:shadow-[0_15px_30px_rgba(245,158,11,0.2)] cursor-crosshair group shadow-sm" onMouseEnter={() => setHoveredAsset('TW')} onMouseLeave={() => setHoveredAsset(null)}>
+                                    <div className="text-xl font-mono text-slate-500 dark:text-amber-300 mb-4 uppercase tracking-wider font-extrabold group-hover:text-cyan-500 transition-colors vibe-hover-text">TW Equity</div>
+                                    <div className="text-5xl font-extrabold leading-none flex justify-center"><AirportNumberBoard value={totalAssets > 0 ? ((twVal/totalAssets)*100).toFixed(1) : "0.0"} /></div>
+                                </div>
+                                <div className="bg-white dark:bg-slate-900/50 p-6 rounded-xl border border-slate-200 dark:border-amber-500/20 text-center flex flex-col justify-center h-56 transition-all duration-300 hover:border-indigo-400 dark:hover:border-orange-500/60 hover:-translate-y-2 hover:shadow-[0_15px_30px_rgba(99,102,241,0.2)] dark:hover:shadow-[0_15px_30px_rgba(245,158,11,0.2)] cursor-crosshair group shadow-sm" onMouseEnter={() => setHoveredAsset('US')} onMouseLeave={() => setHoveredAsset(null)}>
+                                    <div className="text-xl font-mono text-slate-500 dark:text-amber-500 mb-4 uppercase tracking-wider font-extrabold group-hover:text-indigo-500 transition-colors vibe-hover-text">US Equity</div>
+                                    <div className="text-5xl font-extrabold leading-none flex justify-center"><AirportNumberBoard value={totalAssets > 0 ? ((usVal/totalAssets)*100).toFixed(1) : "0.0"} /></div>
+                                </div>
+                                <div className="bg-white dark:bg-slate-900/50 p-6 rounded-xl border border-slate-200 dark:border-amber-600/20 text-center flex flex-col justify-center h-56 transition-all duration-300 hover:border-emerald-400 dark:hover:border-amber-600/60 hover:-translate-y-2 hover:shadow-[0_15px_30px_rgba(16,185,129,0.2)] dark:hover:shadow-[0_15px_30px_rgba(245,158,11,0.2)] cursor-crosshair group shadow-sm" onMouseEnter={() => setHoveredAsset('CRYPTO')} onMouseLeave={() => setHoveredAsset(null)}>
+                                    <div className="text-xl font-mono text-slate-500 dark:text-amber-600 mb-4 uppercase tracking-wider font-extrabold group-hover:text-emerald-500 transition-colors vibe-hover-text">Crypto</div>
+                                    <div className="text-5xl font-extrabold leading-none flex justify-center"><AirportNumberBoard value={totalAssets > 0 ? ((crVal/totalAssets)*100).toFixed(1) : "0.0"} /></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="glass-card p-10 rounded-2xl stagger-3 relative z-10 overflow-hidden group shadow-lg border border-slate-200 dark:border-transparent">
+                    <h3 className="text-3xl font-mono text-slate-800 dark:text-amber-600 mb-8 uppercase tracking-widest font-extrabold relative z-10 vibe-hover-text">資料庫 Archives</h3>
+                    <div className="space-y-6 relative z-10 overflow-x-auto">
+                        {sortedYears.map((year) => {
+                            const currentYearData = groupedRecords[year];
+                            const isOpen = expandedYears[year];
+                            const limit = visibleRows[year] || 30;
+                            const renderedData = currentYearData.slice(0, limit);
+
+                            const startRecord = currentYearData[currentYearData.length - 1];
+                            const endRecord = currentYearData[0];
+
+                            const getTier = (total) => {
+                                let idx = compoundTargets.findIndex(t => total < t.target);
+                                return idx === -1 ? 60 : idx + 1;
+                            };
+
+                            const startTier = getTier(Number(startRecord?.總資產) || 0);
+                            const endTier = getTier(Number(endRecord?.總資產) || 0);
+                            const levelBadgeText = startTier !== endTier ? "LVL " + startTier + " ➔ LVL " + endTier + " GET!!!" : "LVL " + endTier + " SECURED!!!";
+
+                            return (
+                                <div key={year} className="border border-slate-200 dark:border-amber-500/20 rounded-xl overflow-hidden bg-white dark:bg-black/40 min-w-[1000px] shadow-sm">
+                                    <button onClick={() => toggleYear(year)} className="w-full flex justify-between items-center p-6 md:p-8 hover:bg-slate-50 dark:hover:bg-amber-500/10 transition-colors cursor-pointer outline-none group relative">
+                                        <div className="flex items-center relative">
+                                            <span className="font-extrabold text-slate-800 dark:text-amber-300 font-mono text-4xl md:text-5xl vibe-hover-text">{year}</span>
+                                            <span className="opacity-0 group-hover:opacity-100 transition-all duration-400 ease-out transform translate-x-[-10px] group-hover:translate-x-0 text-cyan-500 dark:text-cyan-400 font-extrabold text-xl md:text-2xl tracking-widest drop-shadow-[0_0_12px_rgba(6,182,212,0.8)] animate-pulse absolute left-full ml-6 whitespace-nowrap pointer-events-none">
+                                                {levelBadgeText}
+                                            </span>
+                                        </div>
+                                        <span className="text-xl md:text-2xl text-slate-500 dark:text-amber-700 font-mono font-bold vibe-hover-text">{currentYearData.length} RECORDS</span>
+                                    </button>
+                                    {isOpen && (
+                                        <div className="overflow-x-auto border-t border-slate-200 dark:border-amber-500/20">
+                                            <table className="w-full text-left whitespace-nowrap"><thead className="bg-slate-100 dark:bg-black/60"><tr><th className="p-6 text-xl font-mono text-slate-600 dark:text-amber-700">Date</th><th className="p-6 text-xl font-mono text-slate-600 dark:text-amber-700">TW</th><th className="p-6 text-xl font-mono text-slate-600 dark:text-amber-700">US</th><th className="p-6 text-xl font-mono text-slate-600 dark:text-amber-700">Crypto</th><th className="p-6 text-xl font-mono text-slate-600 dark:text-amber-700">YTD Δ</th><th className="p-6 text-xl font-mono text-slate-800 dark:text-amber-300 font-extrabold">Total Asset</th><th className="p-6 text-xl font-mono text-slate-600 dark:text-amber-700">Action</th></tr></thead>
+                                                <tbody>
+                                                    {renderedData.map((item) => {
+                                                        const isEditing = editingRow === item._rowIndex;
+                                                        const currentAsset = Number(item.總資產) || 0;
+                                                        const prevAsset = Number(currentYearData[currentYearData.length - 1].總資產) || 1;
+                                                        const ytdGrowth = (((currentAsset - prevAsset) / prevAsset) * 100);
+                                                        const isBase = item._rowIndex === currentYearData[currentYearData.length - 1]._rowIndex;
+
+                                                        const baseTW = Number(currentYearData[currentYearData.length - 1].台股) || 0;
+                                                        const baseUS = Number(currentYearData[currentYearData.length - 1].美股) || 0;
+                                                        const baseCR = Number(currentYearData[currentYearData.length - 1].加密貨幣) || 0;
+
+                                                        return (
+                                                            <tr key={item._rowIndex} className={"table-row-vibe border-b border-slate-100 dark:border-amber-500/10 " + (isEditing ? "bg-slate-100 dark:bg-amber-900/30" : "")}>
+                                                                {isEditing ? (
+                                                                    <React.Fragment><td className="p-4"><input name="date" value={editFormData.date} onChange={handleEditChange} className="w-40 px-4 py-3 text-xl rounded font-mono font-bold border-slate-300" /></td><td className="p-4"><input type="number" name="twStock" value={editFormData.twStock} onChange={handleEditChange} className="w-40 md:w-48 px-4 py-3 text-xl rounded font-mono font-bold border-slate-300" /></td><td className="p-4"><input type="number" name="usStock" value={editFormData.usStock} onChange={handleEditChange} className="w-40 md:w-48 px-4 py-3 text-xl rounded font-mono font-bold border-slate-300" /></td><td className="p-4"><input type="number" name="crypto" value={editFormData.crypto} onChange={handleEditChange} className="w-40 md:w-48 px-4 py-3 text-xl rounded font-mono font-bold border-slate-300" /></td><td className="p-4 text-xl text-slate-400 font-mono font-bold">--</td><td className="p-4 text-xl text-slate-400 font-mono font-bold">--</td><td className="p-4 space-x-4"><button onClick={() => saveEdit(item._rowIndex)} className="text-xl px-4 py-2 bg-slate-800 text-white rounded font-mono font-bold hover:bg-slate-700 transition-colors shadow">SAVE</button><button onClick={() => setEditingRow(null)} className="text-xl px-4 py-2 border-2 border-slate-300 text-slate-600 rounded font-mono font-bold hover:bg-slate-100 transition-colors">CANCEL</button></td></React.Fragment>
+                                                                ) : (
+                                                                    <React.Fragment>
+                                                                        <td className="p-6 text-2xl font-mono text-slate-800 dark:text-amber-600 font-bold">{formatYMD(item.日期)}</td>
+                                                                        <td className="p-6"><YtdAssetCell currentVal={item.台股} baseVal={baseTW} isBase={isBase} /></td>
+                                                                        <td className="p-6"><YtdAssetCell currentVal={item.美股} baseVal={baseUS} isBase={isBase} /></td>
+                                                                        <td className="p-6"><YtdAssetCell currentVal={item.加密貨幣} baseVal={baseCR} isBase={isBase} /></td>
+                                                                        <td className="p-6 text-2xl font-extrabold font-mono">{isBase ? <span className="text-slate-400 dark:text-amber-700/50">BASE</span> : <span className={ytdGrowth >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>{ytdGrowth >= 0 ? <span>▲ +</span> : <span>▼ </span>}{ytdGrowth.toFixed(2)}%</span>}</td>
+                                                                        <td className="p-6 text-3xl font-extrabold font-mono relative"><div className="flex items-center gap-5"><span className="text-slate-800 dark:text-amber-200">{Number(item.總資產).toLocaleString()}</span>{item.milestone === 'up' && <span className="text-lg px-3 py-1 rounded cyber-tag-up font-bold animate-pulse">▲ LVL {item.tier} UNLOCKED</span>}{item.milestone === 'down' && <span className="text-lg px-3 py-1 rounded cyber-tag-down font-bold animate-pulse">▼ LVL {item.prevTier} LOST</span>}</div></td>
+                                                                        <td className="p-6 space-x-6 relative z-10"><button onClick={() => startEdit(item)} className="text-xl text-cyan-600 dark:text-amber-400 font-mono font-extrabold hover:text-cyan-800 dark:hover:text-amber-300 transition-colors hover:scale-110 inline-block">EDIT</button><button onClick={() => handleDelete(item._rowIndex)} className="text-xl text-rose-500 dark:text-rose-400 font-mono font-extrabold hover:text-rose-700 dark:hover:text-rose-300 transition-colors hover:scale-110 inline-block">DEL</button></td>
+                                                                    </React.Fragment>
+                                                                )}
+                                                            </tr>
+                                                        );
+                                                    })}
+                                                </tbody>
+                                            </table>
+                                            {limit < currentYearData.length && <div className="p-6 bg-slate-50 dark:bg-black/40 text-center border-t border-slate-200 dark:border-transparent"><button onClick={() => loadMoreRows(year)} className="text-xl font-mono text-slate-500 dark:text-amber-500 font-extrabold tracking-widest hover:text-cyan-600 dark:hover:text-amber-300 transition-colors outline-none vibe-hover-text">[ LOAD_MORE_DATA ]</button></div>}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                <div className="mt-20 pt-10 text-center relative z-10 mb-10">
+                    <span className="inline-block brutalist-stamp px-10 py-5 font-mono text-2xl tracking-[0.3em] md:tracking-[0.5em] cursor-crosshair">
+                        AUTHORIZED BY CHANGSHENG LIU
+                    </span>
+                </div>
+
+            </div>
+        );
+    };
+
+    /* ===================================================================
+       AppShell — 統一 theme / lang / Tab
+    =================================================================== */
+    function AppShell() {
+      const [theme, setTheme] = useState(() => {
+        const unified = safeGetStorage('unified_theme', '');
+        if (unified) return unified;
+        const amber = localStorage.getItem('amber-theme');
+        if (amber) return amber;
+        if (localStorage.getItem('fos_dark_mode') === 'true') return 'dark';
+        return 'light';
+      });
+      const [isEng, setIsEng] = useState(safeGetStorage('fos_lang', 'false') === 'true');
+      const [activeTab, setActiveTab] = useState(safeGetStorage('app_active_tab', 'asset'));
+
+      useEffect(() => {
+        if (theme === 'dark') document.documentElement.classList.add('dark');
+        else document.documentElement.classList.remove('dark');
+        safeSetStorage('unified_theme', theme);
+        safeSetStorage('amber-theme', theme);
+        safeSetStorage('fos_dark_mode', (theme === 'dark').toString());
+      }, [theme]);
+
+      useEffect(() => { safeSetStorage('fos_lang', isEng.toString()); }, [isEng]);
+      useEffect(() => { safeSetStorage('app_active_tab', activeTab); }, [activeTab]);
+
+      const isDark = theme === 'dark';
+      const tabBase = "app-tab-btn px-6 md:px-10 py-3 rounded-2xl text-base md:text-lg font-black uppercase tracking-widest";
+      const tabActive = "bg-slate-800 dark:bg-amber-500 text-white dark:text-slate-900 shadow-lg";
+      const tabIdle = "text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300";
+
+      return (
+        <div>
+          <div className="app-tabbar px-4 md:px-10 py-4 flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-2 md:gap-4">
+              <span className="text-xl md:text-2xl font-black tracking-tighter text-slate-800 dark:text-amber-400 font-mono select-none mr-2">⌘ UNIFIED</span>
+              <button onClick={() => setActiveTab('asset')} className={`${tabBase} ${activeTab === 'asset' ? tabActive : tabIdle}`}>總資產 ASSET</button>
+              <button onClick={() => setActiveTab('fos')} className={`${tabBase} ${activeTab === 'fos' ? tabActive : tabIdle}`}>FOS BOSS</button>
+            </div>
+            <div className="flex items-center gap-3">
+              <button onClick={() => setIsEng(!isEng)} className="px-5 py-2.5 rounded-2xl text-base font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:-translate-y-0.5 transition-all shadow-sm" title="FOS 語言切換">{isEng ? 'EN' : '中'}</button>
+              <button onClick={() => setTheme(isDark ? 'light' : 'dark')} className="px-5 py-2.5 rounded-2xl text-base font-bold border border-slate-200 dark:border-amber-500/40 bg-white dark:bg-slate-800 text-slate-600 dark:text-amber-400 hover:-translate-y-0.5 transition-all shadow-sm">
+                {isDark ? '☀️ DAY' : '🌙 STEALTH'}
+              </button>
+            </div>
+          </div>
+
+          {activeTab === 'asset'
+            ? <AssetTerminal theme={theme} />
+            : <FosTerminal isDarkMode={isDark} isEng={isEng} />}
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<AppShell />);
+  </script>
+</body>
+</html>
