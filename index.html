@@ -662,11 +662,11 @@
           if (resA.success && resB.success) {
             fetchHistory(); fetchHistoryB(); setTerminalMsg('>> A + B INJECTED.');
             const rate = parseFloat(formDataB.usdRate) || 32.5;
-            const usStockTwdVal = Math.round((parseFloat(formDataB.tsla) || 0) + (parseFloat(formDataB.qld) || 0) + (parseFloat(formDataB.spcx) || 0));
-            const usStockUsdVal = Math.round(usStockTwdVal / rate);
+            const usStockUsdSum = (parseFloat(formDataB.tsla) || 0) + (parseFloat(formDataB.qld) || 0) + (parseFloat(formDataB.spcx) || 0);
+            const usStockTwd = Math.round(usStockUsdSum * rate);
             const cryptoTwd = Math.round((parseFloat(formDataB.eth) || 0) + (parseFloat(formDataB.btc) || 0));
             const twStockTwd = Math.round(c0050 + c00733 + P1);
-            if (onInjectPrefill) onInjectPrefill({ twStock: twStockTwd, usStockUsd: usStockUsdVal, usStockTwdOverride: usStockTwdVal, crypto: cryptoTwd });
+            if (onInjectPrefill) onInjectPrefill({ twStock: twStockTwd, usStock: usStockTwd, crypto: cryptoTwd });
           }
           else setTerminalMsg('>> PARTIAL FAIL: A=' + (resA.success ? 'OK' : 'ERR') + ' B=' + (resB.success ? 'OK' : 'ERR'));
         } catch (err) { setTerminalMsg('>> INJECT FAILED.'); }
@@ -1340,7 +1340,7 @@
         );
     };
 
-    const AssetTerminal = ({ theme, amberInitDone, assetPrefill, clearPrefill }) => {
+    const AssetTerminal = ({ theme, assetPrefill, clearPrefill }) => {
         const tierConfigs = useMemo(() => {
             return compoundTargets.map((data, index) => {
                 let colorsLight = "from-cyan-500 via-blue-500 to-indigo-500";
@@ -1384,20 +1384,26 @@
             if (donutChartInstance.current) { try { donutChartInstance.current.destroy(); } catch(e){} donutChartInstance.current = null; }
         }, []);
 
-        const [usTwdOverride, setUsTwdOverride] = useState(null);
         const [formData, setFormData] = useState(() => {
-            const base = { date: getTodayYMD(), twStock: '', usStockUsd: '', crypto: '', note: '' };
             if (assetPrefill) {
-                if (assetPrefill.twStock != null) base.twStock = String(assetPrefill.twStock);
-                if (assetPrefill.usStockUsd != null) base.usStockUsd = String(assetPrefill.usStockUsd);
-                if (assetPrefill.crypto != null) base.crypto = String(assetPrefill.crypto);
+                return {
+                    date: getTodayYMD(),
+                    twStock: assetPrefill.twStock != null ? String(assetPrefill.twStock) : '',
+                    usStock: assetPrefill.usStock != null ? String(assetPrefill.usStock) : '',
+                    crypto: assetPrefill.crypto != null ? String(assetPrefill.crypto) : '',
+                    note: '',
+                    allTwd: true
+                };
             }
-            return base;
+            return {
+                date: safeGetStorage('asset_date', getTodayYMD()),
+                twStock: safeGetStorage('asset_tw', ''),
+                usStock: safeGetStorage('asset_us', ''),
+                crypto: safeGetStorage('asset_crypto', ''),
+                note: '',
+                allTwd: safeGetStorage('asset_allTwd', '') === 'true'
+            };
         });
-
-        useEffect(() => {
-            if (assetPrefill && assetPrefill.usStockTwdOverride != null) setUsTwdOverride(assetPrefill.usStockTwdOverride);
-        }, []);
 
         useEffect(() => {
             if (assetPrefill) clearPrefill();
@@ -1409,12 +1415,10 @@
                     const sortedData = [...res].sort((a, b) => String(a.日期).localeCompare(String(b.日期)));
                     setData(sortedData);
                     setLoading(false);
-                    amberInitDone.current = true;
                 })
                 .catch((err) => {
                     console.error("Data Fetch Error:", err);
                     setLoading(false);
-                    amberInitDone.current = true;
                 });
 
             fetchMatrix('getMarketStatus')
@@ -1610,21 +1614,26 @@
         }, [data, fxRate, chartFilter, theme]);
 
         const handleInputChange = (e) => {
-            setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
-            if (e.target.name === 'usStockUsd' && usTwdOverride != null) setUsTwdOverride(null);
+            const { name, value } = e.target;
+            setFormData(prev => ({ ...prev, [name]: value, allTwd: name === 'usStock' ? false : prev.allTwd }));
+            const keyMap = { twStock: 'asset_tw', usStock: 'asset_us', crypto: 'asset_crypto', date: 'asset_date' };
+            if (keyMap[name]) safeSetStorage(keyMap[name], value);
         };
 
         const handleSubmit = (e) => {
             e.preventDefault();
             setIsSubmitting(true);
-            const usRaw = Number(formData.usStockUsd || 0);
-            const usStockTwd = usTwdOverride != null ? usTwdOverride : Math.round(usRaw * fxRate);
-            const payload = { date: formData.date, twStock: formData.twStock, usStock: usStockTwd, crypto: formData.crypto, note: formData.note, total: Math.round(Number(formData.twStock || 0) + usStockTwd + Number(formData.crypto || 0)) };
+            const tw = Number(formData.twStock || 0);
+            const usVal = Number(formData.usStock || 0);
+            const usStockTwd = formData.allTwd ? usVal : Math.round(usVal * fxRate);
+            const cr = Number(formData.crypto || 0);
+            const payload = { date: formData.date, twStock: tw, usStock: usStockTwd, crypto: cr, note: formData.note, total: Math.round(tw + usStockTwd + cr) };
 
             const previousData = [...data];
             const tempId = 'temp-' + Date.now();
             setData(prev => [...prev, { _rowIndex: tempId, 日期: payload.date, 台股: payload.twStock, 美股: payload.usStock, 加密貨幣: payload.crypto, 總資產: payload.total, 備註: payload.note }].sort((a, b) => String(a.日期).localeCompare(String(b.日期))));
-            setFormData({ date: getTodayYMD(), twStock: '', usStockUsd: '', crypto: '', note: '' });
+            setFormData({ date: getTodayYMD(), twStock: '', usStock: '', crypto: '', note: '', allTwd: false });
+            ['asset_tw','asset_us','asset_crypto','asset_allTwd'].forEach(k => safeSetStorage(k, ''));
 
             fetchMatrix('addEntry', payload)
                 .then((res) => {
@@ -1803,7 +1812,6 @@
             }
         }, [loading, totalAssets, progressPercent, currentTierIndex]);
 
-        if (loading && data.length === 0 && !amberInitDone.current) return ( <div className="amber-scope flex h-screen items-center justify-center font-mono text-4xl text-slate-800 dark:text-amber-500 tracking-widest font-bold"><ScrambleText text="INITIALIZING_AMBER_ MATRIX..." /></div> );
 
         const twVal = Number(latestForStats.台股) || 0;
         const usVal = Number(latestForStats.美股) || 0;
@@ -2080,10 +2088,11 @@
 
                                     <div className="pt-6 border-t border-slate-200 dark:border-amber-800/30">
                                         <div className="flex justify-between items-center mb-3">
-                                            <span className="text-lg font-extrabold text-slate-700 dark:text-amber-700 font-mono tracking-widest uppercase vibe-hover-text">US_Equity (USD)</span>
-                                            {Number(formData.usStockUsd) > 0 && <span className="text-sm font-mono text-cyan-700 dark:text-amber-600 bg-cyan-50 dark:bg-amber-900/20 border border-cyan-200 dark:border-amber-700/30 px-3 py-1 rounded font-bold vibe-hover-text">{usTwdOverride != null ? '≈ ' + usTwdOverride.toLocaleString() + ' TWD (FOS)' : '≈ ' + Math.round(Number(formData.usStockUsd) * fxRate).toLocaleString() + ' TWD'}</span>}
+                                            <span className="text-lg font-extrabold text-slate-700 dark:text-amber-700 font-mono tracking-widest uppercase vibe-hover-text">US_Equity ({formData.allTwd ? 'TWD' : 'USD'})</span>
+                                            {!formData.allTwd && Number(formData.usStock) > 0 && <span className="text-sm font-mono text-cyan-700 dark:text-amber-600 bg-cyan-50 dark:bg-amber-900/20 border border-cyan-200 dark:border-amber-700/30 px-3 py-1 rounded font-bold vibe-hover-text">≈ {Math.round(Number(formData.usStock) * fxRate).toLocaleString()} TWD</span>}
+                                            {formData.allTwd && <span className="text-xs font-mono font-bold text-violet-500 bg-violet-50 dark:bg-violet-950/30 px-2 py-1 rounded border border-violet-200 dark:border-violet-800">FROM FOS</span>}
                                         </div>
-                                        <input required type="number" step="any" name="usStockUsd" value={formData.usStockUsd} onChange={handleInputChange} className="w-full px-5 py-4 text-xl rounded-lg font-mono shadow-inner" />
+                                        <input required type="number" step="any" name="usStock" value={formData.usStock} onChange={handleInputChange} className="w-full px-5 py-4 text-xl rounded-lg font-mono shadow-inner" />
                                     </div>
 
                                     <div className="pt-6 border-t border-slate-200 dark:border-amber-800/30">
@@ -2246,7 +2255,7 @@
       });
       const [isEng, setIsEng] = useState(safeGetStorage('fos_lang', 'false') === 'true');
       const [activeTab, setActiveTab] = useState(safeGetStorage('app_active_tab', 'asset'));
-      const amberInitDone = useRef(false);
+      const [appReady, setAppReady] = useState(false);
       const [assetPrefill, setAssetPrefill] = useState(null);
 
       useEffect(() => {
@@ -2259,11 +2268,18 @@
 
       useEffect(() => { safeSetStorage('fos_lang', isEng.toString()); }, [isEng]);
       useEffect(() => { safeSetStorage('app_active_tab', activeTab); }, [activeTab]);
+      useEffect(() => { const t = setTimeout(() => setAppReady(true), 2500); return () => clearTimeout(t); }, []);
 
       const isDark = theme === 'dark';
       const tabBase = "app-tab-btn px-3 sm:px-6 md:px-10 py-2 sm:py-3 rounded-xl sm:rounded-2xl text-xs sm:text-base md:text-lg font-black uppercase tracking-wider sm:tracking-widest";
       const tabActive = "bg-slate-800 dark:bg-amber-500 text-white dark:text-slate-900 shadow-lg";
       const tabIdle = "text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300";
+
+      if (!appReady) return (
+        <div className="flex h-screen items-center justify-center font-mono text-2xl sm:text-4xl text-slate-800 dark:text-amber-500 tracking-widest font-bold">
+          <ScrambleText text="INITIALIZING_ UNIFIED_ TERMINAL..." />
+        </div>
+      );
 
       return (
         <div>
@@ -2282,7 +2298,7 @@
           </div>
 
           {activeTab === 'asset'
-            ? <AssetTerminal theme={theme} amberInitDone={amberInitDone} assetPrefill={assetPrefill} clearPrefill={() => setAssetPrefill(null)} />
+            ? <AssetTerminal theme={theme} assetPrefill={assetPrefill} clearPrefill={() => setAssetPrefill(null)} />
             : <FosTerminal isDarkMode={isDark} isEng={isEng} onInjectPrefill={(vals) => { setAssetPrefill(vals); setActiveTab('asset'); }} />}
         </div>
       );
