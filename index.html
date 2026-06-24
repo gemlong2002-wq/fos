@@ -362,6 +362,7 @@
       const [isSyncing, setIsSyncing] = useState(false);
       const [aiFields, setAiFields] = useState({});
       const [isRecognizing, setIsRecognizing] = useState(false);
+      const [isInjecting, setIsInjecting] = useState(false);
       const fileInputRef = useRef(null);
 
       const isGasEnvironment = typeof google !== 'undefined' && google.script && google.script.run;
@@ -644,6 +645,8 @@
       };
 
       const handleInjectAll = async () => {
+        if (isInjecting) return;
+        setIsInjecting(true);
         setTerminalMsg('>> INJECTING A + B...');
         try {
           const saveAPayload = { lAmount: L, c0050, c00733, p1Value: P1, btcPrice: currentBtc, ethPrice: currentEth, p2Usdt: formData.p2Usdt, nominalMR, p1Ratio, ethBtcRatio: ethBtcRatio };
@@ -660,6 +663,7 @@
           }
           else setTerminalMsg('>> PARTIAL FAIL: A=' + (resA.success ? 'OK' : 'ERR') + ' B=' + (resB.success ? 'OK' : 'ERR'));
         } catch (err) { setTerminalMsg('>> INJECT FAILED.'); }
+        setIsInjecting(false);
       };
 
       const handleDelete = async (dateId) => {
@@ -839,7 +843,7 @@
                       </div>
                     </div>
                   )}
-                  <button type="button" onClick={handleInjectAll} className="w-full tech-btn bg-gradient-to-r from-sky-600 to-violet-600 hover:from-sky-500 hover:to-violet-500 text-white text-xl py-4 mt-6 shadow-lg">INJECT A + B</button>
+                  <button type="button" onClick={handleInjectAll} disabled={isInjecting} className={`w-full tech-btn text-white text-xl py-4 mt-6 shadow-lg ${isInjecting ? 'bg-slate-400 cursor-wait' : 'bg-gradient-to-r from-sky-600 to-violet-600 hover:from-sky-500 hover:to-violet-500'}`}>{isInjecting ? 'INJECTING...' : 'INJECT A + B'}</button>
                 </div>
 
                 <div className="tech-panel p-8 bg-gradient-to-br from-rose-50 to-white dark:from-rose-950/20 dark:to-slate-900 border-rose-100 dark:border-rose-900/50">
@@ -1373,18 +1377,18 @@
             if (donutChartInstance.current) { try { donutChartInstance.current.destroy(); } catch(e){} donutChartInstance.current = null; }
         }, []);
 
-        const [formData, setFormData] = useState({ date: getTodayYMD(), twStock: '', usStockUsd: '', crypto: '', note: '' });
+        const [formData, setFormData] = useState(() => {
+            const base = { date: getTodayYMD(), twStock: '', usStockUsd: '', crypto: '', note: '' };
+            if (assetPrefill) {
+                if (assetPrefill.usStockUsd != null) base.usStockUsd = String(assetPrefill.usStockUsd);
+                if (assetPrefill.crypto != null) base.crypto = String(assetPrefill.crypto);
+            }
+            return base;
+        });
 
         useEffect(() => {
-            if (assetPrefill) {
-                setFormData(p => ({
-                    ...p,
-                    usStockUsd: assetPrefill.usStockUsd != null ? String(assetPrefill.usStockUsd) : p.usStockUsd,
-                    crypto: assetPrefill.crypto != null ? String(assetPrefill.crypto) : p.crypto
-                }));
-                clearPrefill();
-            }
-        }, [assetPrefill]);
+            if (assetPrefill) clearPrefill();
+        }, []);
 
         const loadTerminalData = () => {
             fetchMatrix('getDashboardData')
