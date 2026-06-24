@@ -299,7 +299,7 @@
     /* ===================================================================
        FOS 子元件 (Boss Terminal v12.2)  — isDarkMode / isEng 由 AppShell 注入
     =================================================================== */
-    function FosTerminal({ isDarkMode, isEng }) {
+    function FosTerminal({ isDarkMode, isEng, onInjectPrefill }) {
       function getMRZone(mr) {
         const val = parseFloat(mr);
         if (val === 0) return { dot: 'bg-slate-300 dark:bg-slate-600', text: 'text-slate-400', label: 'STANDBY', zone: 'STANDBY' };
@@ -342,17 +342,6 @@
         return { frozen: false, tsla: releasable * 0.40, spcx: releasable * 0.30, qld: releasable * 0.30 };
       }
 
-      function rateCircuitBreaker(R, Ydiv) {
-        const r = parseFloat(R);
-        const yd = parseFloat(Ydiv);
-        if (isNaN(r) || isNaN(yd) || r <= 0 || yd <= 0) return { state: 'N/A', msg: '請輸入 R 與 Y_div', color: 'text-slate-400' };
-        const ydCapped = Math.min(yd, 5.0);
-        const fuseLine = ydCapped + 1.0;
-        if (r <= ydCapped) return { state: 'GREEN', msg: `全功率，可增貸至0050×60%`, color: 'text-emerald-500', bg: 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900/50' };
-        if (r <= fuseLine) return { state: 'YELLOW', msg: `降速，新增L額度減半`, color: 'text-yellow-500', bg: 'bg-yellow-50 dark:bg-yellow-950/30 border-yellow-200 dark:border-yellow-900/50' };
-        return { state: 'RED', msg: `凍結增貸+純換血，生活費走6.5瀑布`, color: 'text-rose-500', bg: 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/50' };
-      }
-
       function formatNumber(num) {
         return isNaN(parseFloat(num)) ? '0' : parseFloat(num).toLocaleString('en-US', {maximumFractionDigits: 0});
       }
@@ -366,9 +355,7 @@
         lAmount: '', c0050: '', c00733: '',
         p1_00675L: safeGetStorage('fos_p1_675', ''),
         p1_00631L: safeGetStorage('fos_p1_631', ''),
-        p2Usdt: '0', btcAth: '73906.00', ethAth: '4956.62', emergencyWithdrawal: '',
-        rateR: safeGetStorage('fos_rateR', ''),
-        rateYdiv: safeGetStorage('fos_rateYdiv', '')
+        p2Usdt: '0', btcAth: '73906.00', ethAth: '4956.62', emergencyWithdrawal: ''
       });
 
       const [history, setHistory] = useState([]);
@@ -386,10 +373,23 @@
       const chartRef = useRef(null);
       const chartInstance = useRef(null);
 
+      const fetchUsdRate = async () => {
+        try {
+          const res = await fetch('https://v6.exchangerate-api.com/v6/509264d8f40bf40defee492c/latest/USD');
+          const json = await res.json();
+          if (json.result === 'success' && json.conversion_rates && json.conversion_rates.TWD) {
+            const rate = json.conversion_rates.TWD.toFixed(2);
+            setFormDataB(p => ({ ...p, usdRate: rate }));
+            safeSetStorage('fos_usdRate', rate);
+          }
+        } catch (e) {}
+      };
+
       useEffect(() => {
         fetchHistory();
         fetchHistoryB();
         fetchCryptoConfig();
+        fetchUsdRate();
       }, []);
 
       // ★ 切 Tab 卸載時銷毀 Chart 實例，保證重掛乾淨重建
@@ -497,8 +497,6 @@
         setFormData(p => ({ ...p, [name]: value }));
         if (name === 'p1_00675L') safeSetStorage('fos_p1_675', value);
         if (name === 'p1_00631L') safeSetStorage('fos_p1_631', value);
-        if (name === 'rateR') safeSetStorage('fos_rateR', value);
-        if (name === 'rateYdiv') safeSetStorage('fos_rateYdiv', value);
       };
 
       const handleInputBChange = (e) => { setFormDataB(p => ({ ...p, [e.target.name]: e.target.value })); if (e.target.name === 'usdRate') safeSetStorage('fos_usdRate', e.target.value); };
@@ -566,8 +564,6 @@
         else hdpResult = { status: 'ok', msg: t(`犧牲 P1: ${psac.toLocaleString('en-US', {maximumFractionDigits:0})}`, `Sacrifice P1: ${psac.toLocaleString('en-US', {maximumFractionDigits:0})}`), psac };
       }
 
-      const rateCB = rateCircuitBreaker(formData.rateR, formData.rateYdiv);
-
       let consensusTarget = 'BTC'; let consensusColor = 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'; let consensusMsg = '...';
       const ratioVal = parseFloat(ethBtcRatio);
       if (ratioVal > 0.060) { consensusTarget = 'BTC'; consensusColor = 'bg-yellow-100 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400 border-yellow-200 dark:border-yellow-900/50'; consensusMsg = '> 0.060 (OVERHEATED)'; }
@@ -596,6 +592,25 @@
         catch (err) { setTerminalMsg('>> FAILED.'); }
       };
 
+      const handleInjectAll = async () => {
+        setTerminalMsg('>> INJECTING A + B...');
+        try {
+          const saveAPayload = { lAmount: L, c0050, c00733, p1Value: P1, btcPrice: currentBtc, ethPrice: currentEth, p2Usdt: formData.p2Usdt, nominalMR, p1Ratio, ethBtcRatio: ethBtcRatio };
+          const [resA, resB] = await Promise.all([
+            gasAPI('saveFOSData', saveAPayload),
+            gasAPI('saveFOSDataB', formDataB)
+          ]);
+          if (resA.success && resB.success) {
+            fetchHistory(); fetchHistoryB(); setTerminalMsg('>> A + B INJECTED.');
+            const rate = parseFloat(formDataB.usdRate) || 32.5;
+            const usStockTwd = Math.round(((parseFloat(formDataB.tsla) || 0) + (parseFloat(formDataB.qld) || 0) + (parseFloat(formDataB.spcx) || 0)) * rate);
+            const cryptoTwd = Math.round(((parseFloat(formDataB.eth) || 0) + (parseFloat(formDataB.btc) || 0)) * rate);
+            if (onInjectPrefill) onInjectPrefill({ usStockUsd: Math.round((parseFloat(formDataB.tsla) || 0) + (parseFloat(formDataB.qld) || 0) + (parseFloat(formDataB.spcx) || 0)), crypto: cryptoTwd });
+          }
+          else setTerminalMsg('>> PARTIAL FAIL: A=' + (resA.success ? 'OK' : 'ERR') + ' B=' + (resB.success ? 'OK' : 'ERR'));
+        } catch (err) { setTerminalMsg('>> INJECT FAILED.'); }
+      };
+
       const handleDelete = async (dateId) => {
         if (!window.confirm(`ERASE: ${dateId}?`)) return;
         const previousHistory = [...history]; setHistory(history.filter(item => item.dateId !== dateId)); setTerminalMsg('>> DELETING...');
@@ -617,11 +632,11 @@
             </div>
 
             <header className="tech-panel p-8 md:p-12 mb-10 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-8 relative overflow-hidden">
-              <div className="absolute right-0 top-0 opacity-10 dark:opacity-20 text-[15rem] font-black leading-none pointer-events-none -mt-16 -mr-8 font-mono text-sky-900 dark:text-sky-300 drop-shadow-sm select-none">V12</div>
+              <div className="absolute right-0 top-0 opacity-10 dark:opacity-20 text-[8rem] md:text-[15rem] font-black leading-none pointer-events-none -mt-16 -mr-4 md:-mr-8 font-mono text-sky-900 dark:text-sky-300 drop-shadow-sm select-none hidden sm:block">V12</div>
 
               <div className="relative z-10">
-                <h1 className="text-4xl md:text-6xl font-black tracking-tight text-slate-800 dark:text-slate-100 uppercase flex items-center gap-4 mb-3">
-                  <span className="bg-sky-500 text-white px-3 py-1 rounded-xl text-3xl md:text-5xl shadow-md">FOS</span>
+                <h1 className="text-2xl sm:text-4xl md:text-6xl font-black tracking-tight text-slate-800 dark:text-slate-100 uppercase flex items-center gap-2 sm:gap-4 mb-3">
+                  <span className="bg-sky-500 text-white px-2 sm:px-3 py-1 rounded-lg sm:rounded-xl text-xl sm:text-3xl md:text-5xl shadow-md">FOS</span>
                   TERMINAL
                 </h1>
                 <p className="text-sm md:text-base font-bold text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/50 inline-block px-4 py-1.5 rounded-full border border-sky-100 dark:border-sky-900/50 uppercase tracking-wider">{terminalMsg}</p>
@@ -724,27 +739,6 @@
                         </div>
                       </div>
 
-                      <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
-                        <label className="block text-sm font-black mb-3 text-amber-500 dark:text-amber-400 uppercase tracking-widest flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-amber-500"></span> RATE CIRCUIT BREAKER</label>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-xs font-bold mb-1 text-slate-400 uppercase">R (質押利率%)</label>
-                            <input type="number" step="0.01" name="rateR" value={formData.rateR} onChange={handleInputChange} className="w-full tech-input font-mono text-lg py-2 focus:border-amber-400 focus:shadow-[0_0_0_4px_rgba(245,158,11,0.15)] dark:focus:shadow-[0_0_0_4px_rgba(245,158,11,0.25)]" placeholder="0.00" />
-                          </div>
-                          <div>
-                            <label className="block text-xs font-bold mb-1 text-slate-400 uppercase">Y_div (殖利率%)</label>
-                            <input type="number" step="0.01" name="rateYdiv" value={formData.rateYdiv} onChange={handleInputChange} className="w-full tech-input font-mono text-lg py-2 focus:border-amber-400 focus:shadow-[0_0_0_4px_rgba(245,158,11,0.15)] dark:focus:shadow-[0_0_0_4px_rgba(245,158,11,0.25)]" placeholder="0.00" />
-                          </div>
-                        </div>
-                        {rateCB.state !== 'N/A' && (
-                          <div className={`mt-3 p-3 rounded-xl text-center font-bold border ${rateCB.bg}`}>
-                            <span className={`text-lg font-black ${rateCB.color}`}>{rateCB.state === 'GREEN' ? '🟢' : rateCB.state === 'YELLOW' ? '🟡' : '🔴'} {rateCB.state}</span>
-                            <div className="text-sm mt-1 opacity-80">{rateCB.msg}</div>
-                          </div>
-                        )}
-                      </div>
-
-                      <button type="button" onClick={handleSave} className="w-full tech-btn bg-slate-800 dark:bg-slate-100 text-white dark:text-slate-900 hover:bg-slate-700 dark:hover:bg-white text-xl py-4 mt-4">INJECT A</button>
                     </div>
                   ) : (
                     <div className="space-y-5">
@@ -761,9 +755,9 @@
                         <div><label className="block text-sm font-bold mb-1 text-sky-500 dark:text-sky-400">ETH</label><input type="number" name="eth" value={formDataB.eth} onChange={handleInputBChange} className="w-full tech-input font-mono focus:border-sky-400 focus:shadow-[0_0_0_4px_rgba(56,189,248,0.15)] dark:focus:shadow-[0_0_0_4px_rgba(56,189,248,0.25)]" placeholder="0" /></div>
                         <div><label className="block text-sm font-bold mb-1 text-amber-500 dark:text-amber-400">BTC</label><input type="number" name="btc" value={formDataB.btc} onChange={handleInputBChange} className="w-full tech-input font-mono focus:border-amber-400 focus:shadow-[0_0_0_4px_rgba(251,191,36,0.15)] dark:focus:shadow-[0_0_0_4px_rgba(251,191,36,0.25)]" placeholder="0" /></div>
                       </div>
-                      <button type="button" onClick={handleSaveB} className="w-full tech-btn bg-slate-800 dark:bg-slate-100 text-white dark:text-slate-900 hover:bg-slate-700 dark:hover:bg-white text-xl py-4 mt-4">INJECT B</button>
                     </div>
                   )}
+                  <button type="button" onClick={handleInjectAll} className="w-full tech-btn bg-gradient-to-r from-sky-600 to-violet-600 hover:from-sky-500 hover:to-violet-500 text-white text-xl py-4 mt-6 shadow-lg">INJECT A + B</button>
                 </div>
 
                 <div className="tech-panel p-8 bg-gradient-to-br from-rose-50 to-white dark:from-rose-950/20 dark:to-slate-900 border-rose-100 dark:border-rose-900/50">
@@ -793,7 +787,7 @@
                     </div>
 
                     <div className="flex-1 flex items-center justify-center py-6">
-                       <div className={`text-6xl sm:text-7xl lg:text-8xl xl:text-9xl font-black font-mono tracking-tighter data-text data-text-massive break-words px-2 ${mrZoneInfo.text}`}>
+                       <div className={`text-4xl sm:text-6xl md:text-7xl lg:text-8xl xl:text-9xl font-black font-mono tracking-tighter data-text data-text-massive break-words px-2 ${mrZoneInfo.text}`}>
                          {nominalMR}%
                        </div>
                     </div>
@@ -887,32 +881,63 @@
                           <span className="text-sm font-bold text-yellow-600 dark:text-yellow-400">⚠️ ZONE2: {t('理論上僅股息應注入，請自行確認此筆活水來源（系統不強制區分股息/增貸，全額放行）', 'Theoretically dividends-only — verify this inflow source yourself (system does not enforce; full release)')}</span>
                         </div>
                       )}
-                      <div className="grid grid-cols-3 gap-4 md:gap-6">
-                        <div className="rounded-2xl border border-slate-100 dark:border-slate-700 p-6 bg-slate-50 dark:bg-slate-800/50 text-center scale-card cursor-default">
-                          <div className="text-xs font-bold mb-3 uppercase text-slate-400 tracking-widest">TSLA</div>
-                          <div className="text-4xl font-black text-sky-600 dark:text-sky-400 font-mono data-text mb-2">40%</div>
-                          <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-3 overflow-hidden">
-                            <div className="bg-sky-500 h-full rounded-full" style={{width: '40%'}}></div>
+                      {(() => {
+                        const curTsla = parseFloat(formDataB.tsla) || 0;
+                        const curSpcx = parseFloat(formDataB.spcx) || 0;
+                        const curQld = parseFloat(formDataB.qld) || 0;
+                        const usTotal = curTsla + curSpcx + curQld;
+                        const targets = [
+                          { name: 'TSLA', ratio: 0.40, current: curTsla, color: 'sky', desc: t('高β個股', 'High β Stock') },
+                          { name: 'SPCX', ratio: 0.30, current: curSpcx, color: 'violet', desc: 'SpaceX (2026/6/12)' },
+                          { name: 'QLD',  ratio: 0.30, current: curQld,  color: 'emerald', desc: 'Nasdaq 100 ×2' }
+                        ];
+                        return (
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
+                            {targets.map(item => {
+                              const targetVal = usTotal * item.ratio;
+                              const diff = targetVal - item.current;
+                              const pct = targetVal > 0 ? Math.min((item.current / targetVal) * 100, 100) : 0;
+                              const isFull = diff <= 0;
+                              const isEmpty = item.current === 0 && usTotal > 0;
+                              const colorMap = { sky: { bar: 'bg-sky-500', text: 'text-sky-600 dark:text-sky-400' }, violet: { bar: 'bg-violet-500', text: 'text-violet-600 dark:text-violet-400' }, emerald: { bar: 'bg-emerald-500', text: 'text-emerald-600 dark:text-emerald-400' } };
+                              const cm = colorMap[item.color];
+                              return (
+                                <div key={item.name} className="rounded-2xl border border-slate-100 dark:border-slate-700 p-5 bg-slate-50 dark:bg-slate-800/50 scale-card cursor-default">
+                                  <div className="flex justify-between items-center mb-2">
+                                    <span className="text-xs font-bold uppercase text-slate-400 tracking-widest">{item.name}</span>
+                                    <span className={`text-lg font-black font-mono ${cm.text}`}>{(item.ratio * 100).toFixed(0)}%</span>
+                                  </div>
+                                  <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-4 overflow-hidden mb-3 relative">
+                                    <div className={`${cm.bar} h-full rounded-full transition-all duration-700`} style={{width: pct.toFixed(1) + '%'}}></div>
+                                  </div>
+                                  <div className="flex justify-between items-baseline mb-1">
+                                    <span className="text-xs font-bold text-slate-400">{t('現值', 'NOW')}</span>
+                                    <span className={`text-base font-black font-mono ${cm.text}`}>${formatNumber(item.current)}</span>
+                                  </div>
+                                  <div className="flex justify-between items-baseline mb-2">
+                                    <span className="text-xs font-bold text-slate-400">{t('目標', 'TARGET')}</span>
+                                    <span className="text-base font-bold font-mono text-slate-500 dark:text-slate-400">${formatNumber(targetVal)}</span>
+                                  </div>
+                                  {isEmpty ? (
+                                    <div className={`p-2 rounded-lg text-center text-sm font-black ${cm.text} bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700`}>
+                                      100% BUY {item.name}
+                                    </div>
+                                  ) : isFull ? (
+                                    <div className="p-2 rounded-lg text-center text-sm font-black text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
+                                      ✅ {t('已足額', 'SUFFICIENT')}
+                                    </div>
+                                  ) : (
+                                    <div className="p-2 rounded-lg text-center text-sm font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+                                      {t('需買入', 'BUY')} ${formatNumber(diff)}
+                                    </div>
+                                  )}
+                                  <div className="text-xs font-bold text-slate-400 mt-2 text-center">{item.desc}</div>
+                                </div>
+                              );
+                            })}
                           </div>
-                          <div className="text-xs font-bold text-slate-400 mt-2">{t('高β個股', 'High β Stock')}</div>
-                        </div>
-                        <div className="rounded-2xl border border-slate-100 dark:border-slate-700 p-6 bg-slate-50 dark:bg-slate-800/50 text-center scale-card cursor-default">
-                          <div className="text-xs font-bold mb-3 uppercase text-slate-400 tracking-widest">SPCX</div>
-                          <div className="text-4xl font-black text-violet-600 dark:text-violet-400 font-mono data-text mb-2">30%</div>
-                          <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-3 overflow-hidden">
-                            <div className="bg-violet-500 h-full rounded-full" style={{width: '30%'}}></div>
-                          </div>
-                          <div className="text-xs font-bold text-slate-400 mt-2">SpaceX (2026/6/12)</div>
-                        </div>
-                        <div className="rounded-2xl border border-slate-100 dark:border-slate-700 p-6 bg-slate-50 dark:bg-slate-800/50 text-center scale-card cursor-default">
-                          <div className="text-xs font-bold mb-3 uppercase text-slate-400 tracking-widest">QLD</div>
-                          <div className="text-4xl font-black text-emerald-600 dark:text-emerald-400 font-mono data-text mb-2">30%</div>
-                          <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-3 overflow-hidden">
-                            <div className="bg-emerald-500 h-full rounded-full" style={{width: '30%'}}></div>
-                          </div>
-                          <div className="text-xs font-bold text-slate-400 mt-2">Nasdaq 100 ×2</div>
-                        </div>
-                      </div>
+                        );
+                      })()}
                     </div>
                   )}
 
@@ -1222,7 +1247,7 @@
         );
     };
 
-    const AssetTerminal = ({ theme }) => {
+    const AssetTerminal = ({ theme, amberInitDone, assetPrefill, clearPrefill }) => {
         const tierConfigs = useMemo(() => {
             return compoundTargets.map((data, index) => {
                 let colorsLight = "from-cyan-500 via-blue-500 to-indigo-500";
@@ -1268,16 +1293,29 @@
 
         const [formData, setFormData] = useState({ date: getTodayYMD(), twStock: '', usStockUsd: '', crypto: '', note: '' });
 
+        useEffect(() => {
+            if (assetPrefill) {
+                setFormData(p => ({
+                    ...p,
+                    usStockUsd: assetPrefill.usStockUsd != null ? String(assetPrefill.usStockUsd) : p.usStockUsd,
+                    crypto: assetPrefill.crypto != null ? String(assetPrefill.crypto) : p.crypto
+                }));
+                clearPrefill();
+            }
+        }, [assetPrefill]);
+
         const loadTerminalData = () => {
             fetchMatrix('getDashboardData')
                 .then((res) => {
                     const sortedData = [...res].sort((a, b) => String(a.日期).localeCompare(String(b.日期)));
                     setData(sortedData);
                     setLoading(false);
+                    amberInitDone.current = true;
                 })
                 .catch((err) => {
                     console.error("Data Fetch Error:", err);
                     setLoading(false);
+                    amberInitDone.current = true;
                 });
 
             fetchMatrix('getMarketStatus')
@@ -1659,7 +1697,7 @@
             }
         }, [loading, totalAssets, progressPercent, currentTierIndex]);
 
-        if (loading && data.length === 0) return ( <div className="amber-scope flex h-screen items-center justify-center font-mono text-4xl text-slate-800 dark:text-amber-500 tracking-widest font-bold"><ScrambleText text="INITIALIZING_AMBER_ MATRIX..." /></div> );
+        if (loading && data.length === 0 && !amberInitDone.current) return ( <div className="amber-scope flex h-screen items-center justify-center font-mono text-4xl text-slate-800 dark:text-amber-500 tracking-widest font-bold"><ScrambleText text="INITIALIZING_AMBER_ MATRIX..." /></div> );
 
         const twVal = Number(latestForStats.台股) || 0;
         const usVal = Number(latestForStats.美股) || 0;
@@ -1710,7 +1748,7 @@
                         <h1 className="text-3xl font-bold tracking-widest text-slate-800 dark:text-amber-500 font-mono mb-4 vibe-hover-text"><ScrambleText text="AMBER_ TERMINAL_V9.6 [MATRIX_CORE]" /></h1>
 
                         <div className="relative z-10 flex flex-wrap items-baseline gap-4 mb-8 cursor-pointer hover:scale-105 transition-transform group" onClick={() => setShowDestinyModal(true)} title="Click to view Destiny Matrix">
-                            <span className="text-7xl md:text-8xl font-bold tracking-tight glass-text-premium block group-hover:text-cyan-600 dark:group-hover:text-amber-300 transition-colors">
+                            <span className="text-4xl sm:text-6xl md:text-7xl lg:text-8xl font-bold tracking-tight glass-text-premium block group-hover:text-cyan-600 dark:group-hover:text-amber-300 transition-colors">
                                 <ScrambleText text={totalAssets.toLocaleString()} />
                             </span>
                             <span className="text-4xl font-extrabold text-slate-400 dark:text-amber-700 font-mono tracking-wider opacity-80 mt-2 vibe-hover-text">TWD</span>
@@ -1769,7 +1807,7 @@
                                 </div>
                                 <div className="group relative flex-grow cursor-crosshair">
                                     <div className={"absolute inset-0 px-5 pb-4 flex flex-col justify-center border-l-[6px] transition-all duration-300 group-hover:opacity-0 group-hover:scale-95 bg-slate-50/50 dark:bg-slate-900/50 " + (momDeltaIsPos ? "border-emerald-500" : "border-rose-500")}>
-                                        <span className={"text-3xl md:text-4xl font-mono font-extrabold whitespace-nowrap mb-2 vibe-hover-text " + (momDeltaIsPos ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400")}>
+                                        <span className={"text-2xl sm:text-3xl md:text-4xl font-mono font-extrabold mb-2 vibe-hover-text " + (momDeltaIsPos ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400")}>
                                             {momDeltaIsPos ? <span>▲ +</span> : <span>▼ </span>}{Math.abs(momDeltaAmt).toLocaleString()}
                                         </span>
                                         <span className={"text-xl md:text-2xl font-mono font-bold vibe-hover-text " + (momDeltaIsPos ? "text-emerald-600/70 dark:text-emerald-500/70" : "text-rose-600/70 dark:text-rose-500/70")}>
@@ -1854,7 +1892,7 @@
                                 </div>
                                 <div className="group relative flex-grow cursor-crosshair">
                                     <div className={"absolute inset-0 px-5 pb-4 flex flex-col justify-center border-l-[6px] transition-all duration-300 group-hover:opacity-0 group-hover:scale-95 bg-slate-50/50 dark:bg-slate-900/50 " + (cagrIsPos ? "border-indigo-500 dark:border-blue-500" : "border-rose-500")}>
-                                        <span className={"text-4xl md:text-5xl font-mono font-extrabold whitespace-nowrap vibe-hover-text " + (cagrIsPos ? "text-indigo-600 dark:text-blue-400" : "text-rose-600 dark:text-rose-400")}>
+                                        <span className={"text-3xl sm:text-4xl md:text-5xl font-mono font-extrabold vibe-hover-text " + (cagrIsPos ? "text-indigo-600 dark:text-blue-400" : "text-rose-600 dark:text-rose-400")}>
                                             {cagrIsPos ? <span className="animate-flame mr-1">🔥</span> : <span>❄️ </span>}{cagrIsPos ? <span>+</span> : null}{(isNaN(cagr) ? 0 : cagr).toFixed(2)}%
                                         </span>
                                     </div>
@@ -1901,7 +1939,7 @@
                                 </div>
                                 <div className="group relative flex-grow cursor-crosshair">
                                     <div className={"absolute inset-0 px-5 pb-4 flex flex-col justify-center border-l-[6px] transition-all duration-300 group-hover:opacity-0 group-hover:scale-95 bg-slate-50/50 dark:bg-slate-900/50 " + (velocityIsPos ? "border-amber-500 dark:border-yellow-400" : "border-rose-500")}>
-                                        <span className={"text-4xl md:text-5xl font-mono font-extrabold whitespace-nowrap mb-1 vibe-hover-text " + (velocityIsPos ? "text-amber-500 dark:text-yellow-400" : "text-rose-600 dark:text-rose-400")}>
+                                        <span className={"text-3xl sm:text-4xl md:text-5xl font-mono font-extrabold mb-1 vibe-hover-text " + (velocityIsPos ? "text-amber-500 dark:text-yellow-400" : "text-rose-600 dark:text-rose-400")}>
                                             {velocityIsPos ? <span className="animate-lightning mr-2">⚡</span> : <span className="animate-drop mr-2">🩸</span>}
                                             {velocityIsPos ? <span>+</span> : null}{(isNaN(dailyVelocity) ? 0 : Math.round(dailyVelocity)).toLocaleString()}
                                         </span>
@@ -1920,7 +1958,7 @@
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-10 relative z-10">
                     <div className="glass-card p-8 rounded-2xl lg:col-span-1 border-t-[6px] border-slate-800 dark:border-amber-500/50 flex flex-col stagger-1 relative overflow-hidden group shadow-lg">
-                        <h3 className="text-xl font-mono text-slate-800 dark:text-amber-400 mb-8 uppercase tracking-widest font-extrabold flex justify-between relative z-10"><span className="vibe-hover-text">+ 寫入協議 WRITE</span><span className="text-base text-slate-400 dark:text-amber-800 vibe-hover-text">BYPASS MODE</span></h3>
+                        <h3 className="text-xl font-mono text-slate-800 dark:text-amber-400 mb-8 uppercase tracking-widest font-extrabold relative z-10"><span className="vibe-hover-text">+ 寫入協議 WRITE</span></h3>
                         <form onSubmit={handleSubmit} className="space-y-6 flex-grow relative z-10">
                             <div><label className="block text-lg font-mono text-slate-600 dark:text-amber-700 mb-2 font-bold vibe-hover-text">DATE [YYYYMMDD]</label><input required name="date" value={formData.date} onChange={handleInputChange} className="w-full px-5 py-4 text-xl rounded-lg font-mono shadow-sm" /></div>
 
@@ -2101,6 +2139,8 @@
       });
       const [isEng, setIsEng] = useState(safeGetStorage('fos_lang', 'false') === 'true');
       const [activeTab, setActiveTab] = useState(safeGetStorage('app_active_tab', 'asset'));
+      const amberInitDone = useRef(false);
+      const [assetPrefill, setAssetPrefill] = useState(null);
 
       useEffect(() => {
         if (theme === 'dark') document.documentElement.classList.add('dark');
@@ -2114,7 +2154,7 @@
       useEffect(() => { safeSetStorage('app_active_tab', activeTab); }, [activeTab]);
 
       const isDark = theme === 'dark';
-      const tabBase = "app-tab-btn px-6 md:px-10 py-3 rounded-2xl text-base md:text-lg font-black uppercase tracking-widest";
+      const tabBase = "app-tab-btn px-3 sm:px-6 md:px-10 py-2 sm:py-3 rounded-xl sm:rounded-2xl text-xs sm:text-base md:text-lg font-black uppercase tracking-wider sm:tracking-widest";
       const tabActive = "bg-slate-800 dark:bg-amber-500 text-white dark:text-slate-900 shadow-lg";
       const tabIdle = "text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300";
 
@@ -2122,21 +2162,21 @@
         <div>
           <div className="app-tabbar px-4 md:px-10 py-4 flex items-center justify-between gap-4 flex-wrap">
             <div className="flex items-center gap-2 md:gap-4">
-              <span className="text-xl md:text-2xl font-black tracking-tighter text-slate-800 dark:text-amber-400 font-mono select-none mr-2">⌘ UNIFIED</span>
+              <span className="text-sm sm:text-xl md:text-2xl font-black tracking-tighter text-slate-800 dark:text-amber-400 font-mono select-none mr-1 sm:mr-2 hidden sm:inline">⌘ UNIFIED</span><span className="text-sm font-black text-slate-800 dark:text-amber-400 font-mono select-none mr-1 sm:hidden">⌘</span>
               <button onClick={() => setActiveTab('asset')} className={`${tabBase} ${activeTab === 'asset' ? tabActive : tabIdle}`}>總資產 ASSET</button>
               <button onClick={() => setActiveTab('fos')} className={`${tabBase} ${activeTab === 'fos' ? tabActive : tabIdle}`}>FOS BOSS</button>
             </div>
-            <div className="flex items-center gap-3">
-              <button onClick={() => setIsEng(!isEng)} className="px-5 py-2.5 rounded-2xl text-base font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:-translate-y-0.5 transition-all shadow-sm" title="FOS 語言切換">{isEng ? 'EN' : '中'}</button>
-              <button onClick={() => setTheme(isDark ? 'light' : 'dark')} className="px-5 py-2.5 rounded-2xl text-base font-bold border border-slate-200 dark:border-amber-500/40 bg-white dark:bg-slate-800 text-slate-600 dark:text-amber-400 hover:-translate-y-0.5 transition-all shadow-sm">
-                {isDark ? '☀️ DAY' : '🌙 STEALTH'}
+            <div className="flex items-center gap-2 sm:gap-3">
+              <button onClick={() => setIsEng(!isEng)} className="px-3 sm:px-5 py-1.5 sm:py-2.5 rounded-xl sm:rounded-2xl text-sm sm:text-base font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:-translate-y-0.5 transition-all shadow-sm" title="FOS 語言切換">{isEng ? 'EN' : '中'}</button>
+              <button onClick={() => setTheme(isDark ? 'light' : 'dark')} className="px-3 sm:px-5 py-1.5 sm:py-2.5 rounded-xl sm:rounded-2xl text-sm sm:text-base font-bold border border-slate-200 dark:border-amber-500/40 bg-white dark:bg-slate-800 text-slate-600 dark:text-amber-400 hover:-translate-y-0.5 transition-all shadow-sm">
+                {isDark ? '☀️' : '🌙'}<span className="hidden sm:inline">{isDark ? ' DAY' : ' STEALTH'}</span>
               </button>
             </div>
           </div>
 
           {activeTab === 'asset'
-            ? <AssetTerminal theme={theme} />
-            : <FosTerminal isDarkMode={isDark} isEng={isEng} />}
+            ? <AssetTerminal theme={theme} amberInitDone={amberInitDone} assetPrefill={assetPrefill} clearPrefill={() => setAssetPrefill(null)} />
+            : <FosTerminal isDarkMode={isDark} isEng={isEng} onInjectPrefill={(vals) => { setAssetPrefill(vals); setActiveTab('asset'); }} />}
         </div>
       );
     }
