@@ -1697,24 +1697,28 @@
         const dynamicPlAmt = targetRecords.length > 0 ? (timeShiftLatestAsset - timeShiftBaseAsset) : 0;
         const dynamicGrowthPct = targetRecords.length > 0 && timeShiftBaseAsset > 0 ? ((timeShiftLatestAsset - timeShiftBaseAsset) / timeShiftBaseAsset) * 100 : 0;
 
-        const { cagr, holdingYears } = useMemo(() => {
-            if (targetRecords.length < 2) return { cagr: 0, holdingYears: 0 };
+        const { cagr, holdingYears, cagrWarning } = useMemo(() => {
+            if (targetRecords.length < 2) return { cagr: 0, holdingYears: 0, cagrWarning: false };
             const firstData = targetRecords[0];
             const lastData = targetRecords[targetRecords.length - 1];
-            const beginAsset = Number(firstData.總資產) || 1;
+            const rawBegin = Number(firstData.總資產);
+            const beginAsset = rawBegin || 1;
             const endAsset = Number(lastData.總資產) || 0;
 
             const firstDateObj = parseYMD(firstData.日期);
             const lastDateObj = parseYMD(lastData.日期);
 
             const msPerDay = 1000 * 60 * 60 * 24;
-            let days = (lastDateObj - firstDateObj) / msPerDay;
+            const rawDays = (lastDateObj - firstDateObj) / msPerDay;
+            let days = rawDays;
             if (days <= 0) days = 1;
+
+            const warn = (!rawBegin || rawBegin <= 0) || (rawDays <= 0);
 
             const years = days / 365.25;
             const cagrValue = (Math.pow(endAsset / beginAsset, 1 / years) - 1) * 100;
 
-            return { cagr: cagrValue, holdingYears: years };
+            return { cagr: cagrValue, holdingYears: years, cagrWarning: warn };
         }, [targetRecords]);
 
         const extremesCalc = useMemo(() => {
@@ -1976,6 +1980,7 @@
                                     <div className={"absolute inset-0 px-5 pb-4 flex flex-col justify-center border-l-[6px] transition-all duration-300 group-hover:opacity-0 group-hover:scale-95 bg-slate-50/50 dark:bg-slate-900/50 " + (cagrIsPos ? "border-indigo-500 dark:border-blue-500" : "border-rose-500")}>
                                         <span className={"text-3xl sm:text-4xl md:text-5xl font-mono font-extrabold vibe-hover-text " + (cagrIsPos ? "text-indigo-600 dark:text-blue-400" : "text-rose-600 dark:text-rose-400")}>
                                             {cagrIsPos ? <span className="animate-flame mr-1">🔥</span> : <span>❄️ </span>}{cagrIsPos ? <span>+</span> : null}{(isNaN(cagr) ? 0 : cagr).toFixed(2)}%
+                                            {cagrWarning && <span className="ml-2 text-amber-500 cursor-help text-2xl" title="資料不足或異常，此數字不可靠（起始資產為0或日期區間過短）">⚠️</span>}
                                         </span>
                                     </div>
                                     <div className={"absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 flex flex-col justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl " + (cagrIsPos ? "border-indigo-500 dark:border-blue-500/30" : "border-rose-500 dark:border-rose-500/30")}>
