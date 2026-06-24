@@ -352,7 +352,9 @@
       const [formDataB, setFormDataB] = useState({ tsla: '', qld: '', spcx: '', eth: '', btc: '', usdRate: safeGetStorage('fos_usdRate', '32.5') });
 
       const [formData, setFormData] = useState({
-        lAmount: '', c0050: '', c00733: '',
+        lAmount: safeGetStorage('fos_lAmount', ''),
+        c0050: safeGetStorage('fos_c0050', ''),
+        c00733: safeGetStorage('fos_c00733', ''),
         p1_00675L: safeGetStorage('fos_p1_675', ''),
         p1_00631L: safeGetStorage('fos_p1_631', ''),
         p2Usdt: '0', btcAth: '73906.00', ethAth: '4956.62', emergencyWithdrawal: ''
@@ -499,6 +501,9 @@
       const handleInputChange = (e) => {
         const { name, value } = e.target;
         setFormData(p => ({ ...p, [name]: value }));
+        if (name === 'lAmount') safeSetStorage('fos_lAmount', value);
+        if (name === 'c0050') safeSetStorage('fos_c0050', value);
+        if (name === 'c00733') safeSetStorage('fos_c00733', value);
         if (name === 'p1_00675L') safeSetStorage('fos_p1_675', value);
         if (name === 'p1_00631L') safeSetStorage('fos_p1_631', value);
       };
