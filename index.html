@@ -360,6 +360,9 @@
 
       const [history, setHistory] = useState([]);
       const [isSyncing, setIsSyncing] = useState(false);
+      const [aiFields, setAiFields] = useState({});
+      const [isRecognizing, setIsRecognizing] = useState(false);
+      const fileInputRef = useRef(null);
 
       const isGasEnvironment = typeof google !== 'undefined' && google.script && google.script.run;
       const [terminalMsg, setTerminalMsg] = useState(`SYSTEM ONLINE. ${isGasEnvironment ? '[GAS NATIVE ENGINE]' : '[GITHUB DECOUPLED]'} - V12.2 (FIXED-RATIO)`);
@@ -499,7 +502,55 @@
         if (name === 'p1_00631L') safeSetStorage('fos_p1_631', value);
       };
 
-      const handleInputBChange = (e) => { setFormDataB(p => ({ ...p, [e.target.name]: e.target.value })); if (e.target.name === 'usdRate') safeSetStorage('fos_usdRate', e.target.value); };
+      const handleInputBChange = (e) => {
+        setFormDataB(p => ({ ...p, [e.target.name]: e.target.value }));
+        if (e.target.name === 'usdRate') safeSetStorage('fos_usdRate', e.target.value);
+        setAiFields(p => { const n = {...p}; delete n[e.target.name]; return n; });
+      };
+
+      const handleScreenshot = async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        setIsRecognizing(true);
+        setTerminalMsg('>> AI VISION: ANALYZING SCREENSHOT...');
+        try {
+          const base64 = await new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => {
+              const maxW = 1280;
+              let w = img.width, h = img.height;
+              if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+              const canvas = document.createElement('canvas');
+              canvas.width = w; canvas.height = h;
+              canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+              const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+              resolve(dataUrl.split(',')[1]);
+            };
+            img.onerror = reject;
+            img.src = URL.createObjectURL(file);
+          });
+
+          const res = await gasAPI('recognizeScreenshot', base64);
+          if (res.success && res.data) {
+            const d = res.data;
+            const newFields = {};
+            const updates = {};
+            ['tsla','qld','spcx','eth','btc'].forEach(k => {
+              if (d[k] != null) { updates[k] = String(d[k]); newFields[k] = true; }
+            });
+            setFormDataB(p => ({ ...p, ...updates }));
+            setAiFields(newFields);
+            setTerminalMsg('>> AI VISION: ' + Object.keys(updates).length + ' FIELDS RECOGNIZED.');
+          } else {
+            setTerminalMsg('>> AI VISION FAILED: ' + (res.message || 'Unknown error'));
+          }
+        } catch (err) {
+          setTerminalMsg('>> AI VISION ERROR: ' + err.message);
+        }
+        setIsRecognizing(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      };
+
       const handleBetaChange = (e) => setBetaConfig(p => ({ ...p, [e.target.name]: e.target.value }));
 
       const updateAth = (coin) => {
@@ -742,18 +793,49 @@
                     </div>
                   ) : (
                     <div className="space-y-5">
-                      <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800 p-3 rounded-2xl border border-slate-200 dark:border-slate-700">
+                      <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 bg-slate-50 dark:bg-slate-800 p-3 rounded-2xl border border-slate-200 dark:border-slate-700">
                          <span className="font-bold text-sm text-slate-500 dark:text-slate-400 uppercase">USD RATE</span>
-                         <input type="number" name="usdRate" value={formDataB.usdRate} onChange={handleInputBChange} className="w-24 tech-input text-base p-1 text-center font-mono" />
+                         <input type="number" name="usdRate" value={formDataB.usdRate} onChange={handleInputBChange} className="w-full sm:w-24 tech-input text-base p-1 text-center font-mono" />
                       </div>
+
+                      {/* 截圖辨識上傳 */}
+                      <div className="relative">
+                        <input type="file" accept="image/*" ref={fileInputRef} onChange={handleScreenshot} className="hidden" />
+                        <button type="button" onClick={() => fileInputRef.current && fileInputRef.current.click()} disabled={isRecognizing} className={`w-full tech-btn py-3 text-base border-2 border-dashed rounded-2xl flex items-center justify-center gap-2 transition-all ${isRecognizing ? 'border-violet-400 bg-violet-50 dark:bg-violet-950/30 text-violet-500 animate-pulse cursor-wait' : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:border-violet-400 hover:text-violet-500'}`}>
+                          {isRecognizing ? (
+                            <Fragment><svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> AI ANALYZING...</Fragment>
+                          ) : (
+                            <Fragment><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg> {t('上傳截圖自動辨識', 'UPLOAD SCREENSHOT')}</Fragment>
+                          )}
+                        </button>
+                        {Object.keys(aiFields).length > 0 && (
+                          <div className="mt-2 text-center text-xs font-bold text-violet-500 dark:text-violet-400 flex items-center justify-center gap-1">
+                            <span className="inline-block w-2 h-2 rounded-full bg-violet-500 animate-pulse"></span>
+                            {t('紫框欄位為 AI 辨識結果，請確認後送出', 'Purple-bordered fields are AI results — verify before inject')}
+                          </div>
+                        )}
+                      </div>
+
                       <div className="grid grid-cols-3 gap-4 border-b border-slate-200 dark:border-slate-700 pb-4">
-                        <div><label className="block text-xs font-bold mb-1 text-slate-500 dark:text-slate-400">TSLA</label><input type="number" name="tsla" value={formDataB.tsla} onChange={handleInputBChange} className="w-full tech-input text-lg py-2 font-mono" placeholder="0" /></div>
-                        <div><label className="block text-xs font-bold mb-1 text-slate-500 dark:text-slate-400">SPCX</label><input type="number" name="spcx" value={formDataB.spcx} onChange={handleInputBChange} className="w-full tech-input text-lg py-2 font-mono" placeholder="0" /></div>
-                        <div><label className="block text-xs font-bold mb-1 text-slate-500 dark:text-slate-400">QLD</label><input type="number" name="qld" value={formDataB.qld} onChange={handleInputBChange} className="w-full tech-input text-lg py-2 font-mono" placeholder="0" /></div>
+                        {[{name:'tsla',label:'TSLA'},{name:'spcx',label:'SPCX'},{name:'qld',label:'QLD'}].map(f => (
+                          <div key={f.name} className="relative">
+                            <label className="block text-xs font-bold mb-1 text-slate-500 dark:text-slate-400">{f.label}</label>
+                            <input type="number" name={f.name} value={formDataB[f.name]} onChange={handleInputBChange} className={`w-full tech-input text-lg py-2 font-mono ${aiFields[f.name] ? 'ring-2 ring-violet-400 ring-offset-1 dark:ring-offset-slate-900' : ''}`} placeholder="0" />
+                            {aiFields[f.name] && <span className="absolute top-0 right-1 text-[10px] font-black text-violet-500 bg-violet-100 dark:bg-violet-900/50 px-1.5 py-0.5 rounded-bl-lg rounded-tr-xl">AI</span>}
+                          </div>
+                        ))}
                       </div>
                       <div className="grid grid-cols-2 gap-4">
-                        <div><label className="block text-sm font-bold mb-1 text-sky-500 dark:text-sky-400">ETH</label><input type="number" name="eth" value={formDataB.eth} onChange={handleInputBChange} className="w-full tech-input font-mono focus:border-sky-400 focus:shadow-[0_0_0_4px_rgba(56,189,248,0.15)] dark:focus:shadow-[0_0_0_4px_rgba(56,189,248,0.25)]" placeholder="0" /></div>
-                        <div><label className="block text-sm font-bold mb-1 text-amber-500 dark:text-amber-400">BTC</label><input type="number" name="btc" value={formDataB.btc} onChange={handleInputBChange} className="w-full tech-input font-mono focus:border-amber-400 focus:shadow-[0_0_0_4px_rgba(251,191,36,0.15)] dark:focus:shadow-[0_0_0_4px_rgba(251,191,36,0.25)]" placeholder="0" /></div>
+                        <div className="relative">
+                          <label className="block text-sm font-bold mb-1 text-sky-500 dark:text-sky-400">ETH</label>
+                          <input type="number" name="eth" value={formDataB.eth} onChange={handleInputBChange} className={`w-full tech-input font-mono ${aiFields.eth ? 'ring-2 ring-violet-400 ring-offset-1 dark:ring-offset-slate-900' : 'focus:border-sky-400'}`} placeholder="0" />
+                          {aiFields.eth && <span className="absolute top-0 right-1 text-[10px] font-black text-violet-500 bg-violet-100 dark:bg-violet-900/50 px-1.5 py-0.5 rounded-bl-lg rounded-tr-xl">AI</span>}
+                        </div>
+                        <div className="relative">
+                          <label className="block text-sm font-bold mb-1 text-amber-500 dark:text-amber-400">BTC</label>
+                          <input type="number" name="btc" value={formDataB.btc} onChange={handleInputBChange} className={`w-full tech-input font-mono ${aiFields.btc ? 'ring-2 ring-violet-400 ring-offset-1 dark:ring-offset-slate-900' : 'focus:border-amber-400'}`} placeholder="0" />
+                          {aiFields.btc && <span className="absolute top-0 right-1 text-[10px] font-black text-violet-500 bg-violet-100 dark:bg-violet-900/50 px-1.5 py-0.5 rounded-bl-lg rounded-tr-xl">AI</span>}
+                        </div>
                       </div>
                     </div>
                   )}
