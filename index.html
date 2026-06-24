@@ -661,12 +661,10 @@
           ]);
           if (resA.success && resB.success) {
             fetchHistory(); fetchHistoryB(); setTerminalMsg('>> A + B INJECTED.');
-            const rate = parseFloat(formDataB.usdRate) || 32.5;
-            const usStockTwdTotal = (parseFloat(formDataB.tsla) || 0) + (parseFloat(formDataB.qld) || 0) + (parseFloat(formDataB.spcx) || 0);
-            const usStockUsd = Math.round(usStockTwdTotal / rate);
+            const usStockTwd = Math.round((parseFloat(formDataB.tsla) || 0) + (parseFloat(formDataB.qld) || 0) + (parseFloat(formDataB.spcx) || 0));
             const cryptoTwd = Math.round((parseFloat(formDataB.eth) || 0) + (parseFloat(formDataB.btc) || 0));
             const twStockTwd = Math.round(c0050 + c00733 + P1);
-            if (onInjectPrefill) onInjectPrefill({ twStock: twStockTwd, usStockUsd, crypto: cryptoTwd });
+            if (onInjectPrefill) onInjectPrefill({ twStock: twStockTwd, usStockTwd, crypto: cryptoTwd });
           }
           else setTerminalMsg('>> PARTIAL FAIL: A=' + (resA.success ? 'OK' : 'ERR') + ' B=' + (resB.success ? 'OK' : 'ERR'));
         } catch (err) { setTerminalMsg('>> INJECT FAILED.'); }
@@ -1384,15 +1382,20 @@
             if (donutChartInstance.current) { try { donutChartInstance.current.destroy(); } catch(e){} donutChartInstance.current = null; }
         }, []);
 
+        const [usPrefillIsTwd, setUsPrefillIsTwd] = useState(false);
         const [formData, setFormData] = useState(() => {
             const base = { date: getTodayYMD(), twStock: '', usStockUsd: '', crypto: '', note: '' };
             if (assetPrefill) {
                 if (assetPrefill.twStock != null) base.twStock = String(assetPrefill.twStock);
-                if (assetPrefill.usStockUsd != null) base.usStockUsd = String(assetPrefill.usStockUsd);
+                if (assetPrefill.usStockTwd != null) { base.usStockUsd = String(assetPrefill.usStockTwd); }
                 if (assetPrefill.crypto != null) base.crypto = String(assetPrefill.crypto);
             }
             return base;
         });
+
+        useEffect(() => {
+            if (assetPrefill && assetPrefill.usStockTwd != null) setUsPrefillIsTwd(true);
+        }, []);
 
         useEffect(() => {
             if (assetPrefill) clearPrefill();
@@ -1604,13 +1607,16 @@
             }
         }, [data, fxRate, chartFilter, theme]);
 
-        const handleInputChange = (e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+        const handleInputChange = (e) => {
+            setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+            if (e.target.name === 'usStockUsd' && usPrefillIsTwd) setUsPrefillIsTwd(false);
+        };
 
         const handleSubmit = (e) => {
             e.preventDefault();
             setIsSubmitting(true);
-            const usStockUsd = Number(formData.usStockUsd || 0);
-            const usStockTwd = Math.round(usStockUsd * fxRate);
+            const usRaw = Number(formData.usStockUsd || 0);
+            const usStockTwd = usPrefillIsTwd ? Math.round(usRaw) : Math.round(usRaw * fxRate);
             const payload = { date: formData.date, twStock: formData.twStock, usStock: usStockTwd, crypto: formData.crypto, note: formData.note, total: Math.round(Number(formData.twStock || 0) + usStockTwd + Number(formData.crypto || 0)) };
 
             const previousData = [...data];
@@ -2073,7 +2079,7 @@
                                     <div className="pt-6 border-t border-slate-200 dark:border-amber-800/30">
                                         <div className="flex justify-between items-center mb-3">
                                             <span className="text-lg font-extrabold text-slate-700 dark:text-amber-700 font-mono tracking-widest uppercase vibe-hover-text">US_Equity (USD)</span>
-                                            {Number(formData.usStockUsd) > 0 && <span className="text-sm font-mono text-cyan-700 dark:text-amber-600 bg-cyan-50 dark:bg-amber-900/20 border border-cyan-200 dark:border-amber-700/30 px-3 py-1 rounded font-bold vibe-hover-text">≈ {Math.round(Number(formData.usStockUsd) * fxRate).toLocaleString()} TWD</span>}
+                                            {Number(formData.usStockUsd) > 0 && <span className="text-sm font-mono text-cyan-700 dark:text-amber-600 bg-cyan-50 dark:bg-amber-900/20 border border-cyan-200 dark:border-amber-700/30 px-3 py-1 rounded font-bold vibe-hover-text">{usPrefillIsTwd ? '已是 TWD' : '≈ ' + Math.round(Number(formData.usStockUsd) * fxRate).toLocaleString() + ' TWD'}</span>}
                                         </div>
                                         <input required type="number" step="any" name="usStockUsd" value={formData.usStockUsd} onChange={handleInputChange} className="w-full px-5 py-4 text-xl rounded-lg font-mono shadow-inner" />
                                     </div>
