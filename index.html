@@ -371,6 +371,8 @@
       const [terminalMsg, setTerminalMsg] = useState(`SYSTEM ONLINE. ${isGasEnvironment ? '[GAS NATIVE ENGINE]' : '[GITHUB DECOUPLED]'} - V12.2 (FIXED-RATIO)`);
 
       const [isPart9, setIsPart9] = useState(safeGetStorage('fos_isPart9', 'false') === 'true');
+      const [showUsDetail, setShowUsDetail] = useState(false);
+      const [showCryptoDetail, setShowCryptoDetail] = useState(false);
       const [escapeAmount, setEscapeAmount] = useState('');
 
       const [liveCrypto, setLiveCrypto] = useState({ BTC: 0, ETH: 0 });
@@ -954,23 +956,29 @@
                       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                       {t('美股固定比例分流引擎', 'FIXED-RATIO SPLIT ENGINE')} <span className="text-sm opacity-60 ml-2">v12.2</span>
                     </h2>
-                    <span className={`px-4 py-1.5 rounded-full text-sm font-black border ${mrZoneInfo.zone === 'ZONE1' ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800' : mrZoneInfo.zone === 'ZONE2' ? 'bg-yellow-50 dark:bg-yellow-950/40 text-yellow-600 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800' : mrZoneInfo.zone === 'ZONE3' ? 'bg-orange-50 dark:bg-orange-950/40 text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800' : mrZoneInfo.zone === 'DANGER' ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700'}`}>
-                      {mrZoneInfo.label}
-                    </span>
+                    <button onClick={() => setShowUsDetail(!showUsDetail)} className={`px-4 py-1.5 rounded-full text-sm font-black border cursor-pointer transition-all hover:scale-105 ${mrZoneInfo.zone === 'ZONE1' ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800' : mrZoneInfo.zone === 'ZONE2' ? 'bg-yellow-50 dark:bg-yellow-950/40 text-yellow-600 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800' : mrZoneInfo.zone === 'ZONE3' ? 'bg-orange-50 dark:bg-orange-950/40 text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800' : mrZoneInfo.zone === 'DANGER' ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700'}`}>
+                      {mrZoneInfo.label} {showUsDetail ? '◀' : '▶'}
+                    </button>
                   </div>
 
-                  {(mrZoneInfo.zone === 'ZONE3' || mrZoneInfo.zone === 'DANGER') ? (
+                  {(!showUsDetail && (mrZoneInfo.zone === 'ZONE3' || mrZoneInfo.zone === 'DANGER')) ? (
                     <div className="p-12 text-center bg-rose-50 dark:bg-rose-950/20">
                       <div className="text-6xl mb-4">❄️</div>
                       <div className="text-2xl font-black text-rose-600 dark:text-rose-400 uppercase">
                         {mrZoneInfo.zone === 'DANGER' ? t('凍結提現，依4.3強制去槓桿', 'FROZEN: Forced Deleverage per 4.3') : t('注資凍結，活水截留 A 帳戶', 'INJECTION FROZEN: Funds Retained in A')}
                       </div>
                       <div className="text-sm text-rose-500/70 mt-2 font-bold">{t('鐵律 10-3: Part 10 服從 9.4 維持率燈號', 'Iron Law 10-3: Part 10 obeys 9.4 MR Signal')}</div>
+                      <div className="mt-4 text-xs text-slate-400 font-bold">{t('點擊燈號標籤查看持倉狀態 →', 'Click zone badge to view holdings →')}</div>
                     </div>
                   ) : (
                     <div className="p-6 md:p-8 bg-white dark:bg-slate-900">
+                      {(mrZoneInfo.zone === 'ZONE3' || mrZoneInfo.zone === 'DANGER') && (
+                        <div className="mb-4 p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-center">
+                          <span className="text-sm font-bold text-rose-500">❄️ {t('注資凍結中 — 以下僅為持倉現況，非買入指令', 'FROZEN — below shows current holdings, NOT buy orders')}</span>
+                        </div>
+                      )}
                       {mrZoneInfo.zone === 'ZONE2' && (
-                        <div className="mb-6 p-3 rounded-xl bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800 text-center">
+                        <div className="mb-4 p-3 rounded-xl bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800 text-center">
                           <span className="text-sm font-bold text-yellow-600 dark:text-yellow-400">⚠️ ZONE2: {t('理論上僅股息應注入，請自行確認此筆活水來源（系統不強制區分股息/增貸，全額放行）', 'Theoretically dividends-only — verify this inflow source yourself (system does not enforce; full release)')}</span>
                         </div>
                       )}
@@ -1047,45 +1055,66 @@
                       <svg className="w-5 h-5 text-violet-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
                       CRYPTO 3-STATE
                     </h2>
-                    <button onClick={handleSyncCrypto} className="tech-btn bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-300 hover:text-violet-500 dark:hover:text-violet-400 px-4 py-1.5 text-sm shadow-sm">SYNC P2/ATH</button>
-                  </div>
-
-                  <div className="p-6 md:p-8 grid grid-cols-1 md:grid-cols-2 gap-6 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
-                    <div className="rounded-2xl border border-slate-100 dark:border-slate-700 p-6 bg-slate-50 dark:bg-slate-800/50 flex flex-col scale-card cursor-default">
-                      <div className="flex justify-between items-center mb-4">
-                        <span className="text-2xl font-black text-amber-500">BTC</span>
-                        <span className="text-xs font-bold cursor-pointer text-slate-400 hover:text-amber-500 bg-white dark:bg-slate-700 px-3 py-1 rounded-full shadow-sm border border-slate-200 dark:border-slate-600 transition-colors" onClick={() => updateAth('BTC')}>ATH: {btcAth}</span>
-                      </div>
-                      <div className="text-5xl font-black font-mono text-slate-800 dark:text-slate-200 mb-2 data-text">${liveCrypto.BTC > 0 ? liveCrypto.BTC.toLocaleString('en-US',{maximumFractionDigits:0}) : '---'}</div>
-                      <div className="text-xl font-bold text-rose-500 mb-6 font-mono">{btcDrawdown}%</div>
-                      <div className={`mt-auto p-4 rounded-xl text-center text-sm font-bold border action-hover-effect ${btcAction.ui}`}>
-                        <span className="block text-lg font-black mb-1">{btcAction.label}</span>{btcAction.msg}
-                      </div>
-                    </div>
-                    <div className="rounded-2xl border border-slate-100 dark:border-slate-700 p-6 bg-slate-50 dark:bg-slate-800/50 flex flex-col scale-card cursor-default">
-                      <div className="flex justify-between items-center mb-4">
-                        <span className="text-2xl font-black text-sky-500">ETH</span>
-                        <span className="text-xs font-bold cursor-pointer text-slate-400 hover:text-sky-500 bg-white dark:bg-slate-700 px-3 py-1 rounded-full shadow-sm border border-slate-200 dark:border-slate-600 transition-colors" onClick={() => updateAth('ETH')}>ATH: {ethAth}</span>
-                      </div>
-                      <div className="text-5xl font-black font-mono text-slate-800 dark:text-slate-200 mb-2 data-text">${liveCrypto.ETH > 0 ? liveCrypto.ETH.toLocaleString('en-US',{maximumFractionDigits:0}) : '---'}</div>
-                      <div className="text-xl font-bold text-rose-500 mb-6 font-mono">{ethDrawdown}%</div>
-                      <div className={`mt-auto p-4 rounded-xl text-center text-sm font-bold border action-hover-effect ${ethAction.ui}`}>
-                        <span className="block text-lg font-black mb-1">{ethAction.label}</span>{ethAction.msg}
-                      </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={handleSyncCrypto} className="tech-btn bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-300 hover:text-violet-500 dark:hover:text-violet-400 px-4 py-1.5 text-sm shadow-sm">SYNC P2/ATH</button>
+                      <button onClick={() => setShowCryptoDetail(!showCryptoDetail)} className={`px-4 py-1.5 rounded-full text-sm font-black border cursor-pointer transition-all hover:scale-105 ${consensusTarget === 'ETH' ? 'bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 border-sky-200 dark:border-sky-800' : ratioVal > 0.060 ? 'bg-yellow-50 dark:bg-yellow-950/40 text-yellow-600 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800' : ratioVal > 0 && ratioVal < 0.020 ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700'}`}>
+                        {consensusTarget} {showCryptoDetail ? '◀' : '▶'}
+                      </button>
                     </div>
                   </div>
 
-                  <div className="bg-slate-50 dark:bg-slate-800/80 p-6 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center">
-                    <span className="text-sm font-bold uppercase text-slate-400 tracking-widest">P2 (USDT)</span>
-                    <input type="number" name="p2Usdt" value={formData.p2Usdt} onChange={handleInputChange} className="w-48 tech-input text-right text-xl py-2 px-4" />
-                  </div>
-
-                  <div className={`p-6 flex flex-col md:flex-row justify-between items-center gap-4 ${consensusColor}`}>
-                    <div className="text-sm font-bold uppercase tracking-widest opacity-80">CONSENSUS {consensusMsg}</div>
-                    <div className="text-2xl font-black uppercase tracking-wider px-6 py-2 rounded-xl action-hover-effect">
-                      100% BUY {consensusTarget}
+                  {!showCryptoDetail ? (
+                    <div>
+                      <div className={`p-8 flex flex-col items-center gap-4 ${consensusColor}`}>
+                        <div className="text-sm font-bold uppercase tracking-widest opacity-80">ETH/BTC: {ethBtcRatio} — {consensusMsg}</div>
+                        <div className="text-3xl font-black uppercase tracking-wider px-8 py-3 rounded-xl action-hover-effect">
+                          100% BUY {consensusTarget}
+                        </div>
+                        <div className="mt-2 text-xs text-slate-400 font-bold">{t('點擊幣種標籤查看 BTC/ETH 詳情 →', 'Click badge to view BTC/ETH details →')}</div>
+                      </div>
+                      <div className="bg-slate-50 dark:bg-slate-800/80 p-6 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center">
+                        <span className="text-sm font-bold uppercase text-slate-400 tracking-widest">P2 (USDT)</span>
+                        <input type="number" name="p2Usdt" value={formData.p2Usdt} onChange={handleInputChange} className="w-48 tech-input text-right text-xl py-2 px-4" />
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div>
+                      <div className="p-6 md:p-8 grid grid-cols-1 md:grid-cols-2 gap-6 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
+                        <div className="rounded-2xl border border-slate-100 dark:border-slate-700 p-6 bg-slate-50 dark:bg-slate-800/50 flex flex-col scale-card cursor-default">
+                          <div className="flex justify-between items-center mb-4">
+                            <span className="text-2xl font-black text-amber-500">BTC</span>
+                            <span className="text-xs font-bold cursor-pointer text-slate-400 hover:text-amber-500 bg-white dark:bg-slate-700 px-3 py-1 rounded-full shadow-sm border border-slate-200 dark:border-slate-600 transition-colors" onClick={() => updateAth('BTC')}>ATH: {btcAth}</span>
+                          </div>
+                          <div className="text-5xl font-black font-mono text-slate-800 dark:text-slate-200 mb-2 data-text">${liveCrypto.BTC > 0 ? liveCrypto.BTC.toLocaleString('en-US',{maximumFractionDigits:0}) : '---'}</div>
+                          <div className="text-xl font-bold text-rose-500 mb-6 font-mono">{btcDrawdown}%</div>
+                          <div className={`mt-auto p-4 rounded-xl text-center text-sm font-bold border action-hover-effect ${btcAction.ui}`}>
+                            <span className="block text-lg font-black mb-1">{btcAction.label}</span>{btcAction.msg}
+                          </div>
+                        </div>
+                        <div className="rounded-2xl border border-slate-100 dark:border-slate-700 p-6 bg-slate-50 dark:bg-slate-800/50 flex flex-col scale-card cursor-default">
+                          <div className="flex justify-between items-center mb-4">
+                            <span className="text-2xl font-black text-sky-500">ETH</span>
+                            <span className="text-xs font-bold cursor-pointer text-slate-400 hover:text-sky-500 bg-white dark:bg-slate-700 px-3 py-1 rounded-full shadow-sm border border-slate-200 dark:border-slate-600 transition-colors" onClick={() => updateAth('ETH')}>ATH: {ethAth}</span>
+                          </div>
+                          <div className="text-5xl font-black font-mono text-slate-800 dark:text-slate-200 mb-2 data-text">${liveCrypto.ETH > 0 ? liveCrypto.ETH.toLocaleString('en-US',{maximumFractionDigits:0}) : '---'}</div>
+                          <div className="text-xl font-bold text-rose-500 mb-6 font-mono">{ethDrawdown}%</div>
+                          <div className={`mt-auto p-4 rounded-xl text-center text-sm font-bold border action-hover-effect ${ethAction.ui}`}>
+                            <span className="block text-lg font-black mb-1">{ethAction.label}</span>{ethAction.msg}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="bg-slate-50 dark:bg-slate-800/80 p-6 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center">
+                        <span className="text-sm font-bold uppercase text-slate-400 tracking-widest">P2 (USDT)</span>
+                        <input type="number" name="p2Usdt" value={formData.p2Usdt} onChange={handleInputChange} className="w-48 tech-input text-right text-xl py-2 px-4" />
+                      </div>
+                      <div className={`p-4 flex flex-col md:flex-row justify-between items-center gap-3 ${consensusColor}`}>
+                        <div className="text-sm font-bold uppercase tracking-widest opacity-80">ETH/BTC: {ethBtcRatio} — {consensusMsg}</div>
+                        <div className="text-xl font-black uppercase tracking-wider px-4 py-1.5 rounded-xl action-hover-effect">
+                          100% BUY {consensusTarget}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="tech-panel p-8 h-[500px] flex flex-col overflow-hidden">
