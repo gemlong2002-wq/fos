@@ -659,7 +659,8 @@
             const rate = parseFloat(formDataB.usdRate) || 32.5;
             const usStockTwd = Math.round(((parseFloat(formDataB.tsla) || 0) + (parseFloat(formDataB.qld) || 0) + (parseFloat(formDataB.spcx) || 0)) * rate);
             const cryptoTwd = Math.round(((parseFloat(formDataB.eth) || 0) + (parseFloat(formDataB.btc) || 0)) * rate);
-            if (onInjectPrefill) onInjectPrefill({ usStockUsd: Math.round((parseFloat(formDataB.tsla) || 0) + (parseFloat(formDataB.qld) || 0) + (parseFloat(formDataB.spcx) || 0)), crypto: cryptoTwd });
+            const twStockTwd = Math.round(c0050 + c00733 + P1);
+            if (onInjectPrefill) onInjectPrefill({ twStock: twStockTwd, usStockUsd: Math.round((parseFloat(formDataB.tsla) || 0) + (parseFloat(formDataB.qld) || 0) + (parseFloat(formDataB.spcx) || 0)), crypto: cryptoTwd });
           }
           else setTerminalMsg('>> PARTIAL FAIL: A=' + (resA.success ? 'OK' : 'ERR') + ' B=' + (resB.success ? 'OK' : 'ERR'));
         } catch (err) { setTerminalMsg('>> INJECT FAILED.'); }
@@ -1380,6 +1381,7 @@
         const [formData, setFormData] = useState(() => {
             const base = { date: getTodayYMD(), twStock: '', usStockUsd: '', crypto: '', note: '' };
             if (assetPrefill) {
+                if (assetPrefill.twStock != null) base.twStock = String(assetPrefill.twStock);
                 if (assetPrefill.usStockUsd != null) base.usStockUsd = String(assetPrefill.usStockUsd);
                 if (assetPrefill.crypto != null) base.crypto = String(assetPrefill.crypto);
             }
