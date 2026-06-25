@@ -1400,6 +1400,7 @@
         const [hoveredAsset, setHoveredAsset] = useState(null);
         const [showDestinyModal, setShowDestinyModal] = useState(false);
         const [benchmarkData, setBenchmarkData] = useState(null);
+        const [btcLiveChange, setBtcLiveChange] = useState(null);
 
         const [timeShiftYear, setTimeShiftYear] = useState('ALL_TIME');
 
@@ -1461,6 +1462,14 @@
         };
 
         useEffect(() => { loadTerminalData(); }, []);
+
+        // BTC 24h 漲跌% 改由前端直接抓 Binance（GAS 伺服器 IP 被 Binance 451 / CoinGecko 429 封鎖）
+        useEffect(() => {
+            fetch('https://api.binance.us/api/v3/ticker/24hr?symbol=BTCUSDT')
+                .then(r => r.json())
+                .then(d => { if (d && d.priceChangePercent != null) setBtcLiveChange(parseFloat(d.priceChangePercent)); })
+                .catch(() => {});
+        }, []);
 
         const processedData = useMemo(() => {
             if (!data || data.length === 0) return [];
@@ -2195,7 +2204,7 @@
                     if (!benchmarkData || data.length < 2) return null;
                     const taiex = benchmarkData.taiexChange != null ? parseFloat(benchmarkData.taiexChange) : null;
                     const qqq = benchmarkData.qqqChange != null ? parseFloat(benchmarkData.qqqChange) : null;
-                    const btc24 = benchmarkData.btcChange != null ? parseFloat(benchmarkData.btcChange) : null;
+                    const btc24 = btcLiveChange != null ? btcLiveChange : (benchmarkData.btcChange != null ? parseFloat(benchmarkData.btcChange) : null);
                     if (taiex === null && qqq === null && btc24 === null) return null;
 
                     const latest = data[data.length - 1];
