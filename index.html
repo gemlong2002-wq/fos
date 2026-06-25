@@ -1401,6 +1401,7 @@
         const [showDestinyModal, setShowDestinyModal] = useState(false);
         const [benchmarkData, setBenchmarkData] = useState(null);
         const [btcLiveChange, setBtcLiveChange] = useState(null);
+        const [alphaPopover, setAlphaPopover] = useState(null);
 
         const [timeShiftYear, setTimeShiftYear] = useState('ALL_TIME');
 
@@ -1670,11 +1671,40 @@
             const usVal = Number(formData.usStock || 0);
             const usStockTwd = formData.allTwd ? usVal : Math.round(usVal * fxRate);
             const cr = Number(formData.crypto || 0);
-            const payload = { date: formData.date, twStock: tw, usStock: usStockTwd, crypto: cr, note: formData.note, total: Math.round(tw + usStockTwd + cr) };
+            const newTotal = Math.round(tw + usStockTwd + cr);
+            const payload = { date: formData.date, twStock: tw, usStock: usStockTwd, crypto: cr, note: formData.note, total: newTotal };
 
             const previousData = [...data];
+
+            // === 大盤基準逐筆快照 ===
+            const taiex = benchmarkData && benchmarkData.taiexChange != null ? parseFloat(benchmarkData.taiexChange) : null;
+            const qqq = benchmarkData && benchmarkData.qqqChange != null ? parseFloat(benchmarkData.qqqChange) : null;
+            const btc = btcLiveChange != null ? btcLiveChange : (benchmarkData && benchmarkData.btcChange != null ? parseFloat(benchmarkData.btcChange) : null);
+
+            // 找「日期 < 本筆、且日期最大」的前一筆
+            const newDateStr = String(payload.date).replace(/\D/g, '');
+            let prevRec = null;
+            for (let k = 0; k < previousData.length; k++) {
+                const d = String(previousData[k].日期).replace(/\D/g, '');
+                if (d && d < newDateStr) {
+                    if (!prevRec || d > String(prevRec.日期).replace(/\D/g, '')) prevRec = previousData[k];
+                }
+            }
+            const prevTotal = prevRec ? Number(prevRec.總資產) || 0 : 0;
+
+            let bmTaiex = null, bmQqq = null, bmBtc = null, bmMix = null, bmAlpha = null;
+            if (prevTotal > 0 && newTotal > 0 && taiex != null && qqq != null && btc != null) {
+                const myChange = ((newTotal - prevTotal) / prevTotal) * 100;
+                const wTw = tw / newTotal, wUs = usStockTwd / newTotal, wCr = cr / newTotal;
+                const mix = wTw * taiex + wUs * qqq + wCr * btc;
+                bmTaiex = taiex; bmQqq = qqq; bmBtc = btc;
+                bmMix = parseFloat(mix.toFixed(2));
+                bmAlpha = parseFloat((myChange - mix).toFixed(2));
+            }
+            payload.bmTaiex = bmTaiex; payload.bmQqq = bmQqq; payload.bmBtc = bmBtc; payload.bmMix = bmMix; payload.bmAlpha = bmAlpha;
+
             const tempId = 'temp-' + Date.now();
-            setData(prev => [...prev, { _rowIndex: tempId, 日期: payload.date, 台股: payload.twStock, 美股: payload.usStock, 加密貨幣: payload.crypto, 總資產: payload.total, 備註: payload.note }].sort((a, b) => String(a.日期).localeCompare(String(b.日期))));
+            setData(prev => [...prev, { _rowIndex: tempId, 日期: payload.date, 台股: payload.twStock, 美股: payload.usStock, 加密貨幣: payload.crypto, 總資產: payload.total, 備註: payload.note, bmTaiex, bmQqq, bmBtc, bmMix, bmAlpha }].sort((a, b) => String(a.日期).localeCompare(String(b.日期))));
             setFormData({ date: getTodayYMD(), twStock: '', usStock: '', crypto: '', note: '', allTwd: false });
             ['asset_tw','asset_us','asset_crypto','asset_allTwd'].forEach(k => safeSetStorage(k, ''));
 
@@ -1872,6 +1902,46 @@
                             <span className="text-3xl md:text-5xl font-black font-mono bg-clip-text text-transparent bg-gradient-to-r from-amber-500 via-pink-500 to-purple-600 tracking-[0.2em] drop-shadow-sm">
                                 <span>🎉 FINANCIAL FREEDOM ACHIEVED 🎉</span>
                             </span>
+                        </div>
+                    </div>
+                )}
+
+                {alphaPopover && (
+                    <div className="fixed inset-0 bg-slate-900/40 dark:bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[120]" onClick={() => setAlphaPopover(null)}>
+                        <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-sm shadow-2xl border border-slate-200 dark:border-amber-500/30 overflow-hidden" onClick={e => e.stopPropagation()}>
+                            <div className="flex justify-between items-center px-6 py-4 border-b border-slate-100 dark:border-amber-500/20">
+                                <div>
+                                    <div className="text-sm font-mono uppercase tracking-wider font-extrabold text-slate-500 dark:text-cyan-500/80">📊 vs 大盤明細</div>
+                                    <div className="text-xs font-mono text-slate-400 mt-0.5">{alphaPopover.date}</div>
+                                </div>
+                                <button onClick={() => setAlphaPopover(null)} className="text-slate-400 hover:text-slate-600 dark:hover:text-amber-400 font-bold text-2xl outline-none transition-colors">&times;</button>
+                            </div>
+                            <div className="p-6 space-y-3">
+                                <div className="flex justify-between items-center py-2 border-b border-slate-100 dark:border-slate-800">
+                                    <span className="text-sm font-bold text-slate-500 dark:text-slate-400">台股加權</span>
+                                    <span className={"font-black font-mono " + (alphaPopover.taiex >= 0 ? "text-emerald-500" : "text-rose-500")}>{alphaPopover.taiex >= 0 ? '+' : ''}{alphaPopover.taiex.toFixed(2)}%</span>
+                                </div>
+                                <div className="flex justify-between items-center py-2 border-b border-slate-100 dark:border-slate-800">
+                                    <span className="text-sm font-bold text-slate-500 dark:text-slate-400">QQQ (Nasdaq100)</span>
+                                    <span className={"font-black font-mono " + (alphaPopover.qqq >= 0 ? "text-emerald-500" : "text-rose-500")}>{alphaPopover.qqq >= 0 ? '+' : ''}{alphaPopover.qqq.toFixed(2)}%</span>
+                                </div>
+                                <div className="flex justify-between items-center py-2 border-b border-slate-100 dark:border-slate-800">
+                                    <span className="text-sm font-bold text-slate-500 dark:text-slate-400">BTC</span>
+                                    <span className={"font-black font-mono " + (alphaPopover.btc >= 0 ? "text-emerald-500" : "text-rose-500")}>{alphaPopover.btc >= 0 ? '+' : ''}{alphaPopover.btc.toFixed(2)}%</span>
+                                </div>
+                                <div className="flex justify-between items-center py-2 border-b border-slate-100 dark:border-slate-800">
+                                    <span className="text-sm font-bold text-slate-600 dark:text-slate-300">混合基準</span>
+                                    <span className={"font-black font-mono " + (alphaPopover.mix >= 0 ? "text-emerald-500" : "text-rose-500")}>{alphaPopover.mix >= 0 ? '+' : ''}{alphaPopover.mix.toFixed(2)}%</span>
+                                </div>
+                                <div className="flex justify-between items-center py-2 border-b border-slate-100 dark:border-slate-800">
+                                    <span className="text-sm font-bold text-slate-600 dark:text-slate-300">你的當日漲跌</span>
+                                    <span className={"font-black font-mono " + (alphaPopover.myChange >= 0 ? "text-emerald-500" : "text-rose-500")}>{alphaPopover.myChange >= 0 ? '+' : ''}{alphaPopover.myChange.toFixed(2)}%</span>
+                                </div>
+                                <div className={"flex justify-between items-center mt-2 p-4 rounded-xl border-2 " + (alphaPopover.alpha >= 0 ? "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-700 shadow-[0_0_15px_rgba(16,185,129,0.2)]" : "bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800")}>
+                                    <span className="text-base font-black uppercase text-slate-600 dark:text-slate-300">{alphaPopover.alpha >= 0 ? '✨ 贏 ALPHA' : 'DEFICIT 輸'}</span>
+                                    <span className={"text-2xl font-black font-mono " + (alphaPopover.alpha >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-500 dark:text-rose-400")}>{alphaPopover.alpha >= 0 ? '+' : ''}{alphaPopover.alpha.toFixed(2)}%</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 )}
@@ -2200,92 +2270,6 @@
                     </div>
                 </div>
 
-                {(() => {
-                    const fallbackCard = (
-                        <div className="glass-card rounded-2xl p-6 mb-0 flex items-center gap-3 border border-slate-200 dark:border-amber-500/20">
-                            <span className="text-2xl">📊</span>
-                            <div>
-                                <div className="text-sm font-mono uppercase tracking-wider font-extrabold text-slate-500 dark:text-cyan-500/80">vs 大盤 BENCHMARK ALPHA</div>
-                                <div className="text-base font-bold text-slate-400 dark:text-slate-500 mt-1">資料不足，暫無比較</div>
-                            </div>
-                        </div>
-                    );
-                    if (!benchmarkData || data.length < 2) return fallbackCard;
-                    const taiex = benchmarkData.taiexChange != null ? parseFloat(benchmarkData.taiexChange) : null;
-                    const qqq = benchmarkData.qqqChange != null ? parseFloat(benchmarkData.qqqChange) : null;
-                    const btc24 = btcLiveChange != null ? btcLiveChange : (benchmarkData.btcChange != null ? parseFloat(benchmarkData.btcChange) : null);
-                    if (taiex === null && qqq === null && btc24 === null) return fallbackCard;
-
-                    const latest = data[data.length - 1];
-                    const prev = data[data.length - 2];
-                    const latestTotal = Number(latest.總資產) || 0;
-                    const prevTotal = Number(prev.總資產) || 1;
-                    const myChange = ((latestTotal - prevTotal) / prevTotal) * 100;
-
-                    const prevTw = Number(prev.台股) || 0;
-                    const prevUs = Number(prev.美股) || 0;
-                    const prevCr = Number(prev.加密貨幣) || 0;
-                    const prevSum = prevTw + prevUs + prevCr;
-                    if (prevSum <= 0) return fallbackCard;
-
-                    const wTw = prevTw / prevSum;
-                    const wUs = prevUs / prevSum;
-                    const wCr = prevCr / prevSum;
-
-                    const benchTw = taiex != null ? wTw * taiex : 0;
-                    const benchUs = qqq != null ? wUs * qqq : 0;
-                    const benchCr = btc24 != null ? wCr * btc24 : 0;
-                    const benchTotal = benchTw + benchUs + benchCr;
-                    const alpha = myChange - benchTotal;
-                    const isWin = alpha >= 0;
-
-                    const missing = (taiex === null || qqq === null || btc24 === null);
-
-                    return (
-                        <div className="relative rounded-2xl overflow-hidden glass-card flex flex-col holo-card mb-0" onMouseMove={handleMouseMove}>
-                            <div className="px-6 pt-5 pb-3 flex justify-between items-center relative z-30 border-b border-slate-100 dark:border-amber-500/20">
-                                <span className="text-sm md:text-base font-mono uppercase tracking-wider font-extrabold text-slate-500 dark:text-cyan-500/80 flex items-center gap-2 vibe-hover-text">
-                                    <span>📊</span> vs 大盤 BENCHMARK ALPHA
-                                </span>
-                                {missing && <span className="text-xs font-bold text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded">部分資料缺漏</span>}
-                            </div>
-                            <div className="p-6 relative z-10">
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
-                                    <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-3 text-center border border-slate-100 dark:border-amber-500/10">
-                                        <div className="text-xs font-bold text-slate-400 uppercase mb-1">你的變化</div>
-                                        <div className={`text-2xl font-black font-mono ${myChange >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                                            {myChange >= 0 ? '+' : ''}{myChange.toFixed(2)}%
-                                        </div>
-                                    </div>
-                                    <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-3 text-center border border-slate-100 dark:border-amber-500/10">
-                                        <div className="text-xs font-bold text-slate-400 uppercase mb-1">混合基準</div>
-                                        <div className={`text-2xl font-black font-mono ${benchTotal >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                                            {benchTotal >= 0 ? '+' : ''}{benchTotal.toFixed(2)}%
-                                        </div>
-                                    </div>
-                                    <div className={`rounded-xl p-3 text-center border-2 ${isWin ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-700 shadow-[0_0_15px_rgba(16,185,129,0.2)]' : 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800'}`}>
-                                        <div className="text-xs font-bold uppercase mb-1 text-slate-400">{isWin ? '✨ ALPHA' : 'DEFICIT'}</div>
-                                        <div className={`text-2xl font-black font-mono ${isWin ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
-                                            {isWin ? <span className="animate-rocket mr-1">🚀</span> : null}{alpha >= 0 ? '+' : ''}{alpha.toFixed(2)}%
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="grid grid-cols-3 gap-3 text-center">
-                                    <div className="text-xs font-mono font-bold text-slate-400 dark:text-slate-500">
-                                        <span className="text-slate-500 dark:text-amber-500">台股TW</span> {(wTw*100).toFixed(0)}% × <span className={taiex != null ? (taiex >= 0 ? 'text-emerald-500' : 'text-rose-500') : 'text-slate-300'}>{taiex != null ? (taiex >= 0 ? '+' : '') + taiex + '%' : 'N/A'}</span>
-                                    </div>
-                                    <div className="text-xs font-mono font-bold text-slate-400 dark:text-slate-500">
-                                        <span className="text-slate-500 dark:text-amber-500">美股US</span> {(wUs*100).toFixed(0)}% × <span className={qqq != null ? (qqq >= 0 ? 'text-emerald-500' : 'text-rose-500') : 'text-slate-300'}>{qqq != null ? (qqq >= 0 ? '+' : '') + qqq + '%' : 'N/A'}</span>
-                                    </div>
-                                    <div className="text-xs font-mono font-bold text-slate-400 dark:text-slate-500">
-                                        <span className="text-slate-500 dark:text-amber-500">BTC</span> {(wCr*100).toFixed(0)}% × <span className={btc24 != null ? (btc24 >= 0 ? 'text-emerald-500' : 'text-rose-500') : 'text-slate-300'}>{btc24 != null ? (btc24 >= 0 ? '+' : '') + btc24 + '%' : 'N/A'}</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    );
-                })()}
-
                 <div className="glass-card p-10 rounded-2xl stagger-3 relative z-10 overflow-hidden group shadow-lg border border-slate-200 dark:border-transparent">
                     <h3 className="text-3xl font-mono text-slate-800 dark:text-amber-600 mb-8 uppercase tracking-widest font-extrabold relative z-10 vibe-hover-text">資料庫 Archives</h3>
                     <div className="space-y-6 relative z-10 overflow-x-auto">
@@ -2320,7 +2304,7 @@
                                     </button>
                                     {isOpen && (
                                         <div className="overflow-x-auto border-t border-slate-200 dark:border-amber-500/20">
-                                            <table className="w-full text-left whitespace-nowrap"><thead className="bg-slate-100 dark:bg-black/60"><tr><th className="p-6 text-xl font-mono text-slate-600 dark:text-amber-700">Date</th><th className="p-6 text-xl font-mono text-slate-600 dark:text-amber-700">TW</th><th className="p-6 text-xl font-mono text-slate-600 dark:text-amber-700">US</th><th className="p-6 text-xl font-mono text-slate-600 dark:text-amber-700">Crypto</th><th className="p-6 text-xl font-mono text-slate-600 dark:text-amber-700">YTD Δ</th><th className="p-6 text-xl font-mono text-slate-800 dark:text-amber-300 font-extrabold">Total Asset</th><th className="p-6 text-xl font-mono text-slate-600 dark:text-amber-700">Action</th></tr></thead>
+                                            <table className="w-full text-left whitespace-nowrap"><thead className="bg-slate-100 dark:bg-black/60"><tr><th className="p-6 text-xl font-mono text-slate-600 dark:text-amber-700">Date</th><th className="p-6 text-xl font-mono text-slate-600 dark:text-amber-700">TW</th><th className="p-6 text-xl font-mono text-slate-600 dark:text-amber-700">US</th><th className="p-6 text-xl font-mono text-slate-600 dark:text-amber-700">Crypto</th><th className="p-6 text-xl font-mono text-slate-600 dark:text-amber-700">YTD Δ</th><th className="p-6 text-xl font-mono text-slate-600 dark:text-amber-700">vs大盤</th><th className="p-6 text-xl font-mono text-slate-800 dark:text-amber-300 font-extrabold">Total Asset</th><th className="p-6 text-xl font-mono text-slate-600 dark:text-amber-700">Action</th></tr></thead>
                                                 <tbody>
                                                     {renderedData.map((item) => {
                                                         const isEditing = editingRow === item._rowIndex;
@@ -2336,7 +2320,7 @@
                                                         return (
                                                             <tr key={item._rowIndex} className={"table-row-vibe border-b border-slate-100 dark:border-amber-500/10 " + (isEditing ? "bg-slate-100 dark:bg-amber-900/30" : "")}>
                                                                 {isEditing ? (
-                                                                    <React.Fragment><td className="p-4"><input name="date" value={editFormData.date} onChange={handleEditChange} className="w-40 px-4 py-3 text-xl rounded font-mono font-bold border-slate-300" /></td><td className="p-4"><input type="number" name="twStock" value={editFormData.twStock} onChange={handleEditChange} className="w-40 md:w-48 px-4 py-3 text-xl rounded font-mono font-bold border-slate-300" /></td><td className="p-4"><input type="number" name="usStock" value={editFormData.usStock} onChange={handleEditChange} className="w-40 md:w-48 px-4 py-3 text-xl rounded font-mono font-bold border-slate-300" /></td><td className="p-4"><input type="number" name="crypto" value={editFormData.crypto} onChange={handleEditChange} className="w-40 md:w-48 px-4 py-3 text-xl rounded font-mono font-bold border-slate-300" /></td><td className="p-4 text-xl text-slate-400 font-mono font-bold">--</td><td className="p-4 text-xl text-slate-400 font-mono font-bold">--</td><td className="p-4 space-x-4"><button onClick={() => saveEdit(item._rowIndex)} className="text-xl px-4 py-2 bg-slate-800 text-white rounded font-mono font-bold hover:bg-slate-700 transition-colors shadow">SAVE</button><button onClick={() => setEditingRow(null)} className="text-xl px-4 py-2 border-2 border-slate-300 text-slate-600 rounded font-mono font-bold hover:bg-slate-100 transition-colors">CANCEL</button></td></React.Fragment>
+                                                                    <React.Fragment><td className="p-4"><input name="date" value={editFormData.date} onChange={handleEditChange} className="w-40 px-4 py-3 text-xl rounded font-mono font-bold border-slate-300" /></td><td className="p-4"><input type="number" name="twStock" value={editFormData.twStock} onChange={handleEditChange} className="w-40 md:w-48 px-4 py-3 text-xl rounded font-mono font-bold border-slate-300" /></td><td className="p-4"><input type="number" name="usStock" value={editFormData.usStock} onChange={handleEditChange} className="w-40 md:w-48 px-4 py-3 text-xl rounded font-mono font-bold border-slate-300" /></td><td className="p-4"><input type="number" name="crypto" value={editFormData.crypto} onChange={handleEditChange} className="w-40 md:w-48 px-4 py-3 text-xl rounded font-mono font-bold border-slate-300" /></td><td className="p-4 text-xl text-slate-400 font-mono font-bold">--</td><td className="p-4 text-xl text-slate-400 font-mono font-bold">--</td><td className="p-4 text-xl text-slate-400 font-mono font-bold">--</td><td className="p-4 space-x-4"><button onClick={() => saveEdit(item._rowIndex)} className="text-xl px-4 py-2 bg-slate-800 text-white rounded font-mono font-bold hover:bg-slate-700 transition-colors shadow">SAVE</button><button onClick={() => setEditingRow(null)} className="text-xl px-4 py-2 border-2 border-slate-300 text-slate-600 rounded font-mono font-bold hover:bg-slate-100 transition-colors">CANCEL</button></td></React.Fragment>
                                                                 ) : (
                                                                     <React.Fragment>
                                                                         <td className="p-6 text-2xl font-mono text-slate-800 dark:text-amber-600 font-bold">{formatYMD(item.日期)}</td>
@@ -2344,6 +2328,21 @@
                                                                         <td className="p-6"><YtdAssetCell currentVal={item.美股} baseVal={baseUS} isBase={isBase} /></td>
                                                                         <td className="p-6"><YtdAssetCell currentVal={item.加密貨幣} baseVal={baseCR} isBase={isBase} /></td>
                                                                         <td className="p-6 text-2xl font-extrabold font-mono">{isBase ? <span className="text-slate-400 dark:text-amber-700/50">BASE</span> : <span className={ytdGrowth >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>{ytdGrowth >= 0 ? <span>▲ +</span> : <span>▼ </span>}{ytdGrowth.toFixed(2)}%</span>}</td>
+                                                                        <td className="p-6 text-2xl font-extrabold font-mono">{item.bmAlpha == null ? (
+                                                                            <span className="text-slate-300 dark:text-slate-600">—</span>
+                                                                        ) : (() => {
+                                                                            const a = Number(item.bmAlpha);
+                                                                            const win = a >= 0;
+                                                                            return (
+                                                                                <button onClick={() => setAlphaPopover({
+                                                                                    date: formatYMD(item.日期),
+                                                                                    taiex: Number(item.bmTaiex), qqq: Number(item.bmQqq), btc: Number(item.bmBtc),
+                                                                                    mix: Number(item.bmMix), alpha: a, myChange: Number(item.bmAlpha) + Number(item.bmMix)
+                                                                                })} className={"px-3 py-1 rounded-lg cursor-pointer transition-all hover:scale-110 " + (win ? "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 shadow-[0_0_12px_rgba(16,185,129,0.35)] animate-pulse" : "text-rose-500 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/30")}>
+                                                                                    {win ? '✨ +' : '▼ '}{a.toFixed(2)}%
+                                                                                </button>
+                                                                            );
+                                                                        })()}</td>
                                                                         <td className="p-6 text-3xl font-extrabold font-mono relative"><div className="flex items-center gap-5"><span className="text-slate-800 dark:text-amber-200">{Number(item.總資產).toLocaleString()}</span>{item.milestone === 'up' && <span className="text-lg px-3 py-1 rounded cyber-tag-up font-bold animate-pulse">▲ LVL {item.tier} UNLOCKED</span>}{item.milestone === 'down' && <span className="text-lg px-3 py-1 rounded cyber-tag-down font-bold animate-pulse">▼ LVL {item.prevTier} LOST</span>}</div></td>
                                                                         <td className="p-6 space-x-6 relative z-10"><button onClick={() => startEdit(item)} className="text-xl text-cyan-600 dark:text-amber-400 font-mono font-extrabold hover:text-cyan-800 dark:hover:text-amber-300 transition-colors hover:scale-110 inline-block">EDIT</button><button onClick={() => handleDelete(item._rowIndex)} className="text-xl text-rose-500 dark:text-rose-400 font-mono font-extrabold hover:text-rose-700 dark:hover:text-rose-300 transition-colors hover:scale-110 inline-block">DEL</button></td>
                                                                     </React.Fragment>
