@@ -2201,11 +2201,20 @@
                 </div>
 
                 {(() => {
-                    if (!benchmarkData || data.length < 2) return null;
+                    const fallbackCard = (
+                        <div className="glass-card rounded-2xl p-6 mb-0 flex items-center gap-3 border border-slate-200 dark:border-amber-500/20">
+                            <span className="text-2xl">📊</span>
+                            <div>
+                                <div className="text-sm font-mono uppercase tracking-wider font-extrabold text-slate-500 dark:text-cyan-500/80">vs 大盤 BENCHMARK ALPHA</div>
+                                <div className="text-base font-bold text-slate-400 dark:text-slate-500 mt-1">資料不足，暫無比較</div>
+                            </div>
+                        </div>
+                    );
+                    if (!benchmarkData || data.length < 2) return fallbackCard;
                     const taiex = benchmarkData.taiexChange != null ? parseFloat(benchmarkData.taiexChange) : null;
                     const qqq = benchmarkData.qqqChange != null ? parseFloat(benchmarkData.qqqChange) : null;
                     const btc24 = btcLiveChange != null ? btcLiveChange : (benchmarkData.btcChange != null ? parseFloat(benchmarkData.btcChange) : null);
-                    if (taiex === null && qqq === null && btc24 === null) return null;
+                    if (taiex === null && qqq === null && btc24 === null) return fallbackCard;
 
                     const latest = data[data.length - 1];
                     const prev = data[data.length - 2];
@@ -2217,7 +2226,7 @@
                     const prevUs = Number(prev.美股) || 0;
                     const prevCr = Number(prev.加密貨幣) || 0;
                     const prevSum = prevTw + prevUs + prevCr;
-                    if (prevSum <= 0) return null;
+                    if (prevSum <= 0) return fallbackCard;
 
                     const wTw = prevTw / prevSum;
                     const wUs = prevUs / prevSum;
