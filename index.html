@@ -1664,7 +1664,7 @@
             if (keyMap[name]) safeSetStorage(keyMap[name], value);
         };
 
-        const handleSubmit = (e) => {
+        const handleSubmit = async (e) => {
             e.preventDefault();
             setIsSubmitting(true);
             const tw = Number(formData.twStock || 0);
@@ -1676,10 +1676,24 @@
 
             const previousData = [...data];
 
-            // === 大盤基準逐筆快照 ===
-            const taiex = benchmarkData && benchmarkData.taiexChange != null ? parseFloat(benchmarkData.taiexChange) : null;
-            const qqq = benchmarkData && benchmarkData.qqqChange != null ? parseFloat(benchmarkData.qqqChange) : null;
-            const btc = btcLiveChange != null ? btcLiveChange : (benchmarkData && benchmarkData.btcChange != null ? parseFloat(benchmarkData.btcChange) : null);
+            // === 方案 A：COMMIT 當下即時 fetch 大盤資料（不依賴 prefetch state）===
+            let liveBm = null;
+            try {
+                const bmRes = await fetchMatrix('getMarketBenchmarks');
+                if (bmRes && bmRes.status === 'success') liveBm = bmRes;
+            } catch (bmErr) { console.log('[COMMIT] benchmark fetch failed:', bmErr); }
+
+            let liveBtc = btcLiveChange;
+            if (liveBtc == null) {
+                try {
+                    const btcRes = await fetch('https://api.binance.us/api/v3/ticker/24hr?symbol=BTCUSDT').then(r => r.json());
+                    if (btcRes && btcRes.priceChangePercent != null) liveBtc = parseFloat(btcRes.priceChangePercent);
+                } catch (btcErr) { console.log('[COMMIT] BTC fetch failed:', btcErr); }
+            }
+
+            const taiex = liveBm && liveBm.taiexChange != null ? parseFloat(liveBm.taiexChange) : null;
+            const qqq = liveBm && liveBm.qqqChange != null ? parseFloat(liveBm.qqqChange) : null;
+            const btc = liveBtc != null ? liveBtc : (liveBm && liveBm.btcChange != null ? parseFloat(liveBm.btcChange) : null);
 
             // 找「日期 < 本筆、且日期最大」的前一筆
             const newDateStr = String(payload.date).replace(/\D/g, '');
@@ -1709,28 +1723,28 @@
                 bmPartial = (taiex == null || qqq == null || btc == null);
             }
             payload.bmTaiex = bmTaiex; payload.bmQqq = bmQqq; payload.bmBtc = bmBtc; payload.bmMix = bmMix; payload.bmAlpha = bmAlpha; payload.bmPartial = bmPartial;
-            console.log('[COMMIT BENCHMARK]', { benchmarkData, btcLiveChange, taiex, qqq, btc, prevTotal, bmTaiex, bmQqq, bmBtc, bmMix, bmAlpha, bmPartial });
+            console.log('[COMMIT BENCHMARK]', { liveBm, liveBtc, taiex, qqq, btc, prevTotal, bmTaiex, bmQqq, bmBtc, bmMix, bmAlpha, bmPartial });
 
             const tempId = 'temp-' + Date.now();
             setData(prev => [...prev, { _rowIndex: tempId, 日期: payload.date, 台股: payload.twStock, 美股: payload.usStock, 加密貨幣: payload.crypto, 總資產: payload.total, 備註: payload.note, bmTaiex, bmQqq, bmBtc, bmMix, bmAlpha, bmPartial }].sort((a, b) => String(a.日期).localeCompare(String(b.日期))));
             setFormData({ date: getTodayYMD(), twStock: '', usStock: '', crypto: '', note: '', allTwd: false });
             ['asset_tw','asset_us','asset_crypto','asset_allTwd'].forEach(k => safeSetStorage(k, ''));
 
-            fetchMatrix('addEntry', payload)
-                .then((res) => {
-                    setIsSubmitting(false);
-                    if (res.status === 'success') {
-                        setData(prev => prev.map(item => item._rowIndex === tempId ? { ...item, _rowIndex: res.newRowIndex } : item));
-                    } else {
-                        setData(previousData);
-                        alert("SYNC ERROR");
-                    }
-                })
-                .catch((err) => {
-                    setIsSubmitting(false);
+            try {
+                const res = await fetchMatrix('addEntry', payload);
+                setIsSubmitting(false);
+                if (res.status === 'success') {
+                    setData(prev => prev.map(item => item._rowIndex === tempId ? { ...item, _rowIndex: res.newRowIndex } : item));
+                    loadTerminalData();
+                } else {
                     setData(previousData);
-                    alert("NETWORK ERROR");
-                });
+                    alert("SYNC ERROR");
+                }
+            } catch (err) {
+                setIsSubmitting(false);
+                setData(previousData);
+                alert("NETWORK ERROR");
+            }
         };
 
         const handleDelete = (rowIndex) => {
@@ -2236,7 +2250,7 @@
 
                             <div><label className="block text-lg font-mono text-slate-600 dark:text-amber-700 mb-2 font-bold vibe-hover-text">SYS_NOTE</label><input type="text" name="note" value={formData.note} onChange={handleInputChange} className="w-full px-5 py-4 text-xl rounded-lg font-bold shadow-sm" /></div>
                             {!benchmarkData && <div className="mt-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-center"><span className="text-xs font-bold text-amber-600 dark:text-amber-400">⚠️ 大盤資料未載入，本筆不含 vs大盤比較</span></div>}
-                            <button type="submit" disabled={isSubmitting} className="btn-glitch w-full mt-4 py-5 rounded-xl bg-slate-800 dark:bg-amber-600 hover:bg-slate-700 dark:hover:bg-amber-500 text-white font-mono text-2xl font-bold transition-all disabled:opacity-50 tracking-widest shadow-lg">{isSubmitting ? <span>UPLOADING...</span> : <span>COMMIT DATA</span>}</button>
+                            <button type="submit" disabled={isSubmitting} className="btn-glitch w-full mt-4 py-5 rounded-xl bg-slate-800 dark:bg-amber-600 hover:bg-slate-700 dark:hover:bg-amber-500 text-white font-mono text-2xl font-bold transition-all disabled:opacity-50 tracking-widest shadow-lg">{isSubmitting ? <span>COMMITTING...</span> : <span>COMMIT DATA</span>}</button>
                         </form>
                     </div>
 
