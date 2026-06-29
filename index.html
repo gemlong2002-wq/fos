@@ -1692,19 +1692,27 @@
             }
             const prevTotal = prevRec ? Number(prevRec.總資產) || 0 : 0;
 
-            let bmTaiex = null, bmQqq = null, bmBtc = null, bmMix = null, bmAlpha = null;
-            if (prevTotal > 0 && newTotal > 0 && taiex != null && qqq != null && btc != null) {
+            let bmTaiex = null, bmQqq = null, bmBtc = null, bmMix = null, bmAlpha = null, bmPartial = false;
+            const hasAny = taiex != null || qqq != null || btc != null;
+            if (prevTotal > 0 && newTotal > 0 && hasAny) {
                 const myChange = ((newTotal - prevTotal) / prevTotal) * 100;
                 const wTw = tw / newTotal, wUs = usStockTwd / newTotal, wCr = cr / newTotal;
-                const mix = wTw * taiex + wUs * qqq + wCr * btc;
+                const pairs = [];
+                if (taiex != null) pairs.push([wTw, taiex]);
+                if (qqq != null)   pairs.push([wUs, qqq]);
+                if (btc != null)   pairs.push([wCr, btc]);
+                const sumW = pairs.reduce((s, p) => s + p[0], 0);
+                const mix = sumW > 0 ? pairs.reduce((s, p) => s + (p[0] / sumW) * p[1], 0) : 0;
                 bmTaiex = taiex; bmQqq = qqq; bmBtc = btc;
                 bmMix = parseFloat(mix.toFixed(2));
                 bmAlpha = parseFloat((myChange - mix).toFixed(2));
+                bmPartial = (taiex == null || qqq == null || btc == null);
             }
-            payload.bmTaiex = bmTaiex; payload.bmQqq = bmQqq; payload.bmBtc = bmBtc; payload.bmMix = bmMix; payload.bmAlpha = bmAlpha;
+            payload.bmTaiex = bmTaiex; payload.bmQqq = bmQqq; payload.bmBtc = bmBtc; payload.bmMix = bmMix; payload.bmAlpha = bmAlpha; payload.bmPartial = bmPartial;
+            console.log('[COMMIT BENCHMARK]', { benchmarkData, btcLiveChange, taiex, qqq, btc, prevTotal, bmTaiex, bmQqq, bmBtc, bmMix, bmAlpha, bmPartial });
 
             const tempId = 'temp-' + Date.now();
-            setData(prev => [...prev, { _rowIndex: tempId, 日期: payload.date, 台股: payload.twStock, 美股: payload.usStock, 加密貨幣: payload.crypto, 總資產: payload.total, 備註: payload.note, bmTaiex, bmQqq, bmBtc, bmMix, bmAlpha }].sort((a, b) => String(a.日期).localeCompare(String(b.日期))));
+            setData(prev => [...prev, { _rowIndex: tempId, 日期: payload.date, 台股: payload.twStock, 美股: payload.usStock, 加密貨幣: payload.crypto, 總資產: payload.total, 備註: payload.note, bmTaiex, bmQqq, bmBtc, bmMix, bmAlpha, bmPartial }].sort((a, b) => String(a.日期).localeCompare(String(b.日期))));
             setFormData({ date: getTodayYMD(), twStock: '', usStock: '', crypto: '', note: '', allTwd: false });
             ['asset_tw','asset_us','asset_crypto','asset_allTwd'].forEach(k => safeSetStorage(k, ''));
 
@@ -1917,18 +1925,25 @@
                                 <button onClick={() => setAlphaPopover(null)} className="text-slate-400 hover:text-slate-600 dark:hover:text-amber-400 font-bold text-2xl outline-none transition-colors">&times;</button>
                             </div>
                             <div className="p-6 space-y-3">
-                                <div className="flex justify-between items-center py-2 border-b border-slate-100 dark:border-slate-800">
-                                    <span className="text-sm font-bold text-slate-500 dark:text-slate-400">台股加權</span>
-                                    <span className={"font-black font-mono " + (alphaPopover.taiex >= 0 ? "text-emerald-500" : "text-rose-500")}>{alphaPopover.taiex >= 0 ? '+' : ''}{alphaPopover.taiex.toFixed(2)}%</span>
-                                </div>
-                                <div className="flex justify-between items-center py-2 border-b border-slate-100 dark:border-slate-800">
-                                    <span className="text-sm font-bold text-slate-500 dark:text-slate-400">QQQ (Nasdaq100)</span>
-                                    <span className={"font-black font-mono " + (alphaPopover.qqq >= 0 ? "text-emerald-500" : "text-rose-500")}>{alphaPopover.qqq >= 0 ? '+' : ''}{alphaPopover.qqq.toFixed(2)}%</span>
-                                </div>
-                                <div className="flex justify-between items-center py-2 border-b border-slate-100 dark:border-slate-800">
-                                    <span className="text-sm font-bold text-slate-500 dark:text-slate-400">BTC</span>
-                                    <span className={"font-black font-mono " + (alphaPopover.btc >= 0 ? "text-emerald-500" : "text-rose-500")}>{alphaPopover.btc >= 0 ? '+' : ''}{alphaPopover.btc.toFixed(2)}%</span>
-                                </div>
+                                {alphaPopover.partial && (
+                                    <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-center mb-2">
+                                        <span className="text-xs font-bold text-amber-600 dark:text-amber-400">⚠️ 部分大盤數據缺失，權重已重新正規化</span>
+                                    </div>
+                                )}
+                                {[
+                                    { label: '台股加權', val: alphaPopover.taiex },
+                                    { label: 'QQQ (Nasdaq100)', val: alphaPopover.qqq },
+                                    { label: 'BTC', val: alphaPopover.btc }
+                                ].map(r => (
+                                    <div key={r.label} className="flex justify-between items-center py-2 border-b border-slate-100 dark:border-slate-800">
+                                        <span className="text-sm font-bold text-slate-500 dark:text-slate-400">{r.label}</span>
+                                        {r.val != null ? (
+                                            <span className={"font-black font-mono " + (Number(r.val) >= 0 ? "text-emerald-500" : "text-rose-500")}>{Number(r.val) >= 0 ? '+' : ''}{Number(r.val).toFixed(2)}%</span>
+                                        ) : (
+                                            <span className="font-bold font-mono text-slate-300 dark:text-slate-600">N/A</span>
+                                        )}
+                                    </div>
+                                ))}
                                 <div className="flex justify-between items-center py-2 border-b border-slate-100 dark:border-slate-800">
                                     <span className="text-sm font-bold text-slate-600 dark:text-slate-300">混合基準</span>
                                     <span className={"font-black font-mono " + (alphaPopover.mix >= 0 ? "text-emerald-500" : "text-rose-500")}>{alphaPopover.mix >= 0 ? '+' : ''}{alphaPopover.mix.toFixed(2)}%</span>
@@ -2220,7 +2235,8 @@
                             </div>
 
                             <div><label className="block text-lg font-mono text-slate-600 dark:text-amber-700 mb-2 font-bold vibe-hover-text">SYS_NOTE</label><input type="text" name="note" value={formData.note} onChange={handleInputChange} className="w-full px-5 py-4 text-xl rounded-lg font-bold shadow-sm" /></div>
-                            <button type="submit" disabled={isSubmitting} className="btn-glitch w-full mt-10 py-5 rounded-xl bg-slate-800 dark:bg-amber-600 hover:bg-slate-700 dark:hover:bg-amber-500 text-white font-mono text-2xl font-bold transition-all disabled:opacity-50 tracking-widest shadow-lg">{isSubmitting ? <span>UPLOADING...</span> : <span>COMMIT DATA</span>}</button>
+                            {!benchmarkData && <div className="mt-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-center"><span className="text-xs font-bold text-amber-600 dark:text-amber-400">⚠️ 大盤資料未載入，本筆不含 vs大盤比較</span></div>}
+                            <button type="submit" disabled={isSubmitting} className="btn-glitch w-full mt-4 py-5 rounded-xl bg-slate-800 dark:bg-amber-600 hover:bg-slate-700 dark:hover:bg-amber-500 text-white font-mono text-2xl font-bold transition-all disabled:opacity-50 tracking-widest shadow-lg">{isSubmitting ? <span>UPLOADING...</span> : <span>COMMIT DATA</span>}</button>
                         </form>
                     </div>
 
@@ -2333,13 +2349,14 @@
                                                                         ) : (() => {
                                                                             const a = Number(item.bmAlpha);
                                                                             const win = a >= 0;
+                                                                            const partial = item.bmPartial === true || item.bmPartial === 'true';
                                                                             return (
                                                                                 <button onClick={() => setAlphaPopover({
                                                                                     date: formatYMD(item.日期),
-                                                                                    taiex: Number(item.bmTaiex), qqq: Number(item.bmQqq), btc: Number(item.bmBtc),
-                                                                                    mix: Number(item.bmMix), alpha: a, myChange: Number(item.bmAlpha) + Number(item.bmMix)
-                                                                                })} className={"px-3 py-1 rounded-lg cursor-pointer transition-all hover:scale-110 " + (win ? "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 shadow-[0_0_12px_rgba(16,185,129,0.35)] animate-pulse" : "text-rose-500 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/30")}>
-                                                                                    {win ? '✨ +' : '▼ '}{a.toFixed(2)}%
+                                                                                    taiex: item.bmTaiex, qqq: item.bmQqq, btc: item.bmBtc,
+                                                                                    mix: Number(item.bmMix), alpha: a, myChange: a + Number(item.bmMix), partial
+                                                                                })} className={"px-3 py-1 rounded-lg cursor-pointer transition-all hover:scale-110 inline-flex items-center gap-1 " + (win ? "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 shadow-[0_0_12px_rgba(16,185,129,0.35)] animate-pulse" : "text-rose-500 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/30")}>
+                                                                                    {win ? '✨ +' : '▼ '}{a.toFixed(2)}%{partial && <span className="text-amber-500 text-sm ml-0.5" title="部分數據">⚠</span>}
                                                                                 </button>
                                                                             );
                                                                         })()}</td>
