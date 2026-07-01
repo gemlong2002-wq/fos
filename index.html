@@ -2321,6 +2321,18 @@
                             const endTier = getTier(Number(endRecord?.總資產) || 0);
                             const levelBadgeText = startTier !== endTier ? "LVL " + startTier + " ➔ LVL " + endTier + " GET!!!" : "LVL " + endTier + " SECURED!!!";
 
+                            // vs大盤年度累計統計（純前端，不動後端）
+                            const bmStats = currentYearData.reduce((acc, item) => {
+                                const alpha = item.bmAlpha;
+                                if (alpha == null || alpha === '') return acc;
+                                const a = Number(alpha);
+                                if (a > 0) { acc.winCount++; acc.winSum += a; }
+                                else if (a < 0) { acc.loseCount++; acc.loseSum += a; }
+                                else { acc.drawCount++; }
+                                return acc;
+                            }, { winCount: 0, winSum: 0, loseCount: 0, loseSum: 0, drawCount: 0 });
+                            const hasBmData = (bmStats.winCount + bmStats.loseCount + bmStats.drawCount) > 0;
+
                             return (
                                 <div key={year} className="border border-slate-200 dark:border-amber-500/20 rounded-xl overflow-hidden bg-white dark:bg-black/40 min-w-[1000px] shadow-sm">
                                     <button onClick={() => toggleYear(year)} className="w-full flex justify-between items-center p-6 md:p-8 hover:bg-slate-50 dark:hover:bg-amber-500/10 transition-colors cursor-pointer outline-none group relative">
@@ -2330,7 +2342,17 @@
                                                 {levelBadgeText}
                                             </span>
                                         </div>
-                                        <span className="text-xl md:text-2xl text-slate-500 dark:text-amber-700 font-mono font-bold vibe-hover-text">{currentYearData.length} RECORDS</span>
+                                        <div className="flex flex-col items-end gap-1">
+                                            <span className="text-xl md:text-2xl text-slate-500 dark:text-amber-700 font-mono font-bold vibe-hover-text">{currentYearData.length} RECORDS</span>
+                                            {hasBmData && (
+                                                <div className="flex flex-wrap justify-end items-center gap-x-3 gap-y-0.5 text-sm md:text-base font-mono font-bold">
+                                                    <span className="text-slate-400 dark:text-amber-700/60 text-xs tracking-widest">vs大盤</span>
+                                                    {bmStats.winCount > 0 && <span className="text-emerald-600 dark:text-emerald-400 drop-shadow-[0_0_6px_rgba(16,185,129,0.5)]">✨{bmStats.winCount}W +{bmStats.winSum.toFixed(2)}%</span>}
+                                                    {bmStats.loseCount > 0 && <span className="text-rose-500 dark:text-rose-400">▼{bmStats.loseCount}L {bmStats.loseSum.toFixed(2)}%</span>}
+                                                    {bmStats.drawCount > 0 && <span className="text-slate-400 dark:text-slate-500">{bmStats.drawCount}D</span>}
+                                                </div>
+                                            )}
+                                        </div>
                                     </button>
                                     {isOpen && (
                                         <div className="overflow-x-auto border-t border-slate-200 dark:border-amber-500/20">
