@@ -2333,6 +2333,21 @@
                             }, { winCount: 0, winSum: 0, loseCount: 0, loseSum: 0, drawCount: 0 });
                             const hasBmData = (bmStats.winCount + bmStats.loseCount + bmStats.drawCount) > 0;
 
+                            // 年度真實超額（複利路徑A：逐筆還原 myChange = Alpha+Mix 連乘，不受本金進出污染）
+                            const compoundResult = currentYearData.reduce((acc, item) => {
+                                const alpha = item.bmAlpha; const mix = item.bmMix;
+                                if (alpha == null || alpha === '' || mix == null || mix === '') return acc;
+                                const a = Number(alpha); const m = Number(mix);
+                                acc.myFactor *= (1 + (a + m) / 100);
+                                acc.bmFactor *= (1 + m / 100);
+                                acc.count++;
+                                return acc;
+                            }, { myFactor: 1, bmFactor: 1, count: 0 });
+                            const hasCompound = compoundResult.count > 0;
+                            const compoundExcess = hasCompound ? parseFloat(((compoundResult.myFactor / compoundResult.bmFactor - 1) * 100).toFixed(2)) : null;
+                            const isCurrentYear = year === new Date().getFullYear().toString();
+                            const periodLabel = isCurrentYear ? 'YTD 進行中' : '全年';
+
                             return (
                                 <div key={year} className="border border-slate-200 dark:border-amber-500/20 rounded-xl overflow-hidden bg-white dark:bg-black/40 min-w-[1000px] shadow-sm">
                                     <button onClick={() => toggleYear(year)} className="w-full flex justify-between items-center p-6 md:p-8 hover:bg-slate-50 dark:hover:bg-amber-500/10 transition-colors cursor-pointer outline-none group relative">
@@ -2345,11 +2360,28 @@
                                         <div className="flex flex-col items-end gap-1">
                                             <span className="text-xl md:text-2xl text-slate-500 dark:text-amber-700 font-mono font-bold vibe-hover-text">{currentYearData.length} RECORDS</span>
                                             {hasBmData && (
-                                                <div className="flex flex-wrap justify-end items-center gap-x-3 gap-y-0.5 text-sm md:text-base font-mono font-bold">
-                                                    <span className="text-slate-400 dark:text-amber-700/60 text-xs tracking-widest">vs大盤</span>
-                                                    {bmStats.winCount > 0 && <span className="text-emerald-600 dark:text-emerald-400 drop-shadow-[0_0_6px_rgba(16,185,129,0.5)]">✨{bmStats.winCount}W +{bmStats.winSum.toFixed(2)}%</span>}
+                                                <div className="flex flex-wrap justify-end items-center gap-x-3 gap-y-0.5 text-xs font-mono font-bold opacity-55">
+                                                    <span className="text-slate-400 dark:text-amber-700/60 tracking-widest">淨和</span>
+                                                    {bmStats.winCount > 0 && <span className="text-emerald-600 dark:text-emerald-400">✨{bmStats.winCount}W +{bmStats.winSum.toFixed(2)}%</span>}
                                                     {bmStats.loseCount > 0 && <span className="text-rose-500 dark:text-rose-400">▼{bmStats.loseCount}L {bmStats.loseSum.toFixed(2)}%</span>}
                                                     {bmStats.drawCount > 0 && <span className="text-slate-400 dark:text-slate-500">{bmStats.drawCount}D</span>}
+                                                </div>
+                                            )}
+                                            {hasCompound && !isCurrentYear && (
+                                                <div className="flex flex-col items-end gap-0">
+                                                    <span className="text-slate-400 dark:text-amber-700/50 text-xs font-mono tracking-wider">vs大盤累計超額（複利）<span className="ml-1 px-1 rounded text-xs text-slate-400 dark:text-slate-500">全年</span></span>
+                                                    <div className="flex items-baseline gap-1.5">
+                                                        <span className={"text-2xl md:text-3xl font-extrabold font-mono " + (compoundExcess >= 0 ? "text-emerald-500 dark:text-emerald-400 drop-shadow-[0_0_14px_rgba(16,185,129,0.7)]" : "text-rose-500 dark:text-rose-400 drop-shadow-[0_0_14px_rgba(239,68,68,0.6)]")}>
+                                                            {compoundExcess >= 0 ? '+' : ''}{compoundExcess.toFixed(2)}%
+                                                        </span>
+                                                        <span className="text-slate-300 dark:text-slate-600 text-xs font-mono self-end mb-1" title="基於資料庫內已記錄之交易日計算，非涵蓋全年每一日">＊交易日</span>
+                                                    </div>
+                                                </div>
+                                            )}
+                                            {hasCompound && isCurrentYear && (
+                                                <div className="flex flex-col items-end gap-0">
+                                                    <span className="text-slate-400 dark:text-amber-700/50 text-xs font-mono tracking-wider">vs大盤累計超額（複利）<span className="ml-1 px-1 rounded text-xs text-amber-500 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30">YTD 進行中</span></span>
+                                                    <span className="text-sm font-mono text-slate-400 dark:text-amber-700/60 tracking-wider mt-0.5" title="偵測到本金注入日，複利計算校正中">⏳ 校正中</span>
                                                 </div>
                                             )}
                                         </div>
