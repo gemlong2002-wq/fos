@@ -1928,9 +1928,23 @@
                     </div>
                 )}
 
-                {alphaPopover && (
-                    <div className="fixed inset-0 bg-slate-900/40 dark:bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[120]" onClick={() => setAlphaPopover(null)}>
-                        <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-sm shadow-2xl border border-slate-200 dark:border-amber-500/30 overflow-hidden" onClick={e => e.stopPropagation()}>
+                {alphaPopover && (() => {
+                    const POPOVER_W = 320; const POPOVER_H = 390; const PAD = 10;
+                    const vw = window.innerWidth; const vh = window.innerHeight;
+                    const ar = alphaPopover.anchorRect;
+                    const isMobile = vw < 500;
+                    let cardStyle = {};
+                    if (!isMobile && ar) {
+                        let left = ar.right + PAD;
+                        let top = ar.top;
+                        if (left + POPOVER_W > vw - PAD) left = ar.left - POPOVER_W - PAD;
+                        if (left < PAD) left = PAD;
+                        if (top + POPOVER_H > vh - PAD) top = vh - POPOVER_H - PAD;
+                        if (top < PAD) top = PAD;
+                        cardStyle = { position: 'fixed', top, left, width: POPOVER_W, zIndex: 120 };
+                    }
+                    const card = (
+                        <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-amber-500/30 overflow-hidden" style={isMobile ? {} : cardStyle} onClick={e => e.stopPropagation()}>
                             <div className="flex justify-between items-center px-6 py-4 border-b border-slate-100 dark:border-amber-500/20">
                                 <div>
                                     <div className="text-sm font-mono uppercase tracking-wider font-extrabold text-slate-500 dark:text-cyan-500/80">📊 vs 大盤明細</div>
@@ -1972,8 +1986,17 @@
                                 </div>
                             </div>
                         </div>
-                    </div>
-                )}
+                    );
+                    if (isMobile) return (
+                        <div className="fixed inset-0 bg-slate-900/40 dark:bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[120]" onClick={() => setAlphaPopover(null)}>{card}</div>
+                    );
+                    return (
+                        <React.Fragment>
+                            <div className="fixed inset-0 z-[119]" onClick={() => setAlphaPopover(null)} />
+                            {card}
+                        </React.Fragment>
+                    );
+                })()}
 
                 {showDestinyModal && (
                     <div className="fixed inset-0 bg-slate-900/40 dark:bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100]" onClick={() => setShowDestinyModal(false)}>
@@ -2345,6 +2368,8 @@
                             }, { myFactor: 1, bmFactor: 1, count: 0 });
                             const hasCompound = compoundResult.count > 0;
                             const compoundExcess = hasCompound ? parseFloat(((compoundResult.myFactor / compoundResult.bmFactor - 1) * 100).toFixed(2)) : null;
+                            const myReturn = hasCompound ? parseFloat(((compoundResult.myFactor - 1) * 100).toFixed(2)) : null;
+                            const bmReturn = hasCompound ? parseFloat(((compoundResult.bmFactor - 1) * 100).toFixed(2)) : null;
                             const isCurrentYear = year === new Date().getFullYear().toString();
                             const periodLabel = isCurrentYear ? 'YTD 進行中' : '全年';
 
@@ -2375,6 +2400,11 @@
                                                             {compoundExcess >= 0 ? '+' : ''}{compoundExcess.toFixed(2)}%
                                                         </span>
                                                         <span className="text-slate-300 dark:text-slate-600 text-xs font-mono self-end mb-1" title="基於資料庫內已記錄之交易日計算，非涵蓋全年每一日">＊交易日</span>
+                                                    </div>
+                                                    <div className="text-xs font-mono text-right opacity-60">
+                                                        <span className={myReturn >= 0 ? "text-emerald-500 dark:text-emerald-500" : "text-rose-400"}>我 {myReturn >= 0 ? '+' : ''}{myReturn.toFixed(2)}%</span>
+                                                        <span className="text-slate-400 dark:text-slate-600"> / </span>
+                                                        <span className={bmReturn >= 0 ? "text-slate-500 dark:text-amber-800" : "text-rose-400"}>盤 {bmReturn >= 0 ? '+' : ''}{bmReturn.toFixed(2)}%</span>
                                                     </div>
                                                 </div>
                                             )}
@@ -2419,11 +2449,12 @@
                                                                             const win = a >= 0;
                                                                             const partial = item.bmPartial === true || item.bmPartial === 'true';
                                                                             return (
-                                                                                <button onClick={() => setAlphaPopover({
+                                                                                <button onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setAlphaPopover({
                                                                                     date: formatYMD(item.日期),
                                                                                     taiex: item.bmTaiex, qqq: item.bmQqq, btc: item.bmBtc,
-                                                                                    mix: Number(item.bmMix), alpha: a, myChange: a + Number(item.bmMix), partial
-                                                                                })} className={"px-3 py-1 rounded-lg cursor-pointer transition-all hover:scale-110 inline-flex items-center gap-1 " + (win ? "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 shadow-[0_0_12px_rgba(16,185,129,0.35)] animate-pulse" : "text-rose-500 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/30")}>
+                                                                                    mix: Number(item.bmMix), alpha: a, myChange: a + Number(item.bmMix), partial,
+                                                                                    anchorRect: { top: r.top, left: r.left, right: r.right, bottom: r.bottom }
+                                                                                }); }} className={"px-3 py-1 rounded-lg cursor-pointer transition-all hover:scale-110 inline-flex items-center gap-1 " + (win ? "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 shadow-[0_0_12px_rgba(16,185,129,0.35)] animate-pulse" : "text-rose-500 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/30")}>
                                                                                     {win ? '✨ +' : '▼ '}{a.toFixed(2)}%{partial && <span className="text-amber-500 text-sm ml-0.5" title="部分數據">⚠</span>}
                                                                                 </button>
                                                                             );
