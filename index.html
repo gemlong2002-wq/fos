@@ -2381,7 +2381,7 @@
                             const bmBarPct = hasCompound ? (bmAbs / barTotal * 100) : 0;
 
                             return (
-                                <div key={year} className="border border-slate-200 dark:border-amber-500/20 rounded-xl overflow-hidden bg-white dark:bg-black/40 min-w-[1000px] shadow-sm">
+                                <div key={year} className="border border-slate-200 dark:border-amber-500/20 rounded-xl overflow-hidden bg-white dark:bg-black/40 min-w-[1000px] shadow-md relative transition-all duration-[250ms] ease-out hover:scale-[1.04] hover:shadow-xl hover:z-10">
                                     <button onClick={() => toggleYear(year)} className="w-full flex flex-col p-6 md:p-8 hover:bg-slate-50 dark:hover:bg-amber-500/10 transition-colors cursor-pointer outline-none group relative">
                                         <div className="flex justify-between items-center w-full">
                                             <div className="flex items-center relative">
