@@ -2381,7 +2381,7 @@
                             const bmBarPct = hasCompound ? (bmAbs / barTotal * 100) : 0;
 
                             return (
-                                <div key={year} className="border border-slate-200 dark:border-amber-500/20 rounded-xl overflow-hidden bg-white dark:bg-black/40 min-w-[1000px] shadow-md relative transition-all duration-[250ms] ease-out hover:scale-[1.04] hover:shadow-xl hover:z-10">
+                                <div key={year} className="border border-slate-200 dark:border-amber-500/20 rounded-xl overflow-hidden bg-white dark:bg-black/40 min-w-[1000px] shadow-md relative transition-all duration-[250ms] ease-out md:hover:-translate-y-0.5 md:hover:shadow-lg">
                                     <button onClick={() => toggleYear(year)} className="w-full flex flex-col p-6 md:p-8 hover:bg-slate-50 dark:hover:bg-amber-500/10 transition-colors cursor-pointer outline-none group relative">
                                         <div className="flex justify-between items-center w-full">
                                             <div className="flex items-center relative">
@@ -2402,12 +2402,12 @@
                                                             }
                                                         </span>
                                                         <div className="flex items-baseline gap-1.5">
-                                                            <span className={"text-2xl md:text-3xl font-extrabold font-mono " + (compoundExcess >= 0 ? "text-emerald-500 dark:text-emerald-400 drop-shadow-[0_0_14px_rgba(16,185,129,0.7)]" : "text-rose-500 dark:text-rose-400 drop-shadow-[0_0_14px_rgba(239,68,68,0.6)]")}>
+                                                            <span className={"text-2xl md:text-3xl font-extrabold font-mono inline-block transition-all duration-[250ms] ease-out md:hover:-translate-y-1 md:hover:scale-[1.04] " + (compoundExcess >= 0 ? "text-emerald-500 dark:text-emerald-400 drop-shadow-[0_0_14px_rgba(16,185,129,0.7)]" : "text-rose-500 dark:text-rose-400 drop-shadow-[0_0_14px_rgba(239,68,68,0.6)]")}>
                                                                 {compoundExcess >= 0 ? '+' : ''}{compoundExcess.toFixed(2)}%
                                                             </span>
                                                             <span className="text-slate-300 dark:text-slate-600 text-xs font-mono self-end mb-1" title="基於資料庫內已記錄之交易日計算，非涵蓋全年每一日">＊交易日</span>
                                                         </div>
-                                                        <div className="text-xs font-mono text-right opacity-60">
+                                                        <div className="text-xs font-mono text-right opacity-60 transition-all duration-[250ms] ease-out md:hover:-translate-y-1 md:hover:scale-[1.04]">
                                                             <span className={myReturn >= 0 ? "text-emerald-500 dark:text-emerald-500" : "text-rose-400"}>我 {myReturn >= 0 ? '+' : ''}{myReturn.toFixed(2)}%</span>
                                                             <span className="text-slate-400 dark:text-slate-600"> / </span>
                                                             <span className={bmReturn >= 0 ? "text-slate-500 dark:text-amber-800" : "text-rose-400"}>盤 {bmReturn >= 0 ? '+' : ''}{bmReturn.toFixed(2)}%</span>
@@ -2417,7 +2417,7 @@
                                             </div>
                                         </div>
                                         {hasCompound && (
-                                            <div className="w-full mt-4">
+                                            <div className="w-full mt-4 transition-all duration-[250ms] ease-out md:hover:-translate-y-1 md:hover:scale-[1.04]">
                                                 <div className="flex justify-between items-center mb-1">
                                                     <span className={"text-[10px] font-mono whitespace-nowrap " + (bmReturn >= 0 ? "text-slate-400 dark:text-slate-500" : "text-rose-400")}>盤 {bmReturn >= 0 ? '+' : ''}{bmReturn.toFixed(2)}%</span>
                                                     <span className={"text-[10px] font-mono whitespace-nowrap " + (compoundExcess >= 0 ? "text-emerald-500" : "text-rose-500")}>我 {myReturn >= 0 ? '+' : ''}{myReturn.toFixed(2)}%</span>
