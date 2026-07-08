@@ -254,20 +254,28 @@
     const safeSetStorage = (key, val) => { try { localStorage.setItem(key, val); } catch(e) {} };
 
     /* ===================================================================
+       存取權杖 — 後端驗證用（兩個 GAS 閘道共用同一組密碼）
+    =================================================================== */
+    const ACCESS_TOKEN_KEY = 'unified_access_token';
+    const getAccessToken = () => safeGetStorage(ACCESS_TOKEN_KEY, '');
+    let handleUnauthorized = () => {};
+
+    /* ===================================================================
        FOS (Boss) 後端路由
     =================================================================== */
     const GAS_URL_FOS = 'https://script.google.com/macros/s/AKfycbxWnT6COS2NuL5LmtRZql5UmvEHcFDEtdha2SY5-NI3RBjHxV5xz0oUWlQL1M7P-0GN/exec';
     const gasAPI = (serverFunction, ...args) => {
       return new Promise((resolve, reject) => {
         if (typeof google !== 'undefined' && google.script && google.script.run) {
-          google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[serverFunction](...args);
+          google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[serverFunction](...args, getAccessToken());
         } else {
           fetch(GAS_URL_FOS, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
             redirect: 'follow',
-            body: JSON.stringify({ action: serverFunction, args: args })
+            body: JSON.stringify({ action: serverFunction, args: args, token: getAccessToken() })
           }).then(res => res.json()).then(data => {
+            if (data && data.code === 401) { handleUnauthorized(); reject(new Error('UNAUTHORIZED')); return; }
             if (data.error) reject(new Error(data.message)); else resolve(data);
           }).catch(err => reject(err));
         }
@@ -284,17 +292,19 @@
           google.script.run
             .withSuccessHandler((res) => { try { resolve(JSON.parse(res)); } catch(e) { resolve(res); } })
             .withFailureHandler(reject)
-            .gasRouter(action, payload);
+            .gasRouter(action, payload, getAccessToken());
         });
       }
       const response = await fetch(API_GATEWAY_AMBER, {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action, payload }),
+        body: JSON.stringify({ action, payload, token: getAccessToken() }),
         redirect: "follow"
       });
       if (!response.ok) throw new Error("HTTP " + response.status);
-      return await response.json();
+      const data = await response.json();
+      if (data && data.code === 401) { handleUnauthorized(); throw new Error('UNAUTHORIZED'); }
+      return data;
     };
 
     /* ===================================================================
@@ -2569,6 +2579,32 @@
       const [activeTab, setActiveTab] = useState(safeGetStorage('app_active_tab', 'asset'));
       const [appReady, setAppReady] = useState(false);
       const [assetPrefill, setAssetPrefill] = useState(null);
+      const [locked, setLocked] = useState(!getAccessToken());
+      const [pwInput, setPwInput] = useState('');
+      const [pwError, setPwError] = useState(false);
+      const [verifying, setVerifying] = useState(false);
+
+      useEffect(() => {
+        handleUnauthorized = () => { safeSetStorage(ACCESS_TOKEN_KEY, ''); setLocked(true); };
+      }, []);
+
+      const submitPassword = async (e) => {
+        e.preventDefault();
+        if (!pwInput.trim() || verifying) return;
+        setVerifying(true);
+        setPwError(false);
+        safeSetStorage(ACCESS_TOKEN_KEY, pwInput.trim());
+        try {
+          const res = await fetchMatrix('getMarketStatus');
+          if (res && res.code === 401) { setPwError(true); safeSetStorage(ACCESS_TOKEN_KEY, ''); }
+          else { setLocked(false); }
+        } catch (err) {
+          setPwError(true);
+          safeSetStorage(ACCESS_TOKEN_KEY, '');
+        } finally {
+          setVerifying(false);
+        }
+      };
 
       useEffect(() => {
         if (theme === 'dark') document.documentElement.classList.add('dark');
@@ -2586,6 +2622,26 @@
       const tabBase = "app-tab-btn px-3 sm:px-6 md:px-10 py-2 sm:py-3 rounded-xl sm:rounded-2xl text-xs sm:text-base md:text-lg font-black uppercase tracking-wider sm:tracking-widest";
       const tabActive = "bg-slate-800 dark:bg-amber-500 text-white dark:text-slate-900 shadow-lg";
       const tabIdle = "text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300";
+
+      if (locked) return (
+        <div className="flex h-screen items-center justify-center bg-slate-950 font-mono px-4">
+          <form onSubmit={submitPassword} className="flex flex-col items-center gap-4 p-8 sm:p-10 rounded-2xl border border-amber-500/30 bg-black/40 shadow-2xl w-full max-w-sm">
+            <div className="text-amber-400 text-lg sm:text-xl tracking-widest font-black">⌘ ACCESS_LOCKED</div>
+            <input
+              type="password"
+              autoFocus
+              value={pwInput}
+              onChange={(e) => setPwInput(e.target.value)}
+              className="w-full px-4 py-3 rounded-xl bg-slate-900 border border-amber-500/40 text-amber-200 tracking-widest text-center outline-none focus:border-amber-400"
+              placeholder="ENTER PASSWORD"
+            />
+            {pwError && <div className="text-rose-400 text-sm tracking-wider">密碼錯誤 ACCESS DENIED</div>}
+            <button type="submit" disabled={verifying} className="w-full px-6 py-2.5 rounded-xl bg-amber-500 text-slate-900 font-black tracking-widest hover:bg-amber-400 transition-colors disabled:opacity-50">
+              {verifying ? 'VERIFYING...' : 'UNLOCK'}
+            </button>
+          </form>
+        </div>
+      );
 
       if (!appReady) return (
         <div className="flex h-screen items-center justify-center font-mono text-2xl sm:text-4xl text-slate-800 dark:text-amber-500 tracking-widest font-bold">
