@@ -2568,9 +2568,12 @@
             </div>
           </div>
 
-          {activeTab === 'asset'
-            ? <AssetTerminal theme={theme} assetPrefill={assetPrefill} clearPrefill={() => setAssetPrefill(null)} />
-            : <FosTerminal isDarkMode={isDark} isEng={isEng} onInjectPrefill={(vals) => { setAssetPrefill(vals); setActiveTab('asset'); }} />}
+          <div style={{ display: activeTab === 'asset' ? 'block' : 'none' }}>
+            <AssetTerminal theme={theme} assetPrefill={assetPrefill} clearPrefill={() => setAssetPrefill(null)} />
+          </div>
+          <div style={{ display: activeTab === 'fos' ? 'block' : 'none' }}>
+            <FosTerminal isDarkMode={isDark} isEng={isEng} onInjectPrefill={(vals) => { setAssetPrefill(vals); setActiveTab('asset'); }} />
+          </div>
         </div>
       );
     }
