@@ -1556,6 +1556,33 @@
                 });
                 if (filteredChartData.length === 0) filteredChartData = data.slice(-20);
 
+                // 移動平均：以「筆數」而非日曆天數為週期，逐筆登記密度不均也能算
+                const MA_WINDOWS = { ma7: 7, ma30: 30, ma90: 90, ma365: 365 };
+                const maByRowIndex = {};
+                data.forEach((item, i) => {
+                    const entry = {};
+                    Object.entries(MA_WINDOWS).forEach(([key, n]) => {
+                        if (i < n - 1) { entry[key] = null; return; }
+                        let sum = 0;
+                        for (let k = i - n + 1; k <= i; k++) sum += Number(data[k].總資產) || 0;
+                        entry[key] = sum / n;
+                    });
+                    maByRowIndex[item._rowIndex] = entry;
+                });
+
+                const isYearFilter = chartFilter !== 'last20' && chartFilter !== 'all';
+                const maConfig = chartFilter === 'last20'
+                    ? [{ key: 'ma7', label: '週線 W7', color: isDarkForMa => isDarkForMa ? '#f472b6' : '#ec4899', dash: [] }]
+                    : isYearFilter
+                    ? [
+                        { key: 'ma30', label: '月線 M30', color: isDarkForMa => isDarkForMa ? '#34d399' : '#10b981', dash: [] },
+                        { key: 'ma90', label: '季線 Q90', color: isDarkForMa => isDarkForMa ? '#a78bfa' : '#8b5cf6', dash: [6, 3] }
+                      ]
+                    : [
+                        { key: 'ma90', label: '季線 Q90', color: isDarkForMa => isDarkForMa ? '#a78bfa' : '#8b5cf6', dash: [6, 3] },
+                        { key: 'ma365', label: '年線 Y365', color: isDarkForMa => isDarkForMa ? '#94a3b8' : '#475569', dash: [2, 3] }
+                      ];
+
                 const movingDotPlugin = {
                     id: 'movingComet',
                     afterDraw(chart) {
@@ -1630,12 +1657,26 @@
                     type: 'line',
                     data: {
                         labels: filteredChartData.map(d => formatYMD(d.日期)),
-                        datasets: [{ data: filteredChartData.map(d => Number(d.總資產) || 0), borderColor: isDark ? '#f59e0b' : '#0ea5e9', borderWidth: 4, fill: true, backgroundColor: gradient, tension: 0.3, pointRadius: 3, pointHoverRadius: 8, pointBackgroundColor: '#fff' }]
+                        datasets: [
+                            { label: '資產 ASSET', data: filteredChartData.map(d => Number(d.總資產) || 0), borderColor: isDark ? '#f59e0b' : '#0ea5e9', borderWidth: 4, fill: true, backgroundColor: gradient, tension: 0.3, pointRadius: 3, pointHoverRadius: 8, pointBackgroundColor: '#fff' },
+                            ...maConfig.map(cfg => ({
+                                label: cfg.label,
+                                data: filteredChartData.map(d => (maByRowIndex[d._rowIndex] ? maByRowIndex[d._rowIndex][cfg.key] : null)),
+                                borderColor: cfg.color(isDark),
+                                borderWidth: 2,
+                                borderDash: cfg.dash,
+                                fill: false,
+                                tension: 0.3,
+                                pointRadius: 0,
+                                pointHoverRadius: 0,
+                                spanGaps: true
+                            }))
+                        ]
                     },
                     plugins: [movingDotPlugin],
                     options: {
                         responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-                        plugins: { legend: { display: false }, tooltip: { backgroundColor: isDark ? 'rgba(15, 23, 42, 0.95)' : 'rgba(255, 255, 255, 0.95)', titleColor: isDark ? '#f59e0b' : '#0f172a', bodyColor: isDark ? '#fdfefe' : '#0f172a', borderColor: isDark ? '#334155' : '#e2e8f0', borderWidth: 1, titleFont: { family: 'JetBrains Mono', size: 18 }, bodyFont: { family: 'JetBrains Mono', weight: 'bold', size: 18 } } },
+                        plugins: { legend: { display: true, position: 'top', align: 'end', labels: { color: isDark ? '#f59e0b' : '#64748b', font: { family: 'JetBrains Mono', size: 11, weight: 'bold' }, boxWidth: 14, boxHeight: 2, usePointStyle: false } }, tooltip: { backgroundColor: isDark ? 'rgba(15, 23, 42, 0.95)' : 'rgba(255, 255, 255, 0.95)', titleColor: isDark ? '#f59e0b' : '#0f172a', bodyColor: isDark ? '#fdfefe' : '#0f172a', borderColor: isDark ? '#334155' : '#e2e8f0', borderWidth: 1, titleFont: { family: 'JetBrains Mono', size: 18 }, bodyFont: { family: 'JetBrains Mono', weight: 'bold', size: 18 } } },
                         scales: { y: { grid: { color: isDark ? 'rgba(245,158,11,0.05)' : 'rgba(15,23,42,0.05)' }, ticks: { color: isDark ? '#f59e0b' : '#64748b', font: {family: 'JetBrains Mono', size: 16, weight: 'bold'} } }, x: { grid: { display: false }, ticks: { color: isDark ? '#f59e0b' : '#64748b', font: {family: 'JetBrains Mono', size: 16, weight: 'bold'} } } }
                     }
                 });
