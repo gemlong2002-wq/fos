@@ -254,6 +254,13 @@
     const safeSetStorage = (key, val) => { try { localStorage.setItem(key, val); } catch(e) {} };
 
     /* ===================================================================
+       存取權杖 — 進畫面即鎖，兩個 GAS 閘道共用同一組 sessionStorage token
+    =================================================================== */
+    const ACCESS_TOKEN_KEY = 'amber_access_token';
+    const getAccessToken = () => sessionStorage.getItem(ACCESS_TOKEN_KEY) || null;
+    let triggerRelock = () => {};
+
+    /* ===================================================================
        FOS (Boss) 後端路由
     =================================================================== */
     const GAS_URL_FOS = 'https://script.google.com/macros/s/AKfycbxWnT6COS2NuL5LmtRZql5UmvEHcFDEtdha2SY5-NI3RBjHxV5xz0oUWlQL1M7P-0GN/exec';
@@ -266,8 +273,13 @@
             method: 'POST',
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
             redirect: 'follow',
-            body: JSON.stringify({ action: serverFunction, args: args })
+            body: JSON.stringify({ action: serverFunction, args: args, token: getAccessToken() })
           }).then(res => res.json()).then(data => {
+            if (data && (data.status === 'unauthorized' || data.status === 'locked')) {
+              triggerRelock();
+              reject(new Error(data.status === 'locked' ? 'ACCESS_LOCKED' : 'ACCESS_UNAUTHORIZED'));
+              return;
+            }
             if (data.error) reject(new Error(data.message)); else resolve(data);
           }).catch(err => reject(err));
         }
@@ -278,16 +290,6 @@
        總資產 (Amber) 後端路由
     =================================================================== */
     const API_GATEWAY_AMBER = "https://script.google.com/macros/s/AKfycbzO5re091AtpL1WrsCu2P9X6c09-4yfxxg6lnbWWPMCvPL0IMU-VN7ruVrYqxe72vwmiQ/exec";
-    const WRITE_ACTIONS = ['addEntry', 'deleteEntry', 'updateEntry'];
-    const WRITE_TOKEN_KEY = 'amber_write_token';
-    const getWriteToken = () => {
-      let t = sessionStorage.getItem(WRITE_TOKEN_KEY);
-      if (!t) {
-        t = window.prompt('請輸入寫入密碼');
-        if (t) sessionStorage.setItem(WRITE_TOKEN_KEY, t);
-      }
-      return t || '';
-    };
 
     const fetchMatrix = async (action, payload = {}) => {
       if (typeof google !== 'undefined' && google.script && google.script.run) {
@@ -298,7 +300,7 @@
             .gasRouter(action, payload);
         });
       }
-      const finalPayload = WRITE_ACTIONS.includes(action) ? { ...payload, token: getWriteToken() } : payload;
+      const finalPayload = { ...payload, token: getAccessToken() };
       const response = await fetch(API_GATEWAY_AMBER, {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
@@ -308,8 +310,9 @@
       if (!response.ok) throw new Error("HTTP " + response.status);
       const data = await response.json();
       if (data && (data.status === 'unauthorized' || data.status === 'locked')) {
-        sessionStorage.removeItem(WRITE_TOKEN_KEY);
-        throw new Error(data.status === 'locked' ? 'WRITE_LOCKED' : 'WRITE_UNAUTHORIZED');
+        sessionStorage.removeItem(ACCESS_TOKEN_KEY);
+        triggerRelock();
+        throw new Error(data.status === 'locked' ? 'ACCESS_LOCKED' : 'ACCESS_UNAUTHORIZED');
       }
       return data;
     };
@@ -1804,8 +1807,8 @@
             } catch (err) {
                 setIsSubmitting(false);
                 setData(previousData);
-                if (err.message === 'WRITE_UNAUTHORIZED') alert("密碼錯誤，請重新輸入");
-                else if (err.message === 'WRITE_LOCKED') alert("寫入已鎖定，請稍後再試");
+                if (err.message === 'ACCESS_UNAUTHORIZED') alert("密碼錯誤，請重新輸入");
+                else if (err.message === 'ACCESS_LOCKED') alert("已鎖定，請稍後再試");
                 else alert("NETWORK ERROR");
             }
         };
@@ -1826,8 +1829,8 @@
                     })
                     .catch((err) => {
                         setData(previousData);
-                        if (err && err.message === 'WRITE_UNAUTHORIZED') alert("密碼錯誤，請重新輸入");
-                        else if (err && err.message === 'WRITE_LOCKED') alert("寫入已鎖定，請稍後再試");
+                        if (err && err.message === 'ACCESS_UNAUTHORIZED') alert("密碼錯誤，請重新輸入");
+                        else if (err && err.message === 'ACCESS_LOCKED') alert("已鎖定，請稍後再試");
                     });
             }
         };
@@ -1850,8 +1853,8 @@
                 })
                 .catch((err) => {
                     setData(previousData);
-                    if (err && err.message === 'WRITE_UNAUTHORIZED') alert("密碼錯誤，請重新輸入");
-                    else if (err && err.message === 'WRITE_LOCKED') alert("寫入已鎖定，請稍後再試");
+                    if (err && err.message === 'ACCESS_UNAUTHORIZED') alert("密碼錯誤，請重新輸入");
+                    else if (err && err.message === 'ACCESS_LOCKED') alert("已鎖定，請稍後再試");
                 });
         };
 
@@ -2581,6 +2584,74 @@
     };
 
     /* ===================================================================
+       AccessGate — 全螢幕解鎖遮罩
+    =================================================================== */
+    function AccessGate({ onUnlock }) {
+      const [pwInput, setPwInput] = useState('');
+      const [backupInput, setBackupInput] = useState('');
+      const [showBackup, setShowBackup] = useState(false);
+      const [error, setError] = useState('');
+      const [verifying, setVerifying] = useState(false);
+
+      const attemptUnlock = async (candidate) => {
+        if (!candidate.trim() || verifying) return;
+        setVerifying(true);
+        setError('');
+        sessionStorage.setItem(ACCESS_TOKEN_KEY, candidate.trim());
+        try {
+          const res = await fetchMatrix('getDashboardData');
+          if (res && (res.status === 'unauthorized' || res.status === 'locked')) {
+            setError(res.status === 'locked' ? '已鎖定，請稍後再試' : '密碼錯誤');
+            sessionStorage.removeItem(ACCESS_TOKEN_KEY);
+          } else {
+            onUnlock();
+          }
+        } catch (err) {
+          if (err.message === 'ACCESS_LOCKED') setError('已鎖定，請稍後再試');
+          else if (err.message === 'ACCESS_UNAUTHORIZED') setError('密碼錯誤');
+          else setError('NETWORK ERROR');
+        } finally {
+          setVerifying(false);
+        }
+      };
+
+      return (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-950 font-mono px-4">
+          <div className="flex flex-col items-center gap-4 p-8 sm:p-10 rounded-2xl border border-amber-500/30 bg-black/40 shadow-2xl w-full max-w-sm">
+            <div className="text-amber-400 text-lg sm:text-xl tracking-widest font-black">⌘ ACCESS_LOCKED</div>
+            {!showBackup ? (
+              <form onSubmit={(e) => { e.preventDefault(); attemptUnlock(pwInput); }} className="w-full flex flex-col gap-4">
+                <input type="password" autoFocus value={pwInput} onChange={(e) => setPwInput(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl bg-slate-900 border border-amber-500/40 text-amber-200 tracking-widest text-center outline-none focus:border-amber-400"
+                  placeholder="ENTER PASSWORD" />
+                {error && <div className="text-rose-400 text-sm tracking-wider">{error}</div>}
+                <button type="submit" disabled={verifying} className="w-full px-6 py-2.5 rounded-xl bg-amber-500 text-slate-900 font-black tracking-widest hover:bg-amber-400 transition-colors disabled:opacity-50">
+                  {verifying ? 'VERIFYING...' : 'UNLOCK'}
+                </button>
+                <button type="button" onClick={() => { setShowBackup(true); setError(''); }} className="text-xs text-slate-500 hover:text-slate-300 tracking-widest underline">
+                  使用備援通道
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={(e) => { e.preventDefault(); attemptUnlock(backupInput); }} className="w-full flex flex-col gap-4">
+                <input type="text" autoFocus value={backupInput} onChange={(e) => setBackupInput(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl bg-slate-900 border border-amber-500/40 text-amber-200 tracking-widest text-center outline-none focus:border-amber-400"
+                  placeholder="ENTER BACKUP CODE" />
+                {error && <div className="text-rose-400 text-sm tracking-wider">{error}</div>}
+                <button type="submit" disabled={verifying} className="w-full px-6 py-2.5 rounded-xl bg-amber-500 text-slate-900 font-black tracking-widest hover:bg-amber-400 transition-colors disabled:opacity-50">
+                  {verifying ? 'VERIFYING...' : 'UNLOCK'}
+                </button>
+                <button type="button" onClick={() => { setShowBackup(false); setError(''); }} className="text-xs text-slate-500 hover:text-slate-300 tracking-widest underline">
+                  返回主密碼
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    /* ===================================================================
        AppShell — 統一 theme / lang / Tab
     =================================================================== */
     function AppShell() {
@@ -2596,6 +2667,11 @@
       const [activeTab, setActiveTab] = useState(safeGetStorage('app_active_tab', 'asset'));
       const [appReady, setAppReady] = useState(false);
       const [assetPrefill, setAssetPrefill] = useState(null);
+      const [unlocked, setUnlocked] = useState(!!getAccessToken());
+
+      useEffect(() => {
+        triggerRelock = () => setUnlocked(false);
+      }, []);
 
       useEffect(() => {
         if (theme === 'dark') document.documentElement.classList.add('dark');
@@ -2613,6 +2689,8 @@
       const tabBase = "app-tab-btn px-3 sm:px-6 md:px-10 py-2 sm:py-3 rounded-xl sm:rounded-2xl text-xs sm:text-base md:text-lg font-black uppercase tracking-wider sm:tracking-widest";
       const tabActive = "bg-slate-800 dark:bg-amber-500 text-white dark:text-slate-900 shadow-lg";
       const tabIdle = "text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300";
+
+      if (!unlocked) return <AccessGate onUnlock={() => setUnlocked(true)} />;
 
       if (!appReady) return (
         <div className="flex h-screen items-center justify-center font-mono text-2xl sm:text-4xl text-slate-800 dark:text-amber-500 tracking-widest font-bold">
