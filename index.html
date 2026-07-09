@@ -1464,6 +1464,20 @@
             if (assetPrefill) clearPrefill();
         }, []);
 
+        useEffect(() => {
+            if (assetPrefill) {
+                setFormData({
+                    date: getTodayYMD(),
+                    twStock: assetPrefill.twStock != null ? String(assetPrefill.twStock) : '',
+                    usStock: assetPrefill.usStock != null ? String(assetPrefill.usStock) : '',
+                    crypto: assetPrefill.crypto != null ? String(assetPrefill.crypto) : '',
+                    note: '',
+                    allTwd: true
+                });
+                clearPrefill();
+            }
+        }, [assetPrefill]);
+
         const loadTerminalData = () => {
             fetchMatrix('getDashboardData')
                 .then((res) => {
