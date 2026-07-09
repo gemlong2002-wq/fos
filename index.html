@@ -278,6 +278,17 @@
        總資產 (Amber) 後端路由
     =================================================================== */
     const API_GATEWAY_AMBER = "https://script.google.com/macros/s/AKfycbzO5re091AtpL1WrsCu2P9X6c09-4yfxxg6lnbWWPMCvPL0IMU-VN7ruVrYqxe72vwmiQ/exec";
+    const WRITE_ACTIONS = ['addEntry', 'deleteEntry', 'updateEntry'];
+    const WRITE_TOKEN_KEY = 'amber_write_token';
+    const getWriteToken = () => {
+      let t = sessionStorage.getItem(WRITE_TOKEN_KEY);
+      if (!t) {
+        t = window.prompt('請輸入寫入密碼');
+        if (t) sessionStorage.setItem(WRITE_TOKEN_KEY, t);
+      }
+      return t || '';
+    };
+
     const fetchMatrix = async (action, payload = {}) => {
       if (typeof google !== 'undefined' && google.script && google.script.run) {
         return new Promise((resolve, reject) => {
@@ -287,14 +298,20 @@
             .gasRouter(action, payload);
         });
       }
+      const finalPayload = WRITE_ACTIONS.includes(action) ? { ...payload, token: getWriteToken() } : payload;
       const response = await fetch(API_GATEWAY_AMBER, {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action, payload }),
+        body: JSON.stringify({ action, payload: finalPayload }),
         redirect: "follow"
       });
       if (!response.ok) throw new Error("HTTP " + response.status);
-      return await response.json();
+      const data = await response.json();
+      if (data && (data.status === 'unauthorized' || data.status === 'locked')) {
+        sessionStorage.removeItem(WRITE_TOKEN_KEY);
+        throw new Error(data.status === 'locked' ? 'WRITE_LOCKED' : 'WRITE_UNAUTHORIZED');
+      }
+      return data;
     };
 
     /* ===================================================================
@@ -1787,7 +1804,9 @@
             } catch (err) {
                 setIsSubmitting(false);
                 setData(previousData);
-                alert("NETWORK ERROR");
+                if (err.message === 'WRITE_UNAUTHORIZED') alert("密碼錯誤，請重新輸入");
+                else if (err.message === 'WRITE_LOCKED') alert("寫入已鎖定，請稍後再試");
+                else alert("NETWORK ERROR");
             }
         };
 
@@ -1805,7 +1824,11 @@
                             loadTerminalData();
                         }
                     })
-                    .catch(() => setData(previousData));
+                    .catch((err) => {
+                        setData(previousData);
+                        if (err && err.message === 'WRITE_UNAUTHORIZED') alert("密碼錯誤，請重新輸入");
+                        else if (err && err.message === 'WRITE_LOCKED') alert("寫入已鎖定，請稍後再試");
+                    });
             }
         };
 
@@ -1825,7 +1848,11 @@
                         alert("UPDATE ERROR");
                     }
                 })
-                .catch(() => setData(previousData));
+                .catch((err) => {
+                    setData(previousData);
+                    if (err && err.message === 'WRITE_UNAUTHORIZED') alert("密碼錯誤，請重新輸入");
+                    else if (err && err.message === 'WRITE_LOCKED') alert("寫入已鎖定，請稍後再試");
+                });
         };
 
         const handleMouseMove = (e) => { const { currentTarget, clientX, clientY } = e; const { left, top } = currentTarget.getBoundingClientRect(); currentTarget.style.setProperty('--mouse-x', (clientX - left) + "px"); currentTarget.style.setProperty('--mouse-y', (clientY - top) + "px"); };
