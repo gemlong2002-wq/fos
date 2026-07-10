@@ -2682,6 +2682,7 @@
       const [appReady, setAppReady] = useState(false);
       const [assetPrefill, setAssetPrefill] = useState(null);
       const [unlocked, setUnlocked] = useState(!!getAccessToken());
+      const [showPwGuide, setShowPwGuide] = useState(false);
 
       useEffect(() => {
         triggerRelock = () => setUnlocked(false);
@@ -2725,8 +2726,35 @@
               <button onClick={() => setTheme(isDark ? 'light' : 'dark')} className="px-3 sm:px-5 py-1.5 sm:py-2.5 rounded-xl sm:rounded-2xl text-sm sm:text-base font-bold border border-slate-200 dark:border-amber-500/40 bg-white dark:bg-slate-800 text-slate-600 dark:text-amber-400 hover:-translate-y-0.5 transition-all shadow-sm">
                 {isDark ? '☀️' : '🌙'}<span className="hidden sm:inline">{isDark ? ' DAY' : ' STEALTH'}</span>
               </button>
+              <button onClick={() => setShowPwGuide(true)} title="改密碼標準流程" className="px-3 sm:px-4 py-1.5 sm:py-2.5 rounded-xl sm:rounded-2xl text-sm sm:text-base font-bold border border-slate-200 dark:border-amber-500/40 bg-white dark:bg-slate-800 text-slate-600 dark:text-amber-400 hover:-translate-y-0.5 transition-all shadow-sm">
+                🔑<span className="hidden sm:inline"> 改密碼</span>
+              </button>
             </div>
           </div>
+
+          {showPwGuide && ReactDOM.createPortal(
+            <React.Fragment>
+              <div className="fixed inset-0 z-[999] bg-black/40" onClick={() => setShowPwGuide(false)} />
+              <div
+                className="fixed top-1/2 left-1/2 z-[1000] w-[90vw] max-w-sm sm:max-w-md -translate-x-1/2 -translate-y-1/2 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-amber-500/30 p-6 sm:p-8 font-mono max-h-[85vh] overflow-y-auto"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <span className="text-lg sm:text-xl font-black tracking-wider text-slate-800 dark:text-amber-400">🔑 改密碼標準流程</span>
+                  <button onClick={() => setShowPwGuide(false)} className="text-slate-400 hover:text-slate-700 dark:hover:text-amber-300 text-xl leading-none">✕</button>
+                </div>
+                <div className="text-sm sm:text-base leading-relaxed text-slate-700 dark:text-slate-300 space-y-3 whitespace-pre-line">
+                  <p>密碼分存於兩個後台，改時「兩邊都要改」，缺一邊會導致資料讀不出來。</p>
+                  <p className="font-bold text-slate-800 dark:text-amber-400">步驟：</p>
+                  <p>1. 開啟 AMBER（總資產）GAS 專案 → 專案設定 ⚙️ → 指令碼屬性{"\n"}   → 修改 WRITE_SECRET 為新值</p>
+                  <p>2. 開啟 FOS（FOS BOSS）GAS 專案 → 同上路徑{"\n"}   → 將 WRITE_SECRET 改成「與 AMBER 完全相同」的新值</p>
+                  <p>3. 兩邊改完即時生效，不需重新部署</p>
+                  <p className="text-amber-600 dark:text-amber-400">⚠️ 備援碼（BACKUP_CODE）若要改，同樣兩邊都要改。</p>
+                  <p className="text-amber-600 dark:text-amber-400">⚠️ 兩邊的值必須一模一樣，否則其中一邊會驗證失敗。</p>
+                </div>
+              </div>
+            </React.Fragment>,
+            document.body
+          )}
 
           <div style={{ display: activeTab === 'asset' ? 'block' : 'none' }}>
             <AssetTerminal theme={theme} assetPrefill={assetPrefill} clearPrefill={() => setAssetPrefill(null)} />
