@@ -1415,6 +1415,7 @@
         const [expandedYears, setExpandedYears] = useState({});
         const [visibleRows, setVisibleRows] = useState({});
         const [chartFilter, setChartFilter] = useState('last20');
+        const [dataSource, setDataSource] = useState('total');
         const [editingRow, setEditingRow] = useState(null);
         const [editFormData, setEditFormData] = useState({});
         const [barProgress, setBarProgress] = useState(0);
@@ -1590,6 +1591,11 @@
                 });
                 if (filteredChartData.length === 0) filteredChartData = data.slice(-20);
 
+                // 資料源：主線與 MA 共用同一個欄位，切換資料源時兩者一起換
+                const FIELD_MAP = { total: '總資產', tw: '台股', us: '美股', crypto: '加密貨幣' };
+                const LABEL_MAP = { total: '資產 ASSET', tw: '台股 TW', us: '美股 US', crypto: '加密 CRYPTO' };
+                const dataField = FIELD_MAP[dataSource] || '總資產';
+
                 // 移動平均：以「筆數」而非日曆天數為週期，逐筆登記密度不均也能算
                 const MA_WINDOWS = { ma7: 7, ma30: 30, ma90: 90, ma365: 365 };
                 const maByRowIndex = {};
@@ -1598,7 +1604,7 @@
                     Object.entries(MA_WINDOWS).forEach(([key, n]) => {
                         if (i < n - 1) { entry[key] = null; return; }
                         let sum = 0;
-                        for (let k = i - n + 1; k <= i; k++) sum += Number(data[k].總資產) || 0;
+                        for (let k = i - n + 1; k <= i; k++) sum += Number(data[k][dataField]) || 0;
                         entry[key] = sum / n;
                     });
                     maByRowIndex[item._rowIndex] = entry;
@@ -1692,7 +1698,7 @@
                     data: {
                         labels: filteredChartData.map(d => formatYMD(d.日期)),
                         datasets: [
-                            { label: '資產 ASSET', data: filteredChartData.map(d => Number(d.總資產) || 0), borderColor: isDark ? '#f59e0b' : '#0ea5e9', borderWidth: 4, fill: true, backgroundColor: gradient, tension: 0.3, pointRadius: 3, pointHoverRadius: 8, pointBackgroundColor: '#fff' },
+                            { label: LABEL_MAP[dataSource] || '資產 ASSET', data: filteredChartData.map(d => Number(d[dataField]) || 0), borderColor: isDark ? '#f59e0b' : '#0ea5e9', borderWidth: 4, fill: true, backgroundColor: gradient, tension: 0.3, pointRadius: 3, pointHoverRadius: 8, pointBackgroundColor: '#fff' },
                             ...maConfig.map(cfg => ({
                                 label: cfg.label,
                                 data: filteredChartData.map(d => (maByRowIndex[d._rowIndex] ? maByRowIndex[d._rowIndex][cfg.key] : null)),
@@ -1733,7 +1739,7 @@
                     options: { responsive: true, maintainAspectRatio: false, cutout: '30%', layout: { padding: 10 }, plugins: { legend: { display: false }, tooltip: { enabled: false } } }
                 });
             }
-        }, [data, fxRate, chartFilter, theme]);
+        }, [data, fxRate, chartFilter, theme, dataSource]);
 
         const handleInputChange = (e) => {
             const { name, value } = e.target;
@@ -2372,7 +2378,7 @@
                     </div>
 
                     <div className="glass-card p-8 rounded-2xl lg:col-span-2 flex flex-col stagger-2 shadow-lg border border-slate-200 dark:border-transparent">
-                        <div className="flex justify-between items-center mb-8 relative z-10"><h3 className="text-2xl font-mono text-slate-800 dark:text-amber-600 uppercase tracking-widest font-extrabold vibe-hover-text">軌跡 Trajectory</h3><select value={chartFilter} onChange={(e) => setChartFilter(e.target.value)} className="bg-white border-2 border-slate-200 text-slate-700 text-lg font-mono rounded-lg px-4 py-2 outline-none relative z-10 font-bold focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/10 transition-all cyber-select"><option value="last20">Last 20</option><option value="all">All Time</option>{sortedYears.map(y => <option key={"chart-opt-" + y} value={y}>{y}</option>)}</select></div>
+                        <div className="flex justify-between items-center mb-8 relative z-10"><h3 className="text-2xl font-mono text-slate-800 dark:text-amber-600 uppercase tracking-widest font-extrabold vibe-hover-text">軌跡 Trajectory</h3><div className="flex items-center gap-3"><select value={dataSource} onChange={(e) => setDataSource(e.target.value)} className="bg-white border-2 border-slate-200 text-slate-700 text-lg font-mono rounded-lg px-4 py-2 outline-none relative z-10 font-bold focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/10 transition-all cyber-select"><option value="total">總資產 ASSET</option><option value="tw">台股 TW</option><option value="us">美股 US</option><option value="crypto">加密 CRYPTO</option></select><select value={chartFilter} onChange={(e) => setChartFilter(e.target.value)} className="bg-white border-2 border-slate-200 text-slate-700 text-lg font-mono rounded-lg px-4 py-2 outline-none relative z-10 font-bold focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/10 transition-all cyber-select"><option value="last20">Last 20</option><option value="all">All Time</option>{sortedYears.map(y => <option key={"chart-opt-" + y} value={y}>{y}</option>)}</select></div></div>
                         <div className="flex-grow min-h-[400px] relative z-0"><canvas ref={lineChartRef}></canvas></div>
                         <div className="mt-10 pt-10 border-t border-slate-200 dark:border-amber-700/50 grid grid-cols-1 md:grid-cols-4 gap-8 items-center relative z-10">
 
