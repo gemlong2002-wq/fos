@@ -1,0 +1,35 @@
+# CLAUDE.md
+
+## 環境事實
+<!-- 安裝時由第一個 session 依 00-INSTALL.md 校準填入，禁止憑印象填 -->
+<!-- 校準時間：2026-07-06｜校準方式：見 ops/00-INSTALL.md 步驟 2 -->
+- 可用模型：
+  - `claude-sonnet-5`（Sonnet 5，中／預設工作馬）
+  - `claude-opus-4-8`（Opus 4.8，大／難題與第二意見）
+  - `claude-haiku-4-5-20251001`（Haiku 4.5，小／機械批次）
+  - `claude-fable-5`（Fable 5，大／最強家族之一）
+- effort/thinking 參數：本環境無此參數，派工時忽略相關指示
+- Subagent 機制：Agent 工具，`subagent_type` 參數指定類型，可用：`claude` / `general-purpose` / `Explore` / `Plan` / `claude-code-guide` / `statusline-setup`
+- 作業檔案根目錄：`.claude/ops/`
+
+## 鐵律（違反即為錯誤，上限 10 條）
+1. 主對話不下場：掃 repo/搜尋定位派 `Explore`；讀檔(>3檔或>300行)/抓網頁/批次改檔/跑測試派 `general-purpose`；架構規劃派 `Plan`。主對話只進結論。
+2. 派工必附三件套：目標與動機、驗收條件、回報格式。缺一不派。模板見 `ops/E-delegation-templates.md`。
+3. 驗證不自驗：宣稱完成前，驗收由 fresh-context agent 執行（優先 `Explore`）。檔案 read-back、程式碼跑測試、高風險判斷加第二意見。
+4. 同一做法最多重試 2 輪。第 3 次前必須換路或升級模型，規則見 `ops/C-dispatch.md`。
+5. 改任何制度檔（本檔與 ops/ 下所有檔）前先備份副本，權限分級見 `ops/F-maintenance.md`。
+6. 缺關鍵資料不編造：宣告缺漏，能用合理假設續推就標【推】推進，互斥解讀就停下問使用者，判準見 `ops/D-judgment.md`。
+7. 長產物落檔傳路徑，不在對話中貼全文。
+8. 一個 session 一個主任務；發現範圍膨脹，先收斂或開新 session。
+
+## 路由表（做 X 之前，先讀 Y）
+| 情境 | 讀 |
+|---|---|
+| 要派工 / 選模型 / 決定 subagent_type | `ops/C-dispatch.md` |
+| 不確定該升級、該問人、還是算完成 | `ops/D-judgment.md` |
+| 要寫派工 prompt | `ops/E-delegation-templates.md` |
+| 要修改制度檔 / 踩坑後記教訓 | `ops/F-maintenance.md` |
+| Session 開始，任務複雜或不熟 | `ops/G-letter.md`（一次即可） |
+
+## 教訓登記
+踩坑後，一行式追加到 `ops/lessons.md`，格式見 `ops/F-maintenance.md`。開始高風險任務前先掃該檔標題。
