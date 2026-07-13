@@ -318,6 +318,16 @@
     };
 
     /* ===================================================================
+       FOS v12.4 — 美股固定比例常數（單一來源，5 處引用點見 fixedRatioSplit /
+       report 樣板 / INJECTION MATRIX 卡片 / 現值目標追蹤卡片）
+    =================================================================== */
+    const US_EQUITY_RATIO = { QLD: 0.70, TSLA: 0.20, SPCX: 0.10 };
+    const MUSK_TICKERS = ['TSLA', 'SPCX'];
+    const MUSK_EXPOSURE_CAP = 0.30;
+    const NDX_WEIGHT = { TSLA: 0.033, SPCX: 0.010 };
+    const QLD_LEVERAGE = 2.0;
+
+    /* ===================================================================
        FOS 子元件 (Boss Terminal v12.2)  — isDarkMode / isEng 由 AppShell 注入
     =================================================================== */
     function FosTerminal({ isDarkMode, isEng, onInjectPrefill }) {
@@ -360,7 +370,7 @@
           return { frozen: true, msg: mrZone === 'DANGER' ? '凍結提現，依4.3強制去槓桿' : '凍結注資，活水截留A帳戶', tsla: 0, spcx: 0, qld: 0 };
         }
         const releasable = amount;
-        return { frozen: false, tsla: releasable * 0.40, spcx: releasable * 0.30, qld: releasable * 0.30 };
+        return { frozen: false, tsla: releasable * US_EQUITY_RATIO.TSLA, spcx: releasable * US_EQUITY_RATIO.SPCX, qld: releasable * US_EQUITY_RATIO.QLD };
       }
 
       function formatNumber(num) {
@@ -704,7 +714,7 @@
       };
 
       const handleCopyReport = () => {
-        const report = `【A】\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} | P1: ${p1Ratio}%\n【美股固定比例分流 v12.2】\nTSLA 40% | SPCX 30% | QLD 30%\n燈號: ${mrZoneInfo.label} ${splitResult.frozen ? '→ 注資凍結' : '→ 放行'}\n【加密三態】\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}`;
+        const report = `【A】\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} | P1: ${p1Ratio}%\n【美股固定比例分流 v12.4】\nTSLA ${(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}% | SPCX ${(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}% | QLD ${(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%\n燈號: ${mrZoneInfo.label} ${splitResult.frozen ? '→ 注資凍結' : '→ 放行'}\n【加密三態】\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}`;
         navigator.clipboard.writeText(report).then(() => setTerminalMsg('>> REPORT COPIED.')).catch(() => setTerminalMsg('>> COPY FAILED.'));
       };
 
@@ -760,15 +770,15 @@
                         {!splitResult.frozen && (
                           <div className="grid grid-cols-3 gap-3">
                             <div className="bg-white dark:bg-slate-800 p-3 text-center rounded-xl border border-slate-200 dark:border-slate-700">
-                              <div className="text-xs font-bold text-slate-400">TSLA 40%</div>
+                              <div className="text-xs font-bold text-slate-400">TSLA {(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}%</div>
                               <div className="text-lg font-black text-sky-600 dark:text-sky-400 font-mono">{formatNumber(splitResult.tsla)}</div>
                             </div>
                             <div className="bg-white dark:bg-slate-800 p-3 text-center rounded-xl border border-slate-200 dark:border-slate-700">
-                              <div className="text-xs font-bold text-slate-400">SPCX 30%</div>
+                              <div className="text-xs font-bold text-slate-400">SPCX {(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}%</div>
                               <div className="text-lg font-black text-sky-600 dark:text-sky-400 font-mono">{formatNumber(splitResult.spcx)}</div>
                             </div>
                             <div className="bg-white dark:bg-slate-800 p-3 text-center rounded-xl border border-slate-200 dark:border-slate-700">
-                              <div className="text-xs font-bold text-slate-400">QLD 30%</div>
+                              <div className="text-xs font-bold text-slate-400">QLD {(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%</div>
                               <div className="text-lg font-black text-sky-600 dark:text-sky-400 font-mono">{formatNumber(splitResult.qld)}</div>
                             </div>
                           </div>
@@ -1009,9 +1019,9 @@
                         const curQld = parseFloat(formDataB.qld) || 0;
                         const usTotal = curTsla + curSpcx + curQld;
                         const targets = [
-                          { name: 'TSLA', ratio: 0.40, current: curTsla, color: 'sky', desc: t('高β個股', 'High β Stock') },
-                          { name: 'SPCX', ratio: 0.30, current: curSpcx, color: 'violet', desc: 'SpaceX (2026/6/12)' },
-                          { name: 'QLD',  ratio: 0.30, current: curQld,  color: 'emerald', desc: 'Nasdaq 100 ×2' }
+                          { name: 'TSLA', ratio: US_EQUITY_RATIO.TSLA, current: curTsla, color: 'sky', desc: t('高β個股', 'High β Stock') },
+                          { name: 'SPCX', ratio: US_EQUITY_RATIO.SPCX, current: curSpcx, color: 'violet', desc: 'SpaceX (2026/6/12)' },
+                          { name: 'QLD',  ratio: US_EQUITY_RATIO.QLD,  current: curQld,  color: 'emerald', desc: 'Nasdaq 100 ×2' }
                         ];
                         return (
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
@@ -1070,6 +1080,75 @@
                   </div>
                 </div>
 
+                {(() => {
+                  const pxTsla = parseFloat(formDataB.tsla) || 0;
+                  const pxSpcx = parseFloat(formDataB.spcx) || 0;
+                  const pxQld = parseFloat(formDataB.qld) || 0;
+                  const pxTotal = pxTsla + pxSpcx + pxQld;
+                  const tslaRatio = pxTotal > 0 ? pxTsla / pxTotal : 0;
+                  const spcxRatio = pxTotal > 0 ? pxSpcx / pxTotal : 0;
+                  const qldRatio = pxTotal > 0 ? pxQld / pxTotal : 0;
+                  const directExposure = tslaRatio + spcxRatio;
+                  const qldPassthrough = qldRatio * (NDX_WEIGHT.TSLA + NDX_WEIGHT.SPCX) * QLD_LEVERAGE;
+                  const totalExposure = directExposure + qldPassthrough;
+                  const overCap = totalExposure > MUSK_EXPOSURE_CAP;
+                  return (
+                    <div className="tech-panel p-8">
+                      <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200 mb-6 flex items-center gap-2">
+                        {t('穿透曝險 PASSTHROUGH EXPOSURE', 'PASSTHROUGH EXPOSURE')}
+                      </h2>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 text-center">
+                          <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">{t('直接曝險', 'DIRECT')}</div>
+                          <div className="text-2xl font-black font-mono text-sky-600 dark:text-sky-400">{(directExposure * 100).toFixed(1)}%</div>
+                          <div className="text-xs text-slate-400 mt-1">TSLA + SPCX</div>
+                        </div>
+                        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 text-center">
+                          <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">{t('QLD 穿透曝險', 'QLD PASSTHROUGH')}</div>
+                          <div className="text-2xl font-black font-mono text-violet-600 dark:text-violet-400">{(qldPassthrough * 100).toFixed(1)}%</div>
+                          <div className="text-xs text-slate-400 mt-1">QLD × NDX 權重 × 2</div>
+                        </div>
+                        <div className={`p-4 rounded-2xl border-2 text-center ${overCap ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800' : 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800'}`}>
+                          <div className="text-xs font-black uppercase tracking-widest mb-1">{t('總曝險', 'TOTAL EXPOSURE')}</div>
+                          <div className={`text-3xl font-black font-mono ${overCap ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{(totalExposure * 100).toFixed(1)}%</div>
+                          <div className="text-xs mt-1">{t('上限', 'CAP')} {(MUSK_EXPOSURE_CAP * 100).toFixed(0)}%</div>
+                        </div>
+                      </div>
+                      <div className="mt-4 text-xs text-slate-400 dark:text-slate-500 text-center">
+                        {t('NDX 權重基準日 2026/07，每年 12 月再平衡後需人工更新', 'NDX weight baseline 2026/07, requires manual update after annual December rebalance')}
+                      </div>
+                      <div className="mt-4 p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 text-xs text-amber-700 dark:text-amber-400">
+                        ⚠️ {t('SPCX 自由流通股釋出將被動推高其 NDX 權重。若由 1% 升至 4–5%，馬斯克系 NDX 合計權重可能達 7–8%，QLD 有效曝險升至 14–16%，總曝險升至約 40%。此為被動漂移，非業主行為，系統不自動調整。', 'SPCX free-float share release will passively raise its NDX weight. If it rises from 1% to 4–5%, combined Musk-system NDX weight could reach 7–8%, QLD effective exposure rises to 14–16%, total exposure rises to approx. 40%. This is passive drift, not owner action; the system does not auto-adjust.')}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <div className="tech-panel p-8">
+                  <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200 mb-6 flex items-center gap-2">
+                    {t('壓力測試 STRESS TEST（唯讀）', 'STRESS TEST (READ-ONLY)')}
+                  </h2>
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                      <span className="text-sm font-bold text-slate-600 dark:text-slate-300">{t('馬斯克系事件（TSLA + SPCX 同步 −70%）', 'Musk-system event (TSLA + SPCX synchronized −70%)')}</span>
+                      <span className="text-lg font-black font-mono text-emerald-600 dark:text-emerald-400">{t('約 −25%', 'approx. −25%')}</span>
+                    </div>
+                    <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                      <span className="text-sm font-bold text-slate-600 dark:text-slate-300">{t('對照組：v12.x 舊配置 40/30/30 同情境', 'Control: v12.x legacy 40/30/30 same scenario')}</span>
+                      <span className="text-lg font-black font-mono text-amber-600 dark:text-amber-400">{t('約 −51%', 'approx. −51%')}</span>
+                    </div>
+                    <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                      <span className="text-sm font-bold text-slate-600 dark:text-slate-300">{t('Nasdaq-100 −30%（QLD 約 −60%+，含波動耗損）', 'Nasdaq-100 −30% (QLD approx. −60%+, incl. volatility decay)')}</span>
+                      <span className="text-lg font-black text-rose-600 dark:text-rose-400">{t('極重，配置無法防禦', 'Severe — allocation cannot defend')}</span>
+                    </div>
+                  </div>
+                  <div className="mt-4 p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-300 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-400">
+                    <strong>{t('QLD 70% 不是安全配置。', 'QLD 70% is NOT a safe allocation.')}</strong> {t('它是 2 倍每日重置槓桿 ETF，有波動耗損（beta slippage），長期報酬 ≠ 2 × NDX 報酬。Nasdaq-100 中科技類股佔約 68.5%，本引擎實質為「單一產業重押 × 2 倍槓桿」，零防禦類、零非美、零實體資產。', 'It is a 2x daily-reset leveraged ETF with volatility decay (beta slippage) — long-term return ≠ 2 × NDX return. Tech stocks make up approx. 68.5% of Nasdaq-100; this engine is effectively "single-sector concentration × 2x leverage" — zero defensive assets, zero non-US, zero physical assets.')}
+                    <br /><br />
+                    {t('v13.0 降低的是「單一人物風險」，未降低「科技產業系統性崩盤風險」。唯一防線為 A/B 物理隔離。', 'v13.0 reduces "single-person risk", NOT "tech-sector systemic collapse risk". The only line of defense is A/B physical isolation.')}
+                  </div>
+                </div>
+
                 <div className="tech-panel p-0 overflow-hidden">
                   <div className="bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700 p-6 flex flex-wrap justify-between items-center gap-4">
                     <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200 flex items-center gap-2">
@@ -1086,11 +1165,17 @@
 
                   {!showCryptoDetail ? (
                     <div>
-                      <div className={`p-8 flex flex-col items-center gap-4 ${consensusColor}`}>
+                      <div className={`p-8 flex flex-col items-center gap-4 ${splitResult.frozen ? 'bg-rose-50 dark:bg-rose-950/30' : consensusColor}`}>
                         <div className="text-sm font-bold uppercase tracking-widest opacity-80">ETH/BTC: {ethBtcRatio} — {consensusMsg}</div>
-                        <div className="text-3xl font-black uppercase tracking-wider px-8 py-3 rounded-xl action-hover-effect">
-                          100% BUY {consensusTarget}
-                        </div>
+                        {splitResult.frozen ? (
+                          <div className="text-2xl font-black uppercase tracking-wider px-8 py-3 rounded-xl text-rose-600 dark:text-rose-400">
+                            ❄️ {splitResult.msg}
+                          </div>
+                        ) : (
+                          <div className="text-3xl font-black uppercase tracking-wider px-8 py-3 rounded-xl action-hover-effect">
+                            100% BUY {consensusTarget}
+                          </div>
+                        )}
                         <div className="mt-2 text-xs text-slate-400 font-bold">{t('點擊幣種標籤查看 BTC/ETH 詳情 →', 'Click badge to view BTC/ETH details →')}</div>
                       </div>
                       <div className="bg-slate-50 dark:bg-slate-800/80 p-6 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center">
@@ -1128,11 +1213,17 @@
                         <span className="text-sm font-bold uppercase text-slate-400 tracking-widest">P2 (USDT)</span>
                         <input type="number" name="p2Usdt" value={formData.p2Usdt} onChange={handleInputChange} className="w-48 tech-input text-right text-xl py-2 px-4" />
                       </div>
-                      <div className={`p-4 flex flex-col md:flex-row justify-between items-center gap-3 ${consensusColor}`}>
+                      <div className={`p-4 flex flex-col md:flex-row justify-between items-center gap-3 ${splitResult.frozen ? 'bg-rose-50 dark:bg-rose-950/30' : consensusColor}`}>
                         <div className="text-sm font-bold uppercase tracking-widest opacity-80">ETH/BTC: {ethBtcRatio} — {consensusMsg}</div>
-                        <div className="text-xl font-black uppercase tracking-wider px-4 py-1.5 rounded-xl action-hover-effect">
-                          100% BUY {consensusTarget}
-                        </div>
+                        {splitResult.frozen ? (
+                          <div className="text-xl font-black uppercase tracking-wider px-4 py-1.5 rounded-xl text-rose-600 dark:text-rose-400">
+                            ❄️ {splitResult.msg}
+                          </div>
+                        ) : (
+                          <div className="text-xl font-black uppercase tracking-wider px-4 py-1.5 rounded-xl action-hover-effect">
+                            100% BUY {consensusTarget}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
