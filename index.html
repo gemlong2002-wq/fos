@@ -1433,11 +1433,58 @@
         const donutChartRef = useRef(null);
         const donutChartInstance = useRef(null);
 
+        // 分類軌跡（台股/美股/加密）折疊區塊
+        const [showCategoryCharts, setShowCategoryCharts] = useState(false);
+        const twChartRef = useRef(null);
+        const twChartInstance = useRef(null);
+        const usChartRef = useRef(null);
+        const usChartInstance = useRef(null);
+        const crChartRef = useRef(null);
+        const crChartInstance = useRef(null);
+
         // ★ 切 Tab 卸載時銷毀 Chart 實例 + 取消彗星動畫 rAF
         useEffect(() => () => {
             if (lineChartInstance.current) { try { cancelAnimationFrame(lineChartInstance.current.animFrame); lineChartInstance.current.destroy(); } catch(e){} lineChartInstance.current = null; }
             if (donutChartInstance.current) { try { donutChartInstance.current.destroy(); } catch(e){} donutChartInstance.current = null; }
         }, []);
+
+        // 分類軌跡 Chart.js 生命週期：展開時建構，收合或卸載時銷毀
+        useEffect(() => {
+            if (!showCategoryCharts) return;
+            if (!twChartRef.current || !usChartRef.current || !crChartRef.current) return;
+
+            const isDarkCat = theme === 'dark';
+            const labels = data.map(d => formatYMD(d.日期));
+
+            const buildCategoryChart = (canvasEl, values, color) => {
+                const ctx = canvasEl.getContext('2d');
+                return new Chart(ctx, {
+                    type: 'line',
+                    data: { labels, datasets: [{ data: values, borderColor: color, borderWidth: 2, fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4 }] },
+                    options: {
+                        responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: { backgroundColor: isDarkCat ? 'rgba(15, 23, 42, 0.95)' : 'rgba(255, 255, 255, 0.95)', titleColor: isDarkCat ? '#f59e0b' : '#0f172a', bodyColor: isDarkCat ? '#fdfefe' : '#0f172a', borderColor: isDarkCat ? '#334155' : '#e2e8f0', borderWidth: 1, titleFont: { family: 'JetBrains Mono', size: 14 }, bodyFont: { family: 'JetBrains Mono', weight: 'bold', size: 14 } }
+                        },
+                        scales: {
+                            y: { grid: { color: isDarkCat ? 'rgba(245,158,11,0.05)' : 'rgba(15,23,42,0.05)' }, ticks: { color: isDarkCat ? '#f59e0b' : '#64748b', font: { family: 'JetBrains Mono', size: 11, weight: 'bold' } } },
+                            x: { grid: { display: false }, ticks: { color: isDarkCat ? '#f59e0b' : '#64748b', font: { family: 'JetBrains Mono', size: 11, weight: 'bold' } } }
+                        }
+                    }
+                });
+            };
+
+            twChartInstance.current = buildCategoryChart(twChartRef.current, data.map(d => Number(d.台股) || 0), isDarkCat ? '#fef08a' : '#38bdf8');
+            usChartInstance.current = buildCategoryChart(usChartRef.current, data.map(d => Number(d.美股) || 0), isDarkCat ? '#fbbf24' : '#818cf8');
+            crChartInstance.current = buildCategoryChart(crChartRef.current, data.map(d => Number(d.加密貨幣) || 0), isDarkCat ? '#f59e0b' : '#34d399');
+
+            return () => {
+                if (twChartInstance.current) { try { twChartInstance.current.destroy(); } catch(e){} twChartInstance.current = null; }
+                if (usChartInstance.current) { try { usChartInstance.current.destroy(); } catch(e){} usChartInstance.current = null; }
+                if (crChartInstance.current) { try { crChartInstance.current.destroy(); } catch(e){} crChartInstance.current = null; }
+            };
+        }, [showCategoryCharts, data, theme]);
 
         const [formData, setFormData] = useState(() => {
             if (assetPrefill) {
@@ -2415,6 +2462,29 @@
                             </div>
                         </div>
                     </div>
+                </div>
+
+                <div className="glass-card rounded-2xl stagger-3 relative z-10 shadow-lg border border-slate-200 dark:border-transparent overflow-hidden">
+                    <button onClick={() => setShowCategoryCharts(prev => !prev)} className="w-full flex items-center justify-between p-6 md:p-8 hover:bg-slate-50 dark:hover:bg-amber-500/10 transition-colors cursor-pointer outline-none">
+                        <h3 className="text-2xl font-mono text-slate-800 dark:text-amber-600 uppercase tracking-widest font-extrabold vibe-hover-text">分類軌跡 Category Trajectory</h3>
+                        <span className={"text-2xl font-mono text-slate-500 dark:text-amber-500 transition-transform duration-300 inline-block " + (showCategoryCharts ? 'rotate-90' : '')}>▶</span>
+                    </button>
+                    {showCategoryCharts && (
+                        <div className="px-6 md:px-8 pb-8 space-y-8">
+                            <div>
+                                <h4 className="text-lg font-mono text-slate-600 dark:text-amber-400 uppercase tracking-wider font-bold mb-3">台股帳戶 TW Equity</h4>
+                                <div className="h-[200px] relative"><canvas ref={twChartRef}></canvas></div>
+                            </div>
+                            <div>
+                                <h4 className="text-lg font-mono text-slate-600 dark:text-amber-400 uppercase tracking-wider font-bold mb-3">美股帳戶 US Equity</h4>
+                                <div className="h-[200px] relative"><canvas ref={usChartRef}></canvas></div>
+                            </div>
+                            <div>
+                                <h4 className="text-lg font-mono text-slate-600 dark:text-amber-400 uppercase tracking-wider font-bold mb-3">加密貨幣帳戶 Crypto</h4>
+                                <div className="h-[200px] relative"><canvas ref={crChartRef}></canvas></div>
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 <div className="glass-card p-10 rounded-2xl stagger-3 relative z-10 overflow-hidden group shadow-lg border border-slate-200 dark:border-transparent">
