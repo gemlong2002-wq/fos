@@ -328,6 +328,50 @@
     const QLD_LEVERAGE = 2.0;
 
     /* ===================================================================
+       FOS BOSS 頁卡片拖曳排序（原生 HTML5 Drag & Drop，不持久化）
+       同一 zone 內互換順序；zone 間不互通（保留原本的欄位/寬度結構）
+    =================================================================== */
+    const DraggableCard = ({ id, zone, order, setOrder, dragInfo, setDragInfo, children }) => {
+      const isDragging = dragInfo.zone === zone && dragInfo.id === id;
+      const isDropTarget = dragInfo.zone === zone && dragInfo.overId === id && dragInfo.id !== id;
+      return (
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            if (dragInfo.zone === zone && dragInfo.id && dragInfo.overId !== id) {
+              setDragInfo(p => ({ ...p, overId: id }));
+            }
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            if (!dragInfo.id || dragInfo.zone !== zone || dragInfo.id === id) {
+              setDragInfo({ zone: null, id: null, overId: null });
+              return;
+            }
+            const newOrder = [...order];
+            const fromIdx = newOrder.indexOf(dragInfo.id);
+            const toIdx = newOrder.indexOf(id);
+            if (fromIdx === -1 || toIdx === -1) { setDragInfo({ zone: null, id: null, overId: null }); return; }
+            newOrder.splice(fromIdx, 1);
+            newOrder.splice(toIdx, 0, dragInfo.id);
+            setOrder(newOrder);
+            setDragInfo({ zone: null, id: null, overId: null });
+          }}
+          className={`relative transition-all duration-200 ${isDragging ? 'opacity-40 scale-[0.98]' : ''} ${isDropTarget ? 'ring-2 ring-sky-400 dark:ring-amber-400 ring-offset-2 dark:ring-offset-slate-950 rounded-2xl' : ''}`}
+        >
+          <div
+            draggable
+            onDragStart={(e) => { setDragInfo({ zone, id, overId: null }); e.dataTransfer.effectAllowed = 'move'; }}
+            onDragEnd={() => setDragInfo({ zone: null, id: null, overId: null })}
+            title="拖曳排序 Drag to reorder"
+            className="absolute top-3 left-3 z-20 cursor-grab active:cursor-grabbing text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-amber-400 select-none px-1.5 py-1 rounded-md hover:bg-white/60 dark:hover:bg-slate-800/60 transition-colors font-black tracking-widest"
+          >⋮⋮</div>
+          {children}
+        </div>
+      );
+    };
+
+    /* ===================================================================
        FOS 子元件 (Boss Terminal v12.2)  — isDarkMode / isEng 由 AppShell 注入
     =================================================================== */
     function FosTerminal({ isDarkMode, isEng, onInjectPrefill }) {
@@ -408,6 +452,15 @@
 
       const [liveCrypto, setLiveCrypto] = useState({ BTC: 0, ETH: 0 });
       const [betaConfig, setBetaConfig] = useState({ b0050: '1.0', b00733: '1.35', mrLimit: '130' });
+
+      // v12.4 — 卡片拖曳排序（不持久化，重整回預設順序）
+      const [leftOrder, setLeftOrder] = useState(['input', 'liquidity']);
+      const [topOrder, setTopOrder] = useState(['mr', 'crash']);
+      const [bottomOrder, setBottomOrder] = useState(['balance', 'usEngine', 'passthrough', 'stress', 'crypto', 'radar', 'history']);
+      const [dragInfo, setDragInfo] = useState({ zone: null, id: null, overId: null });
+
+      // v12.4 — 崩盤指數：手動輸入當前大盤指數，不持久化（比照 betaConfig pattern）
+      const [crashIndexInput, setCrashIndexInput] = useState('20000');
 
       const chartRef = useRef(null);
       const chartInstance = useRef(null);
@@ -795,9 +848,8 @@
               </div>
             </header>
 
-            <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
-              <div className="xl:col-span-4 space-y-8">
-
+            {(() => {
+              const cardInput = (
                 <div className="tech-panel p-8">
                   <div className="flex justify-between items-center mb-8">
                     <h2 className="text-2xl font-black uppercase text-slate-800 dark:text-slate-100 flex items-center gap-3">
@@ -885,7 +937,9 @@
                   )}
                   <button type="button" onClick={handleInjectAll} disabled={isInjecting} className={`w-full tech-btn text-white text-xl py-4 mt-6 shadow-lg ${isInjecting ? 'bg-slate-400 cursor-wait' : 'bg-gradient-to-r from-sky-600 to-violet-600 hover:from-sky-500 hover:to-violet-500'}`}>{isInjecting ? 'INJECTING...' : 'INJECT A + B'}</button>
                 </div>
+              );
 
+              const cardLiquidity = (
                 <div className="tech-panel p-8 bg-gradient-to-br from-rose-50 to-white dark:from-rose-950/20 dark:to-slate-900 border-rose-100 dark:border-rose-900/50">
                   <h2 className="text-xl font-black uppercase text-rose-600 dark:text-rose-500 mb-6 flex items-center gap-2">
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
@@ -898,13 +952,11 @@
                     </div>
                   )}
                 </div>
+              );
 
-              </div>
+              const leftCards = { input: cardInput, liquidity: cardLiquidity };
 
-              <div className="xl:col-span-8 space-y-8">
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-
+              const cardMr = (
                   <div className={`tech-panel p-8 flex flex-col justify-between scale-card cursor-default overflow-hidden relative`}>
                     <div className={`absolute top-0 right-0 w-32 h-32 blur-3xl opacity-20 -mr-10 -mt-10 rounded-full transition-colors ${mrZoneInfo.dot.split(' ')[0]}`}></div>
                     <div className="flex justify-between items-start mb-4">
@@ -923,7 +975,13 @@
                       <div className={`text-xl font-black uppercase mt-1 ${mrZoneInfo.text}`}>{mrZoneInfo.label}</div>
                     </div>
                   </div>
+              );
 
+              const currentIndexVal = parseFloat(crashIndexInput) || 0;
+              const marketDropPct = (isCrashSafe && portfolioBeta > 0) ? (maxMarketDrop / portfolioBeta) : 0;
+              const crashIndexValue = currentIndexVal * (1 - marketDropPct / 100);
+
+              const cardCrash = (
                   <div className={`tech-panel p-8 scale-card cursor-default`}>
                     <h2 className="text-lg font-black uppercase text-slate-400 mb-6">CRASH RESISTANCE</h2>
 
@@ -952,9 +1010,29 @@
                         <div className="text-2xl font-black text-slate-300 dark:text-slate-600 mt-2">N/A</div>
                       )}
                     </div>
-                  </div>
-                </div>
 
+                    <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
+                      <div className="flex justify-between items-center gap-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 border border-slate-100 dark:border-slate-700">
+                        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">{t('當前大盤指數', 'CURRENT INDEX')}</span>
+                        <input type="number" value={crashIndexInput} onChange={(e) => setCrashIndexInput(e.target.value)} className="w-28 text-right text-lg font-black font-mono bg-transparent outline-none text-slate-700 dark:text-slate-300 data-text" />
+                      </div>
+                      <div className={`rounded-xl p-4 text-center border ${isCrashSafe ? 'bg-sky-50 dark:bg-sky-950/30 border-sky-100 dark:border-sky-900/50' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-700'}`}>
+                        <div className="text-xs font-bold mb-1 uppercase tracking-widest text-slate-500 dark:text-slate-400">{t('崩盤指數', 'CRASH INDEX')}</div>
+                        {isCrashSafe && currentIndexVal > 0 ? (
+                          <div className="text-2xl sm:text-3xl font-black font-mono tracking-tight data-text break-words text-sky-600 dark:text-sky-400">
+                            {crashIndexValue.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                          </div>
+                        ) : (
+                          <div className="text-xl font-black text-slate-300 dark:text-slate-600 mt-1">N/A</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+              );
+
+              const topCards = { mr: cardMr, crash: cardCrash };
+
+              const cardBalance = (
                 <div className="tech-panel p-8">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                     <div className="scale-card cursor-default">
@@ -980,7 +1058,9 @@
                     </div>
                   </div>
                 </div>
+              );
 
+              const cardUsEngine = (
                 <div className="tech-panel p-0 overflow-hidden border-sky-500 dark:border-sky-500/50 shadow-[0_0_15px_rgba(14,165,233,0.15)]">
                   <div className="bg-sky-50 dark:bg-slate-800/80 border-b border-sky-100 dark:border-slate-700 p-6 flex justify-between items-center">
                     <h2 className="text-xl font-black uppercase text-sky-600 dark:text-sky-400 flex items-center gap-2">
@@ -1079,8 +1159,9 @@
                     </span>
                   </div>
                 </div>
+              );
 
-                {(() => {
+              const cardPassthrough = (() => {
                   const pxTsla = parseFloat(formDataB.tsla) || 0;
                   const pxSpcx = parseFloat(formDataB.spcx) || 0;
                   const pxQld = parseFloat(formDataB.qld) || 0;
@@ -1122,8 +1203,9 @@
                       </div>
                     </div>
                   );
-                })()}
+              })();
 
+              const cardStress = (
                 <div className="tech-panel p-8">
                   <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200 mb-6 flex items-center gap-2">
                     {t('壓力測試 STRESS TEST（唯讀）', 'STRESS TEST (READ-ONLY)')}
@@ -1148,7 +1230,9 @@
                     {t('v13.0 降低的是「單一人物風險」，未降低「科技產業系統性崩盤風險」。唯一防線為 A/B 物理隔離。', 'v13.0 reduces "single-person risk", NOT "tech-sector systemic collapse risk". The only line of defense is A/B physical isolation.')}
                   </div>
                 </div>
+              );
 
+              const cardCrypto = (
                 <div className="tech-panel p-0 overflow-hidden">
                   <div className="bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700 p-6 flex flex-wrap justify-between items-center gap-4">
                     <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200 flex items-center gap-2">
@@ -1228,7 +1312,9 @@
                     </div>
                   )}
                 </div>
+              );
 
+              const cardRadar = (
                 <div className="tech-panel p-8 h-[500px] flex flex-col overflow-hidden">
                   <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200 mb-6 flex items-center gap-2">
                     <svg className="w-5 h-5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
@@ -1236,7 +1322,9 @@
                   </h2>
                   <div className="w-full flex-1 relative"><canvas ref={chartRef}></canvas></div>
                 </div>
+              );
 
+              const cardHistory = (
                 <div className="tech-panel p-0 overflow-hidden border-violet-300 dark:border-violet-700">
                   <h2 className="text-xl font-black uppercase bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 p-6 flex items-center gap-2">
                     <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
@@ -1275,9 +1363,38 @@
                     </table>
                   </div>
                 </div>
+              );
 
-              </div>
-            </div>
+              const bottomCards = { balance: cardBalance, usEngine: cardUsEngine, passthrough: cardPassthrough, stress: cardStress, crypto: cardCrypto, radar: cardRadar, history: cardHistory };
+
+              return (
+                <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
+                  <div className="xl:col-span-4 space-y-8">
+                    {leftOrder.map(id => (
+                      <DraggableCard key={id} id={id} zone="left" order={leftOrder} setOrder={setLeftOrder} dragInfo={dragInfo} setDragInfo={setDragInfo}>
+                        {leftCards[id]}
+                      </DraggableCard>
+                    ))}
+                  </div>
+
+                  <div className="xl:col-span-8 space-y-8">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                      {topOrder.map(id => (
+                        <DraggableCard key={id} id={id} zone="top" order={topOrder} setOrder={setTopOrder} dragInfo={dragInfo} setDragInfo={setDragInfo}>
+                          {topCards[id]}
+                        </DraggableCard>
+                      ))}
+                    </div>
+
+                    {bottomOrder.map(id => (
+                      <DraggableCard key={id} id={id} zone="bottom" order={bottomOrder} setOrder={setBottomOrder} dragInfo={dragInfo} setDragInfo={setDragInfo}>
+                        {bottomCards[id]}
+                      </DraggableCard>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
             <div className="text-center mt-16 relative z-20 pb-8">
               <div className="inline-block bg-white dark:bg-slate-900 text-slate-400 text-sm font-bold uppercase tracking-widest px-8 py-3 rounded-full border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all cursor-crosshair">
