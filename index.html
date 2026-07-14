@@ -331,7 +331,28 @@
        FOS BOSS 頁卡片拖曳排序（原生 HTML5 Drag & Drop，不持久化）
        同一 zone 內互換順序；zone 間不互通（保留原本的欄位/寬度結構）
     =================================================================== */
-    const DraggableCard = ({ id, zone, order, setOrder, dragInfo, setDragInfo, children }) => {
+
+    /* --- 拖曳中自動捲動（原生 D&D 無內建 auto-scroll，手刻補洞） --- */
+    let __dragScrollRAF = null;
+    let __dragScrollSpeed = 0;
+    function __dragScrollStep() {
+      if (__dragScrollSpeed !== 0) {
+        window.scrollBy(0, __dragScrollSpeed);
+        __dragScrollRAF = requestAnimationFrame(__dragScrollStep);
+      } else {
+        __dragScrollRAF = null;
+      }
+    }
+    function __setDragAutoScrollSpeed(speed) {
+      __dragScrollSpeed = speed;
+      if (speed !== 0 && !__dragScrollRAF) __dragScrollRAF = requestAnimationFrame(__dragScrollStep);
+    }
+    function __stopDragAutoScroll() {
+      __dragScrollSpeed = 0;
+      if (__dragScrollRAF) { cancelAnimationFrame(__dragScrollRAF); __dragScrollRAF = null; }
+    }
+
+    const DraggableCard = ({ id, zone, order, setOrder, dragInfo, setDragInfo, collapsed, title, children }) => {
       const isDragging = dragInfo.zone === zone && dragInfo.id === id;
       const isDropTarget = dragInfo.zone === zone && dragInfo.overId === id && dragInfo.id !== id;
       return (
@@ -362,11 +383,15 @@
           <div
             draggable
             onDragStart={(e) => { setDragInfo({ zone, id, overId: null }); e.dataTransfer.effectAllowed = 'move'; }}
-            onDragEnd={() => setDragInfo({ zone: null, id: null, overId: null })}
+            onDragEnd={() => { setDragInfo({ zone: null, id: null, overId: null }); __stopDragAutoScroll(); }}
             title="拖曳排序 Drag to reorder"
             className="absolute top-3 left-3 z-20 cursor-grab active:cursor-grabbing text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-amber-400 select-none px-1.5 py-1 rounded-md hover:bg-white/60 dark:hover:bg-slate-800/60 transition-colors font-black tracking-widest"
           >⋮⋮</div>
-          {children}
+          {collapsed ? (
+            <div className="tech-panel pl-16 pr-6 py-4 flex items-center cursor-default">
+              <span className="text-sm font-black uppercase tracking-widest text-slate-500 dark:text-slate-300 truncate">{title}</span>
+            </div>
+          ) : children}
         </div>
       );
     };
@@ -458,9 +483,37 @@
       const [topOrder, setTopOrder] = useState(['mr', 'crash']);
       const [bottomOrder, setBottomOrder] = useState(['balance', 'usEngine', 'passthrough', 'stress', 'crypto', 'radar', 'history']);
       const [dragInfo, setDragInfo] = useState({ zone: null, id: null, overId: null });
+      const [sortMode, setSortMode] = useState(false);
 
       // v12.4 — 崩盤指數：手動輸入當前大盤指數，不持久化（比照 betaConfig pattern）
       const [crashIndexInput, setCrashIndexInput] = useState('20000');
+
+      // v12.4 — 拖曳中自動捲動：拖到視窗上/下緣 60px 內時捲動，離開/結束時停止
+      useEffect(() => {
+        const EDGE = 60;
+        const MAX_SPEED = 18;
+        const handleDragOver = (e) => {
+          const y = e.clientY;
+          const h = window.innerHeight;
+          if (y < EDGE) {
+            __setDragAutoScrollSpeed(-MAX_SPEED * ((EDGE - y) / EDGE));
+          } else if (y > h - EDGE) {
+            __setDragAutoScrollSpeed(MAX_SPEED * ((EDGE - (h - y)) / EDGE));
+          } else {
+            __stopDragAutoScroll();
+          }
+        };
+        const handleDragEnd = () => __stopDragAutoScroll();
+        document.addEventListener('dragover', handleDragOver);
+        document.addEventListener('dragend', handleDragEnd, true);
+        document.addEventListener('drop', handleDragEnd, true);
+        return () => {
+          document.removeEventListener('dragover', handleDragOver);
+          document.removeEventListener('dragend', handleDragEnd, true);
+          document.removeEventListener('drop', handleDragEnd, true);
+          __stopDragAutoScroll();
+        };
+      }, []);
 
       const chartRef = useRef(null);
       const chartInstance = useRef(null);
@@ -848,7 +901,30 @@
               </div>
             </header>
 
+            <div className="flex justify-end mb-6">
+              <button
+                type="button"
+                onClick={() => setSortMode(s => !s)}
+                className={`px-5 py-2 rounded-full text-sm font-black uppercase tracking-widest border transition-all ${sortMode ? 'bg-sky-500 dark:bg-amber-500 text-white dark:text-slate-900 border-sky-500 dark:border-amber-500 shadow-md' : 'bg-white dark:bg-slate-800 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-700 hover:text-slate-600 dark:hover:text-slate-300'}`}
+              >
+                {sortMode ? `✕ ${t('結束排序', 'EXIT SORT MODE')}` : `⋮⋮ ${t('排序模式', 'SORT MODE')}`}
+              </button>
+            </div>
+
             {(() => {
+              const cardTitles = {
+                input: `${inputTab} INPUT`,
+                liquidity: 'LIQUIDITY DEFENSE',
+                mr: 'NOMINAL MR',
+                crash: 'CRASH RESISTANCE',
+                balance: t('1:1 BALANCE + P1 TACTICAL POOL', '1:1 BALANCE + P1 POOL'),
+                usEngine: t('美股固定比例分流引擎', 'US EQUITY SPLIT ENGINE'),
+                passthrough: t('穿透曝險 PASSTHROUGH EXPOSURE', 'PASSTHROUGH EXPOSURE'),
+                stress: t('壓力測試 STRESS TEST', 'STRESS TEST'),
+                crypto: 'CRYPTO 3-STATE',
+                radar: 'RADAR (LAST 10)',
+                history: 'HISTORY MATRIX'
+              };
               const cardInput = (
                 <div className="tech-panel p-8">
                   <div className="flex justify-between items-center mb-8">
@@ -1371,26 +1447,28 @@
                 <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
                   <div className="xl:col-span-4 space-y-8">
                     {leftOrder.map(id => (
-                      <DraggableCard key={id} id={id} zone="left" order={leftOrder} setOrder={setLeftOrder} dragInfo={dragInfo} setDragInfo={setDragInfo}>
+                      <DraggableCard key={id} id={id} zone="left" order={leftOrder} setOrder={setLeftOrder} dragInfo={dragInfo} setDragInfo={setDragInfo} collapsed={sortMode} title={cardTitles[id]}>
                         {leftCards[id]}
                       </DraggableCard>
                     ))}
                   </div>
 
                   <div className="xl:col-span-8 space-y-8">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div className={sortMode ? 'space-y-3' : 'grid grid-cols-1 md:grid-cols-2 gap-8'}>
                       {topOrder.map(id => (
-                        <DraggableCard key={id} id={id} zone="top" order={topOrder} setOrder={setTopOrder} dragInfo={dragInfo} setDragInfo={setDragInfo}>
+                        <DraggableCard key={id} id={id} zone="top" order={topOrder} setOrder={setTopOrder} dragInfo={dragInfo} setDragInfo={setDragInfo} collapsed={sortMode} title={cardTitles[id]}>
                           {topCards[id]}
                         </DraggableCard>
                       ))}
                     </div>
 
-                    {bottomOrder.map(id => (
-                      <DraggableCard key={id} id={id} zone="bottom" order={bottomOrder} setOrder={setBottomOrder} dragInfo={dragInfo} setDragInfo={setDragInfo}>
-                        {bottomCards[id]}
-                      </DraggableCard>
-                    ))}
+                    <div className={sortMode ? 'space-y-3' : 'space-y-8'}>
+                      {bottomOrder.map(id => (
+                        <DraggableCard key={id} id={id} zone="bottom" order={bottomOrder} setOrder={setBottomOrder} dragInfo={dragInfo} setDragInfo={setDragInfo} collapsed={sortMode} title={cardTitles[id]}>
+                          {bottomCards[id]}
+                        </DraggableCard>
+                      ))}
+                    </div>
                   </div>
                 </div>
               );
