@@ -372,9 +372,9 @@
        同一 zone 內互換順序；zone 間不互通（保留原本的欄位/寬度結構）
        v12.5 — 順序存 localStorage（這台機器的顯示偏好，刻意不跨裝置同步）
     =================================================================== */
-    const DEFAULT_LEFT_ORDER = ['input', 'liquidity'];
+    const DEFAULT_LEFT_ORDER = ['input', 'liquidity', 'passthrough', 'stress'];
     const DEFAULT_TOP_ORDER = ['mr', 'crash'];
-    const DEFAULT_BOTTOM_ORDER = ['balance', 'usEngine', 'passthrough', 'stress', 'crypto', 'radar', 'history', 'cashMoat'];
+    const DEFAULT_BOTTOM_ORDER = ['balance', 'usEngine', 'crypto', 'radar', 'history', 'cashMoat'];
 
     const CARD_ORDER_KEYS = { left: 'fos:cardOrder:left', top: 'fos:cardOrder:top', bottom: 'fos:cardOrder:bottom' };
 
@@ -546,7 +546,7 @@
         c00733: safeGetStorage('fos_c00733', ''),
         p1_00675L: safeGetStorage('fos_p1_675', ''),
         p1_00631L: safeGetStorage('fos_p1_631', ''),
-        p2Usdt: '0', btcAth: '73906.00', ethAth: '4956.62', emergencyWithdrawal: ''
+        p2Usdt: '0', btcAth: '73906.00', ethAth: '4956.62', emergencyWithdrawal: safeGetStorage('fos_emergencyWithdrawal', '')
       });
 
       const [history, setHistory] = useState([]);
@@ -587,6 +587,15 @@
       const [bottomOrder, setBottomOrder] = useState(() => loadCardOrder('bottom', DEFAULT_BOTTOM_ORDER));
       const [dragInfo, setDragInfo] = useState({ zone: null, id: null, overId: null });
       const [sortMode, setSortMode] = useState(false);
+
+      // 穿透曝險/壓力測試 — 預設收合，點擊收合列彈出 modal，無任何解鎖門檻
+      const [expandedCard, setExpandedCard] = useState(null);
+      useEffect(() => {
+        if (!expandedCard) return;
+        const onKeyDown = (e) => { if (e.key === 'Escape') setExpandedCard(null); };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+      }, [expandedCard]);
 
       const resetCardOrder = () => {
         resetAllCardOrders();
@@ -755,6 +764,7 @@
         if (name === 'c00733') safeSetStorage('fos_c00733', value);
         if (name === 'p1_00675L') safeSetStorage('fos_p1_675', value);
         if (name === 'p1_00631L') safeSetStorage('fos_p1_631', value);
+        if (name === 'emergencyWithdrawal') safeSetStorage('fos_emergencyWithdrawal', value);
       };
 
       const handleInputBChange = (e) => {
@@ -1154,7 +1164,37 @@
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
                     LIQUIDITY DEFENSE
                   </h2>
-                  <div className="mb-5"><label className="block text-sm font-bold mb-2 text-rose-400 uppercase tracking-wider">WITHDRAW (FIAT)</label><input type="number" name="emergencyWithdrawal" value={formData.emergencyWithdrawal} onChange={handleInputChange} className="w-full tech-input font-mono focus:border-rose-400 focus:shadow-[0_0_0_4px_rgba(244,63,94,0.15)] dark:focus:shadow-[0_0_0_4px_rgba(244,63,94,0.25)]" placeholder="0" /></div>
+                  <div className="mb-5">
+                    <label className="block text-sm font-bold mb-2 text-rose-400 uppercase tracking-wider">{t('提領死線檢核 (4.5)', 'WITHDRAWAL DEATHLINE CHECK (4.5)')}</label>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mb-2 leading-relaxed whitespace-pre-line">
+                      {t(
+`何時使用:當你需要提領現金(生活費、剛性支出),
+但不確定提了會不會撞破 P1 死線時。
+
+輸入你想提領的金額 → 系統計算:
+- 為了提這筆錢,要犧牲多少 P1(Psac)
+- 犧牲後,殘存 P1 會不會跌破 6.06% × L 的死線
+
+⚠️ 撞破死線 = P1 滅火能力歸零。崩盤時你將沒有子彈拉回維持率,
+只能眼睜睜看著核心擔保品被券商在最低點斷頭。
+
+提款前先問這一格。`,
+`When to use: when you need to withdraw cash (living costs, fixed expenses)
+but aren't sure if it will breach the P1 deathline.
+
+Enter the amount you want to withdraw → the system calculates:
+- How much P1 (Psac) must be sacrificed to withdraw this amount
+- After the sacrifice, will the remaining P1 fall below the 6.06% × L deathline
+
+⚠️ Breaching the deathline = P1's fire-fighting capacity drops to zero. During a
+crash you'll have no ammo left to pull the maintenance ratio back up, and can
+only watch as your core collateral gets liquidated at the bottom by the broker.
+
+Ask this box before you withdraw.`
+                      )}
+                    </p>
+                    <input type="number" name="emergencyWithdrawal" value={formData.emergencyWithdrawal} onChange={handleInputChange} className="w-full tech-input font-mono focus:border-rose-400 focus:shadow-[0_0_0_4px_rgba(244,63,94,0.15)] dark:focus:shadow-[0_0_0_4px_rgba(244,63,94,0.25)]" placeholder="0" />
+                  </div>
                   {hdpResult && (
                     <div className={`p-4 rounded-2xl text-sm font-bold flex items-center gap-3 ${hdpResult.status === 'danger' ? 'bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800' : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}`}>
                       <span className="text-xl">{hdpResult.status === 'danger' ? '❌' : '✅'}</span> {hdpResult.msg}
@@ -1163,7 +1203,7 @@
                 </div>
               );
 
-              const leftCards = { input: cardInput, liquidity: cardLiquidity };
+              const leftCards = { input: cardInput, liquidity: cardLiquidity, passthrough: cardPassthroughCollapsed, stress: cardStressCollapsed };
 
               const cardMr = (
                   <div className={`tech-panel p-8 flex flex-col justify-between scale-card cursor-default overflow-hidden relative`}>
@@ -1370,19 +1410,20 @@
                 </div>
               );
 
-              const cardPassthrough = (() => {
-                  const pxTsla = parseFloat(formDataB.tsla) || 0;
-                  const pxSpcx = parseFloat(formDataB.spcx) || 0;
-                  const pxQld = parseFloat(formDataB.qld) || 0;
-                  const pxTotal = pxTsla + pxSpcx + pxQld;
-                  const tslaRatio = pxTotal > 0 ? pxTsla / pxTotal : 0;
-                  const spcxRatio = pxTotal > 0 ? pxSpcx / pxTotal : 0;
-                  const qldRatio = pxTotal > 0 ? pxQld / pxTotal : 0;
-                  const directExposure = tslaRatio + spcxRatio;
-                  const qldPassthrough = qldRatio * (NDX_WEIGHT.TSLA + NDX_WEIGHT.SPCX) * QLD_LEVERAGE;
-                  const totalExposure = directExposure + qldPassthrough;
-                  const overCap = totalExposure > MUSK_EXPOSURE_CAP;
-                  return (
+              // 穿透曝險計算 — 提出到 IIFE 外層，讓完整卡片與收合摘要列共用同一組真實計算值
+              const pxTsla = parseFloat(formDataB.tsla) || 0;
+              const pxSpcx = parseFloat(formDataB.spcx) || 0;
+              const pxQld = parseFloat(formDataB.qld) || 0;
+              const pxTotal = pxTsla + pxSpcx + pxQld;
+              const tslaRatio = pxTotal > 0 ? pxTsla / pxTotal : 0;
+              const spcxRatio = pxTotal > 0 ? pxSpcx / pxTotal : 0;
+              const qldRatio = pxTotal > 0 ? pxQld / pxTotal : 0;
+              const directExposure = tslaRatio + spcxRatio;
+              const qldPassthrough = qldRatio * (NDX_WEIGHT.TSLA + NDX_WEIGHT.SPCX) * QLD_LEVERAGE;
+              const totalExposure = directExposure + qldPassthrough;
+              const overCap = totalExposure > MUSK_EXPOSURE_CAP;
+
+              const cardPassthrough = (
                     <div className="tech-panel p-8">
                       <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200 mb-6 flex items-center gap-2">
                         {t('穿透曝險 PASSTHROUGH EXPOSURE', 'PASSTHROUGH EXPOSURE')}
@@ -1411,8 +1452,11 @@
                         ⚠️ {t('SPCX 自由流通股釋出將被動推高其 NDX 權重。若由 1% 升至 4–5%，馬斯克系 NDX 合計權重可能達 7–8%，QLD 有效曝險升至 14–16%，總曝險升至約 40%。此為被動漂移，非業主行為，系統不自動調整。', 'SPCX free-float share release will passively raise its NDX weight. If it rises from 1% to 4–5%, combined Musk-system NDX weight could reach 7–8%, QLD effective exposure rises to 14–16%, total exposure rises to approx. 40%. This is passive drift, not owner action; the system does not auto-adjust.')}
                       </div>
                     </div>
-                  );
-              })();
+              );
+
+              // 壓力測試情境結果 — 沿用卡片內既有的固定文案數值，收合摘要列與完整卡片共用同一組常數
+              const stressMuskDrop = t('約 −25%', 'approx. −25%');
+              const stressNdxVerdict = t('極重，配置無法防禦', 'Severe — allocation cannot defend');
 
               const cardStress = (
                 <div className="tech-panel p-8">
@@ -1422,7 +1466,7 @@
                   <div className="space-y-3">
                     <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
                       <span className="text-sm font-bold text-slate-600 dark:text-slate-300">{t('馬斯克系事件（TSLA + SPCX 同步 −70%）', 'Musk-system event (TSLA + SPCX synchronized −70%)')}</span>
-                      <span className="text-lg font-black font-mono text-emerald-600 dark:text-emerald-400">{t('約 −25%', 'approx. −25%')}</span>
+                      <span className="text-lg font-black font-mono text-emerald-600 dark:text-emerald-400">{stressMuskDrop}</span>
                     </div>
                     <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
                       <span className="text-sm font-bold text-slate-600 dark:text-slate-300">{t('對照組：v12.x 舊配置 40/30/30 同情境', 'Control: v12.x legacy 40/30/30 same scenario')}</span>
@@ -1430,13 +1474,44 @@
                     </div>
                     <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
                       <span className="text-sm font-bold text-slate-600 dark:text-slate-300">{t('Nasdaq-100 −30%（QLD 約 −60%+，含波動耗損）', 'Nasdaq-100 −30% (QLD approx. −60%+, incl. volatility decay)')}</span>
-                      <span className="text-lg font-black text-rose-600 dark:text-rose-400">{t('極重，配置無法防禦', 'Severe — allocation cannot defend')}</span>
+                      <span className="text-lg font-black text-rose-600 dark:text-rose-400">{stressNdxVerdict}</span>
                     </div>
                   </div>
                   <div className="mt-4 p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-300 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-400">
                     <strong>{t('QLD 70% 不是安全配置。', 'QLD 70% is NOT a safe allocation.')}</strong> {t('它是 2 倍每日重置槓桿 ETF，有波動耗損（beta slippage），長期報酬 ≠ 2 × NDX 報酬。Nasdaq-100 中科技類股佔約 68.5%，本引擎實質為「單一產業重押 × 2 倍槓桿」，零防禦類、零非美、零實體資產。', 'It is a 2x daily-reset leveraged ETF with volatility decay (beta slippage) — long-term return ≠ 2 × NDX return. Tech stocks make up approx. 68.5% of Nasdaq-100; this engine is effectively "single-sector concentration × 2x leverage" — zero defensive assets, zero non-US, zero physical assets.')}
                     <br /><br />
                     {t('v13.0 降低的是「單一人物風險」，未降低「科技產業系統性崩盤風險」。唯一防線為 A/B 物理隔離。', 'v13.0 reduces "single-person risk", NOT "tech-sector systemic collapse risk". The only line of defense is A/B physical isolation.')}
+                  </div>
+                </div>
+              );
+
+              // 收合狀態摘要列 — 點擊任何時候都能立刻開 modal，無任何解鎖門檻／if 條件包住開啟動作
+              const cardPassthroughCollapsed = (
+                <div
+                  onClick={() => setExpandedCard('passthrough')}
+                  className="tech-panel p-5 cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors"
+                >
+                  <div className="text-sm font-black uppercase tracking-widest text-slate-600 dark:text-slate-300 flex items-center gap-2">
+                    <span>▶</span> {t('穿透曝險 PASSTHROUGH EXPOSURE', 'PASSTHROUGH EXPOSURE')}
+                  </div>
+                  <div className="mt-2 text-xs font-bold text-slate-500 dark:text-slate-400 flex items-center gap-2 flex-wrap">
+                    <span>{t('總曝險', 'TOTAL')} <span className={`font-mono text-sm ${overCap ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{(totalExposure * 100).toFixed(1)}%</span> {overCap ? '🔴' : ''}</span>
+                    <span className="text-slate-300 dark:text-slate-600">|</span>
+                    <span>{t('上限', 'CAP')} {(MUSK_EXPOSURE_CAP * 100).toFixed(0)}%</span>
+                  </div>
+                </div>
+              );
+
+              const cardStressCollapsed = (
+                <div
+                  onClick={() => setExpandedCard('stress')}
+                  className="tech-panel p-5 cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors"
+                >
+                  <div className="text-sm font-black uppercase tracking-widest text-slate-600 dark:text-slate-300 flex items-center gap-2">
+                    <span>▶</span> {t('壓力測試 STRESS TEST', 'STRESS TEST')}
+                  </div>
+                  <div className="mt-2 text-xs font-bold text-slate-500 dark:text-slate-400">
+                    {t(`馬斯克 ${stressMuskDrop} / NDX −30% ${stressNdxVerdict}`, `Musk ${stressMuskDrop} / NDX −30% ${stressNdxVerdict}`)}
                   </div>
                 </div>
               );
@@ -1649,9 +1724,12 @@
                 </div>
               );
 
-              const bottomCards = { balance: cardBalance, usEngine: cardUsEngine, passthrough: cardPassthrough, stress: cardStress, crypto: cardCrypto, radar: cardRadar, history: cardHistory, cashMoat: cardCashMoat };
+              const bottomCards = { balance: cardBalance, usEngine: cardUsEngine, crypto: cardCrypto, radar: cardRadar, history: cardHistory, cashMoat: cardCashMoat };
+
+              const expandedCardContent = expandedCard === 'passthrough' ? cardPassthrough : expandedCard === 'stress' ? cardStress : null;
 
               return (
+                <Fragment>
                 <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
                   <div className="xl:col-span-4 space-y-8">
                     {leftOrder.map(id => (
@@ -1679,6 +1757,28 @@
                     </div>
                   </div>
                 </div>
+
+                {expandedCardContent && (
+                  <div
+                    className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 backdrop-blur-sm p-4 md:p-10"
+                    onClick={() => setExpandedCard(null)}
+                  >
+                    <div
+                      className="relative w-full max-w-4xl my-8"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setExpandedCard(null)}
+                        className="absolute -top-3 -right-3 z-10 w-9 h-9 rounded-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-md flex items-center justify-center text-slate-500 dark:text-slate-300 hover:text-rose-500 dark:hover:text-rose-400 font-black"
+                      >
+                        ✕
+                      </button>
+                      {expandedCardContent}
+                    </div>
+                  </div>
+                )}
+                </Fragment>
               );
             })()}
 
