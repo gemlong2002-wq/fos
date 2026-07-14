@@ -328,9 +328,57 @@
     const QLD_LEVERAGE = 2.0;
 
     /* ===================================================================
-       FOS BOSS 頁卡片拖曳排序（原生 HTML5 Drag & Drop，不持久化）
+       FOS BOSS 頁卡片拖曳排序（原生 HTML5 Drag & Drop）
        同一 zone 內互換順序；zone 間不互通（保留原本的欄位/寬度結構）
+       v12.5 — 順序存 localStorage（這台機器的顯示偏好，刻意不跨裝置同步）
     =================================================================== */
+    const DEFAULT_LEFT_ORDER = ['input', 'liquidity'];
+    const DEFAULT_TOP_ORDER = ['mr', 'crash'];
+    const DEFAULT_BOTTOM_ORDER = ['balance', 'usEngine', 'passthrough', 'stress', 'crypto', 'radar', 'history'];
+
+    const CARD_ORDER_KEYS = { left: 'fos:cardOrder:left', top: 'fos:cardOrder:top', bottom: 'fos:cardOrder:bottom' };
+
+    /* 以程式碼的預設卡片清單為準做校驗：
+       - localStorage 有、程式碼沒有的 id → 忽略（未來刪卡片時自動清掉）
+       - 程式碼有、localStorage 沒有的 id → 附加到最後（未來新增卡片時不會消失）
+       - 重複 id → 只留第一次出現 */
+    function reconcileCardOrder(stored, defaultOrder) {
+      if (!Array.isArray(stored)) return [...defaultOrder];
+      const defaultSet = new Set(defaultOrder);
+      const filtered = [];
+      const seen = new Set();
+      for (const id of stored) {
+        if (typeof id === 'string' && defaultSet.has(id) && !seen.has(id)) {
+          filtered.push(id);
+          seen.add(id);
+        }
+      }
+      const missing = defaultOrder.filter(id => !seen.has(id));
+      return [...filtered, ...missing];
+    }
+
+    function loadCardOrder(zone, defaultOrder) {
+      const raw = safeGetStorage(CARD_ORDER_KEYS[zone], '');
+      if (!raw) return [...defaultOrder];
+      try {
+        const parsed = JSON.parse(raw);
+        return reconcileCardOrder(parsed, defaultOrder);
+      } catch (e) {
+        return [...defaultOrder];
+      }
+    }
+
+    function saveCardOrder(zone, order) {
+      try {
+        safeSetStorage(CARD_ORDER_KEYS[zone], JSON.stringify(order));
+      } catch (e) {}
+    }
+
+    function resetAllCardOrders() {
+      Object.values(CARD_ORDER_KEYS).forEach(key => {
+        try { localStorage.removeItem(key); } catch (e) {}
+      });
+    }
 
     /* --- 拖曳中自動捲動（原生 D&D 無內建 auto-scroll，手刻補洞） --- */
     let __dragScrollRAF = null;
@@ -376,6 +424,7 @@
             newOrder.splice(fromIdx, 1);
             newOrder.splice(toIdx, 0, dragInfo.id);
             setOrder(newOrder);
+            saveCardOrder(zone, newOrder);
             setDragInfo({ zone: null, id: null, overId: null });
           }}
           className={`relative transition-all duration-200 ${isDragging ? 'opacity-40 scale-[0.98]' : ''} ${isDropTarget ? 'ring-2 ring-sky-400 dark:ring-amber-400 ring-offset-2 dark:ring-offset-slate-950 rounded-2xl' : ''}`}
@@ -478,12 +527,19 @@
       const [liveCrypto, setLiveCrypto] = useState({ BTC: 0, ETH: 0 });
       const [betaConfig, setBetaConfig] = useState({ b0050: '1.0', b00733: '1.35', mrLimit: '130' });
 
-      // v12.4 — 卡片拖曳排序（不持久化，重整回預設順序）
-      const [leftOrder, setLeftOrder] = useState(['input', 'liquidity']);
-      const [topOrder, setTopOrder] = useState(['mr', 'crash']);
-      const [bottomOrder, setBottomOrder] = useState(['balance', 'usEngine', 'passthrough', 'stress', 'crypto', 'radar', 'history']);
+      // v12.5 — 卡片拖曳排序，順序存 localStorage（這台機器的顯示偏好，不跨裝置同步）
+      const [leftOrder, setLeftOrder] = useState(() => loadCardOrder('left', DEFAULT_LEFT_ORDER));
+      const [topOrder, setTopOrder] = useState(() => loadCardOrder('top', DEFAULT_TOP_ORDER));
+      const [bottomOrder, setBottomOrder] = useState(() => loadCardOrder('bottom', DEFAULT_BOTTOM_ORDER));
       const [dragInfo, setDragInfo] = useState({ zone: null, id: null, overId: null });
       const [sortMode, setSortMode] = useState(false);
+
+      const resetCardOrder = () => {
+        resetAllCardOrders();
+        setLeftOrder([...DEFAULT_LEFT_ORDER]);
+        setTopOrder([...DEFAULT_TOP_ORDER]);
+        setBottomOrder([...DEFAULT_BOTTOM_ORDER]);
+      };
 
       // v12.4 — 崩盤指數：手動輸入當前大盤指數，不持久化（比照 betaConfig pattern）
       const [crashIndexInput, setCrashIndexInput] = useState('20000');
@@ -901,7 +957,16 @@
               </div>
             </header>
 
-            <div className="flex justify-end mb-6">
+            <div className="flex justify-end items-center gap-3 mb-6">
+              {sortMode && (
+                <button
+                  type="button"
+                  onClick={resetCardOrder}
+                  className="px-5 py-2 rounded-full text-sm font-black uppercase tracking-widest border transition-all bg-white dark:bg-slate-800 text-rose-500 dark:text-rose-400 border-rose-200 dark:border-rose-800 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                >
+                  ↺ {t('重置順序', 'RESET ORDER')}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setSortMode(s => !s)}
