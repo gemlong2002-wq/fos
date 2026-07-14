@@ -254,6 +254,46 @@
     const safeSetStorage = (key, val) => { try { localStorage.setItem(key, val); } catch(e) {} };
 
     /* ===================================================================
+       現金護城河 CASH MOAT — 資料持久化（v1: localStorage / 下一輪換 GAS）
+       單一 JSON 物件 key（比照排序系統 CARD_ORDER_KEYS 一次序列化整包的作法）。
+       外部呼叫端只透過 loadCashMoat()/saveCashMoat() 存取，不直接碰 localStorage，
+       下一輪把這兩個函式內部換成 gasAPI('getCashMoat')/gasAPI('saveCashMoat', data)
+       即可平移，呼叫端（state 初始化與 onChange）完全不用改。
+    =================================================================== */
+    const CASH_MOAT_KEY = 'fos:cashMoat';
+    const CASH_MOAT_DEFAULTS = { cash: 0, monthlyDebt: 0, months: 6 };
+    function loadCashMoat() {
+      const raw = safeGetStorage(CASH_MOAT_KEY, '');
+      if (!raw) return { ...CASH_MOAT_DEFAULTS };
+      try {
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return { ...CASH_MOAT_DEFAULTS };
+        const cash = Number(parsed.cash);
+        const monthlyDebt = Number(parsed.monthlyDebt);
+        const months = Number(parsed.months);
+        return {
+          cash: Number.isFinite(cash) ? cash : CASH_MOAT_DEFAULTS.cash,
+          monthlyDebt: Number.isFinite(monthlyDebt) ? monthlyDebt : CASH_MOAT_DEFAULTS.monthlyDebt,
+          months: Number.isFinite(months) && months > 0 ? months : CASH_MOAT_DEFAULTS.months
+        };
+      } catch (e) {
+        return { ...CASH_MOAT_DEFAULTS };
+      }
+    }
+    function saveCashMoat(data) {
+      try {
+        const cash = Number(data && data.cash);
+        const monthlyDebt = Number(data && data.monthlyDebt);
+        const months = Number(data && data.months);
+        safeSetStorage(CASH_MOAT_KEY, JSON.stringify({
+          cash: Number.isFinite(cash) ? cash : CASH_MOAT_DEFAULTS.cash,
+          monthlyDebt: Number.isFinite(monthlyDebt) ? monthlyDebt : CASH_MOAT_DEFAULTS.monthlyDebt,
+          months: Number.isFinite(months) && months > 0 ? months : CASH_MOAT_DEFAULTS.months
+        }));
+      } catch (e) {}
+    }
+
+    /* ===================================================================
        存取權杖 — 進畫面即鎖，兩個 GAS 閘道共用同一組 sessionStorage token
     =================================================================== */
     const ACCESS_TOKEN_KEY = 'amber_access_token';
@@ -334,7 +374,7 @@
     =================================================================== */
     const DEFAULT_LEFT_ORDER = ['input', 'liquidity'];
     const DEFAULT_TOP_ORDER = ['mr', 'crash'];
-    const DEFAULT_BOTTOM_ORDER = ['balance', 'usEngine', 'passthrough', 'stress', 'crypto', 'radar', 'history'];
+    const DEFAULT_BOTTOM_ORDER = ['balance', 'usEngine', 'passthrough', 'stress', 'crypto', 'radar', 'history', 'cashMoat'];
 
     const CARD_ORDER_KEYS = { left: 'fos:cardOrder:left', top: 'fos:cardOrder:top', bottom: 'fos:cardOrder:bottom' };
 
@@ -526,6 +566,20 @@
 
       const [liveCrypto, setLiveCrypto] = useState({ BTC: 0, ETH: 0 });
       const [betaConfig, setBetaConfig] = useState({ b0050: '1.0', b00733: '1.35', mrLimit: '130' });
+
+      // 現金護城河 CASH MOAT — 純顯示模組，獨立於 MR/擔保品C/B帳戶/80-20分流，不參與任何既有運算
+      const [cashMoatInputs, setCashMoatInputs] = useState(() => {
+        const d = loadCashMoat();
+        return { cash: String(d.cash), monthlyDebt: String(d.monthlyDebt), months: String(d.months) };
+      });
+      const handleCashMoatChange = (e) => {
+        const { name, value } = e.target;
+        setCashMoatInputs(p => {
+          const next = { ...p, [name]: value };
+          saveCashMoat(next);
+          return next;
+        });
+      };
 
       // v12.5 — 卡片拖曳排序，順序存 localStorage（這台機器的顯示偏好，不跨裝置同步）
       const [leftOrder, setLeftOrder] = useState(() => loadCardOrder('left', DEFAULT_LEFT_ORDER));
@@ -875,8 +929,21 @@
         catch (err) { setHistory(previousHistory); setTerminalMsg('>> FAILED.'); }
       };
 
+      /* 現金護城河 CASH MOAT — 計算（純新增，不引用/不影響 MR、C、B帳戶市值、80/20分流、ASSET曲線）
+         目標水位 = MONTHLY_DEBT × MONTHS；MONTHLY_DEBT=0 時無目標水位可言，防呆為「未設定月付」，不算除以零 */
+      const cmCash = parseFloat(cashMoatInputs.cash) || 0;
+      const cmMonthlyDebt = parseFloat(cashMoatInputs.monthlyDebt) || 0;
+      const cmMonths = parseFloat(cashMoatInputs.months) || 6;
+      const cmHasTarget = cmMonthlyDebt > 0;
+      const cmTarget = cmHasTarget ? cmMonthlyDebt * cmMonths : 0;
+      const cmProgress = cmHasTarget ? (cmCash / cmTarget) : 0;
+      const cmProgressPct = cmHasTarget ? Math.round(cmProgress * 100) : 0;
+      const cmGap = cmTarget - cmCash;
+      const cmSurplus = cmCash - cmTarget;
+      const cmStatus = !cmHasTarget ? 'EXPOSED' : (cmProgress >= 1 ? 'FORTIFIED' : (cmProgress >= 0.5 ? 'BUILDING' : 'EXPOSED'));
+
       const handleCopyReport = () => {
-        const report = `【A】\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} | P1: ${p1Ratio}%\n【美股固定比例分流 v12.4】\nTSLA ${(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}% | SPCX ${(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}% | QLD ${(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%\n燈號: ${mrZoneInfo.label} ${splitResult.frozen ? '→ 注資凍結' : '→ 放行'}\n【加密三態】\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}`;
+        const report = `【A】\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} | P1: ${p1Ratio}%\n【美股固定比例分流 v12.4】\nTSLA ${(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}% | SPCX ${(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}% | QLD ${(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%\n燈號: ${mrZoneInfo.label} ${splitResult.frozen ? '→ 注資凍結' : '→ 放行'}\n【加密三態】\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n【現金護城河】CASH: ${formatNumber(cmCash)} | TARGET: ${cmHasTarget ? formatNumber(cmTarget) : '未設定月付'} | 進度: ${cmHasTarget ? cmProgressPct + '%' : '—'} | 狀態: ${cmStatus}`;
         navigator.clipboard.writeText(report).then(() => setTerminalMsg('>> REPORT COPIED.')).catch(() => setTerminalMsg('>> COPY FAILED.'));
       };
 
@@ -988,7 +1055,8 @@
                 stress: t('壓力測試 STRESS TEST', 'STRESS TEST'),
                 crypto: 'CRYPTO 3-STATE',
                 radar: 'RADAR (LAST 10)',
-                history: 'HISTORY MATRIX'
+                history: 'HISTORY MATRIX',
+                cashMoat: t('現金護城河 CASH MOAT', 'CASH MOAT')
               };
               const cardInput = (
                 <div className="tech-panel p-8">
@@ -1506,7 +1574,79 @@
                 </div>
               );
 
-              const bottomCards = { balance: cardBalance, usEngine: cardUsEngine, passthrough: cardPassthrough, stress: cardStress, crypto: cardCrypto, radar: cardRadar, history: cardHistory };
+              const cmStatusStyles = {
+                EXPOSED: { text: 'text-rose-500 dark:text-rose-400', dot: 'bg-rose-500 shadow-[0_0_10px_#f43f5e] animate-pulse', bar: 'bg-rose-500', badge: 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800' },
+                BUILDING: { text: 'text-yellow-600 dark:text-yellow-400', dot: 'bg-yellow-500 shadow-[0_0_10px_#eab308]', bar: 'bg-yellow-500', badge: 'bg-yellow-50 dark:bg-yellow-950/40 text-yellow-600 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800' },
+                FORTIFIED: { text: 'text-emerald-500 dark:text-emerald-400', dot: 'bg-emerald-500 shadow-[0_0_10px_#10b981]', bar: 'bg-emerald-500', badge: 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800' }
+              };
+              const cmStyle = cmStatusStyles[cmStatus];
+              const cmProgressBarPct = cmHasTarget ? Math.min(100, Math.max(0, cmProgress * 100)) : 0;
+              const cmMonthsLabel = `${cmMonths} ${t('個月', 'months')}`;
+
+              const cardCashMoat = (
+                <div className="tech-panel p-8">
+                  <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200 flex items-center gap-2">
+                      <span className={`w-2.5 h-2.5 rounded-full ${cmStyle.dot}`}></span>
+                      {t('現金護城河 CASH MOAT', 'CASH MOAT')}
+                    </h2>
+                    <span className={`px-4 py-1.5 rounded-full text-sm font-black border ${cmStyle.badge}`}>{cmStatus}</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">CASH (TWD)</label>
+                      <input type="number" name="cash" value={cashMoatInputs.cash} onChange={handleCashMoatChange} className="w-full tech-input text-lg py-2 px-3" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">MONTHLY_DEBT (TWD)</label>
+                      <input type="number" name="monthlyDebt" value={cashMoatInputs.monthlyDebt} onChange={handleCashMoatChange} className="w-full tech-input text-lg py-2 px-3" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">MONTHS</label>
+                      <input type="number" min="1" name="months" value={cashMoatInputs.months} onChange={handleCashMoatChange} className="w-full tech-input text-lg py-2 px-3" />
+                    </div>
+                  </div>
+
+                  <div className="text-center mb-4">
+                    <div className={`text-6xl font-black font-mono data-text ${cmStyle.text}`}>{cmHasTarget ? `${cmProgressPct}%` : '—'}</div>
+                    <div className="text-xs font-bold uppercase tracking-widest text-slate-400 mt-1">{t('進度', 'PROGRESS')}</div>
+                  </div>
+
+                  <div className="w-full h-4 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden mb-6">
+                    <div className={`h-full rounded-full transition-all duration-300 ${cmStyle.bar}`} style={{ width: `${cmProgressBarPct}%` }}></div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+                    <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                      <span className="text-sm font-bold text-slate-600 dark:text-slate-300">{t('目標水位', 'TARGET')}</span>
+                      <span className="text-lg font-black font-mono text-slate-700 dark:text-slate-200">{cmHasTarget ? `$${formatNumber(cmTarget)}` : t('未設定月付', 'DEBT NOT SET')}</span>
+                    </div>
+                    <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                      <span className="text-sm font-bold text-slate-600 dark:text-slate-300">{t('缺口', 'GAP')}</span>
+                      <span className={`text-lg font-black font-mono ${cmHasTarget && cmGap <= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>{cmHasTarget ? `$${formatNumber(cmGap)}` : t('未設定月付', 'DEBT NOT SET')}</span>
+                    </div>
+                  </div>
+
+                  {cmStatus === 'FORTIFIED' ? (
+                    <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-800 text-sm text-emerald-700 dark:text-emerald-400 space-y-1 font-bold">
+                      <div>✅ {t(`${cmMonthsLabel}月付已備妥`, `${cmMonthsLabel} of payments secured`)}</div>
+                      <div>{t('超額現金', 'Surplus cash')}: ${formatNumber(cmSurplus)}</div>
+                      <div className="font-normal">{t('超額部分可走 80/20 分流。', 'Only the surplus may go through the 80/20 split.')}</div>
+                    </div>
+                  ) : (
+                    <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-300 dark:border-rose-800 text-sm text-rose-700 dark:text-rose-400 whitespace-pre-line font-bold">
+{`⚠️ 這筆錢不是子彈。
+崩盤時它會極度誘人——但崩盤與失業高度相關。
+抄底抄到一半失業，月付繳不出，聯徵掛了，
+那次抄底的獲利，遠遠賠不起你毀掉的信用。
+先築牆，再進攻。`}
+                    </div>
+                  )}
+                </div>
+              );
+
+              const bottomCards = { balance: cardBalance, usEngine: cardUsEngine, passthrough: cardPassthrough, stress: cardStress, crypto: cardCrypto, radar: cardRadar, history: cardHistory, cashMoat: cardCashMoat };
 
               return (
                 <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
