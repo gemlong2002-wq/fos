@@ -1203,6 +1203,54 @@ Ask this box before you withdraw.`
                 </div>
               );
 
+              // 穿透曝險計算 — 提出到 IIFE 外層，讓完整卡片與收合摘要列共用同一組真實計算值
+              const pxTsla = parseFloat(formDataB.tsla) || 0;
+              const pxSpcx = parseFloat(formDataB.spcx) || 0;
+              const pxQld = parseFloat(formDataB.qld) || 0;
+              const pxTotal = pxTsla + pxSpcx + pxQld;
+              const tslaRatio = pxTotal > 0 ? pxTsla / pxTotal : 0;
+              const spcxRatio = pxTotal > 0 ? pxSpcx / pxTotal : 0;
+              const qldRatio = pxTotal > 0 ? pxQld / pxTotal : 0;
+              const directExposure = tslaRatio + spcxRatio;
+              const qldPassthrough = qldRatio * (NDX_WEIGHT.TSLA + NDX_WEIGHT.SPCX) * QLD_LEVERAGE;
+              const totalExposure = directExposure + qldPassthrough;
+              const overCap = totalExposure > MUSK_EXPOSURE_CAP;
+
+              // 壓力測試情境結果 — 沿用卡片內既有的固定文案數值，收合摘要列與完整卡片共用同一組常數
+              const stressMuskDrop = t('約 −25%', 'approx. −25%');
+              const stressNdxVerdict = t('極重，配置無法防禦', 'Severe — allocation cannot defend');
+
+              // 收合狀態摘要列 — 點擊任何時候都能立刻開 modal，無任何解鎖門檻／if 條件包住開啟動作
+              const cardPassthroughCollapsed = (
+                <div
+                  onClick={() => setExpandedCard('passthrough')}
+                  className="tech-panel p-5 cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors"
+                >
+                  <div className="text-sm font-black uppercase tracking-widest text-slate-600 dark:text-slate-300 flex items-center gap-2">
+                    <span>▶</span> {t('穿透曝險 PASSTHROUGH EXPOSURE', 'PASSTHROUGH EXPOSURE')}
+                  </div>
+                  <div className="mt-2 text-xs font-bold text-slate-500 dark:text-slate-400 flex items-center gap-2 flex-wrap">
+                    <span>{t('總曝險', 'TOTAL')} <span className={`font-mono text-sm ${overCap ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{(totalExposure * 100).toFixed(1)}%</span> {overCap ? '🔴' : ''}</span>
+                    <span className="text-slate-300 dark:text-slate-600">|</span>
+                    <span>{t('上限', 'CAP')} {(MUSK_EXPOSURE_CAP * 100).toFixed(0)}%</span>
+                  </div>
+                </div>
+              );
+
+              const cardStressCollapsed = (
+                <div
+                  onClick={() => setExpandedCard('stress')}
+                  className="tech-panel p-5 cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors"
+                >
+                  <div className="text-sm font-black uppercase tracking-widest text-slate-600 dark:text-slate-300 flex items-center gap-2">
+                    <span>▶</span> {t('壓力測試 STRESS TEST', 'STRESS TEST')}
+                  </div>
+                  <div className="mt-2 text-xs font-bold text-slate-500 dark:text-slate-400">
+                    {t(`馬斯克 ${stressMuskDrop} / NDX −30% ${stressNdxVerdict}`, `Musk ${stressMuskDrop} / NDX −30% ${stressNdxVerdict}`)}
+                  </div>
+                </div>
+              );
+
               const leftCards = { input: cardInput, liquidity: cardLiquidity, passthrough: cardPassthroughCollapsed, stress: cardStressCollapsed };
 
               const cardMr = (
@@ -1410,19 +1458,6 @@ Ask this box before you withdraw.`
                 </div>
               );
 
-              // 穿透曝險計算 — 提出到 IIFE 外層，讓完整卡片與收合摘要列共用同一組真實計算值
-              const pxTsla = parseFloat(formDataB.tsla) || 0;
-              const pxSpcx = parseFloat(formDataB.spcx) || 0;
-              const pxQld = parseFloat(formDataB.qld) || 0;
-              const pxTotal = pxTsla + pxSpcx + pxQld;
-              const tslaRatio = pxTotal > 0 ? pxTsla / pxTotal : 0;
-              const spcxRatio = pxTotal > 0 ? pxSpcx / pxTotal : 0;
-              const qldRatio = pxTotal > 0 ? pxQld / pxTotal : 0;
-              const directExposure = tslaRatio + spcxRatio;
-              const qldPassthrough = qldRatio * (NDX_WEIGHT.TSLA + NDX_WEIGHT.SPCX) * QLD_LEVERAGE;
-              const totalExposure = directExposure + qldPassthrough;
-              const overCap = totalExposure > MUSK_EXPOSURE_CAP;
-
               const cardPassthrough = (
                     <div className="tech-panel p-8">
                       <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200 mb-6 flex items-center gap-2">
@@ -1454,10 +1489,6 @@ Ask this box before you withdraw.`
                     </div>
               );
 
-              // 壓力測試情境結果 — 沿用卡片內既有的固定文案數值，收合摘要列與完整卡片共用同一組常數
-              const stressMuskDrop = t('約 −25%', 'approx. −25%');
-              const stressNdxVerdict = t('極重，配置無法防禦', 'Severe — allocation cannot defend');
-
               const cardStress = (
                 <div className="tech-panel p-8">
                   <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200 mb-6 flex items-center gap-2">
@@ -1481,37 +1512,6 @@ Ask this box before you withdraw.`
                     <strong>{t('QLD 70% 不是安全配置。', 'QLD 70% is NOT a safe allocation.')}</strong> {t('它是 2 倍每日重置槓桿 ETF，有波動耗損（beta slippage），長期報酬 ≠ 2 × NDX 報酬。Nasdaq-100 中科技類股佔約 68.5%，本引擎實質為「單一產業重押 × 2 倍槓桿」，零防禦類、零非美、零實體資產。', 'It is a 2x daily-reset leveraged ETF with volatility decay (beta slippage) — long-term return ≠ 2 × NDX return. Tech stocks make up approx. 68.5% of Nasdaq-100; this engine is effectively "single-sector concentration × 2x leverage" — zero defensive assets, zero non-US, zero physical assets.')}
                     <br /><br />
                     {t('v13.0 降低的是「單一人物風險」，未降低「科技產業系統性崩盤風險」。唯一防線為 A/B 物理隔離。', 'v13.0 reduces "single-person risk", NOT "tech-sector systemic collapse risk". The only line of defense is A/B physical isolation.')}
-                  </div>
-                </div>
-              );
-
-              // 收合狀態摘要列 — 點擊任何時候都能立刻開 modal，無任何解鎖門檻／if 條件包住開啟動作
-              const cardPassthroughCollapsed = (
-                <div
-                  onClick={() => setExpandedCard('passthrough')}
-                  className="tech-panel p-5 cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors"
-                >
-                  <div className="text-sm font-black uppercase tracking-widest text-slate-600 dark:text-slate-300 flex items-center gap-2">
-                    <span>▶</span> {t('穿透曝險 PASSTHROUGH EXPOSURE', 'PASSTHROUGH EXPOSURE')}
-                  </div>
-                  <div className="mt-2 text-xs font-bold text-slate-500 dark:text-slate-400 flex items-center gap-2 flex-wrap">
-                    <span>{t('總曝險', 'TOTAL')} <span className={`font-mono text-sm ${overCap ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{(totalExposure * 100).toFixed(1)}%</span> {overCap ? '🔴' : ''}</span>
-                    <span className="text-slate-300 dark:text-slate-600">|</span>
-                    <span>{t('上限', 'CAP')} {(MUSK_EXPOSURE_CAP * 100).toFixed(0)}%</span>
-                  </div>
-                </div>
-              );
-
-              const cardStressCollapsed = (
-                <div
-                  onClick={() => setExpandedCard('stress')}
-                  className="tech-panel p-5 cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors"
-                >
-                  <div className="text-sm font-black uppercase tracking-widest text-slate-600 dark:text-slate-300 flex items-center gap-2">
-                    <span>▶</span> {t('壓力測試 STRESS TEST', 'STRESS TEST')}
-                  </div>
-                  <div className="mt-2 text-xs font-bold text-slate-500 dark:text-slate-400">
-                    {t(`馬斯克 ${stressMuskDrop} / NDX −30% ${stressNdxVerdict}`, `Musk ${stressMuskDrop} / NDX −30% ${stressNdxVerdict}`)}
                   </div>
                 </div>
               );
