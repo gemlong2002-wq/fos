@@ -254,43 +254,57 @@
     const safeSetStorage = (key, val) => { try { localStorage.setItem(key, val); } catch(e) {} };
 
     /* ===================================================================
-       現金護城河 CASH MOAT — 資料持久化（v1: localStorage / 下一輪換 GAS）
+       現金護城河 CASH MOAT — 資料持久化（v2: GAS 優先 + localStorage 雙寫/fallback）
        單一 JSON 物件 key（比照排序系統 CARD_ORDER_KEYS 一次序列化整包的作法）。
-       外部呼叫端只透過 loadCashMoat()/saveCashMoat() 存取，不直接碰 localStorage，
-       下一輪把這兩個函式內部換成 gasAPI('getCashMoat')/gasAPI('saveCashMoat', data)
-       即可平移，呼叫端（state 初始化與 onChange）完全不用改。
+       外部呼叫端只透過 loadCashMoat()/saveCashMoat()/fetchCashMoatFromGAS() 存取。
+       - loadCashMoat()：同步，只讀 localStorage，供 useState 初始值使用（避免白畫面）
+       - fetchCashMoatFromGAS()：非同步，掛載後由 useEffect 呼叫，成功才覆蓋畫面
+       - saveCashMoat()：本地永遠先寫，同時非同步雙寫 GAS，GAS 失敗不影響本地
+       GAS 端尚未部署 getCashMoat/saveCashMoat 這兩個 action 之前，fetchCashMoatFromGAS
+       會 reject、saveCashMoat 的 GAS 呼叫會被吃掉，畫面照常用 localStorage 值運作。
     =================================================================== */
     const CASH_MOAT_KEY = 'fos:cashMoat';
     const CASH_MOAT_DEFAULTS = { cash: 0, monthlyDebt: 0, months: 6 };
+    function normalizeCashMoat(raw) {
+      if (!raw || typeof raw !== 'object') return { ...CASH_MOAT_DEFAULTS };
+      const cash = Number(raw.cash);
+      const monthlyDebt = Number(raw.monthlyDebt);
+      const months = Number(raw.months);
+      return {
+        cash: Number.isFinite(cash) ? cash : CASH_MOAT_DEFAULTS.cash,
+        monthlyDebt: Number.isFinite(monthlyDebt) ? monthlyDebt : CASH_MOAT_DEFAULTS.monthlyDebt,
+        months: Number.isFinite(months) && months > 0 ? months : CASH_MOAT_DEFAULTS.months
+      };
+    }
     function loadCashMoat() {
       const raw = safeGetStorage(CASH_MOAT_KEY, '');
       if (!raw) return { ...CASH_MOAT_DEFAULTS };
       try {
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== 'object') return { ...CASH_MOAT_DEFAULTS };
-        const cash = Number(parsed.cash);
-        const monthlyDebt = Number(parsed.monthlyDebt);
-        const months = Number(parsed.months);
-        return {
-          cash: Number.isFinite(cash) ? cash : CASH_MOAT_DEFAULTS.cash,
-          monthlyDebt: Number.isFinite(monthlyDebt) ? monthlyDebt : CASH_MOAT_DEFAULTS.monthlyDebt,
-          months: Number.isFinite(months) && months > 0 ? months : CASH_MOAT_DEFAULTS.months
-        };
+        return normalizeCashMoat(JSON.parse(raw));
       } catch (e) {
         return { ...CASH_MOAT_DEFAULTS };
       }
     }
-    function saveCashMoat(data) {
+    function persistCashMoatLocal(data) {
       try {
-        const cash = Number(data && data.cash);
-        const monthlyDebt = Number(data && data.monthlyDebt);
-        const months = Number(data && data.months);
-        safeSetStorage(CASH_MOAT_KEY, JSON.stringify({
-          cash: Number.isFinite(cash) ? cash : CASH_MOAT_DEFAULTS.cash,
-          monthlyDebt: Number.isFinite(monthlyDebt) ? monthlyDebt : CASH_MOAT_DEFAULTS.monthlyDebt,
-          months: Number.isFinite(months) && months > 0 ? months : CASH_MOAT_DEFAULTS.months
-        }));
+        safeSetStorage(CASH_MOAT_KEY, JSON.stringify(normalizeCashMoat(data)));
       } catch (e) {}
+    }
+    function saveCashMoat(data) {
+      // 本地永遠先寫，不受 GAS 影響（維持原本零延遲的使用者體驗）
+      persistCashMoatLocal(data);
+      // 雙寫：非同步打 GAS，失敗只 log，不 throw、不彈窗、不影響本地已完成的儲存
+      try {
+        const n = normalizeCashMoat(data);
+        gasAPI('saveCashMoat', n.cash, n.monthlyDebt, n.months).catch(err => {
+          console.warn('[CashMoat] GAS 儲存失敗，已忽略（本地已儲存）:', err && err.message);
+        });
+      } catch (e) {}
+    }
+    async function fetchCashMoatFromGAS() {
+      const res = await gasAPI('getCashMoat');
+      if (!res || res.success !== true) throw new Error('CashMoat GAS response invalid');
+      return normalizeCashMoat({ cash: res.cash, monthlyDebt: res.monthlyDebt, months: res.moatMonths });
     }
 
     /* ===================================================================
@@ -572,6 +586,19 @@
         const d = loadCashMoat();
         return { cash: String(d.cash), monthlyDebt: String(d.monthlyDebt), months: String(d.months) };
       });
+      // GAS 優先讀取：畫面先用上面 localStorage 初始值渲染（不空白），掛載後非同步跟後端要一次最新值，
+      // 成功才覆蓋；GAS 還沒部署新 action 或網路失敗都會被吃掉，維持目前畫面上的值，不 crash、不彈窗。
+      useEffect(() => {
+        let cancelled = false;
+        fetchCashMoatFromGAS().then(d => {
+          if (cancelled) return;
+          setCashMoatInputs({ cash: String(d.cash), monthlyDebt: String(d.monthlyDebt), months: String(d.months) });
+          persistCashMoatLocal(d);
+        }).catch(err => {
+          console.warn('[CashMoat] GAS 讀取失敗，維持本地快取值:', err && err.message);
+        });
+        return () => { cancelled = true; };
+      }, []);
       const handleCashMoatChange = (e) => {
         const { name, value } = e.target;
         setCashMoatInputs(p => {
