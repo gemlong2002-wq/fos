@@ -3127,7 +3127,7 @@ Ask this box before you withdraw.`
                                             </div>
                                             {hasCompound ? (
                                                 <div className="flex flex-col items-end gap-1 min-w-0 max-w-full">
-                                                    <span className="text-[10px] sm:text-xs text-slate-400 dark:text-amber-700/50 font-mono tracking-wider whitespace-nowrap" title="vs大盤累計超額（複利）＊基於資料庫內已記錄之交易日計算，非涵蓋全年每一日">
+                                                    <span className="text-[10px] sm:text-xs text-slate-500 dark:text-amber-500/80 font-mono tracking-wider whitespace-nowrap" title="vs大盤累計超額（複利）＊基於資料庫內已記錄之交易日計算，非涵蓋全年每一日">
                                                         vs 大盤累計超額
                                                         {isCurrentYear
                                                             ? <span className="ml-1 px-1 rounded text-[10px] text-amber-500 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30">YTD</span>
@@ -3137,10 +3137,10 @@ Ask this box before you withdraw.`
                                                     <span className={"text-3xl sm:text-4xl md:text-5xl font-extrabold font-mono inline-block transition-all duration-[250ms] ease-out md:hover:-translate-y-1 md:hover:scale-[1.04] " + (compoundExcess >= 0 ? "text-emerald-500 dark:text-emerald-400 drop-shadow-[0_0_14px_rgba(16,185,129,0.7)]" : "text-rose-500 dark:text-rose-400 drop-shadow-[0_0_14px_rgba(239,68,68,0.6)]")}>
                                                         {compoundExcess >= 0 ? '+' : ''}{compoundExcess.toFixed(2)}%
                                                     </span>
-                                                    <div className="text-xs font-mono text-right opacity-60 transition-all duration-[250ms] ease-out md:hover:-translate-y-1 md:hover:scale-[1.04]">
-                                                        <span className={myReturn >= 0 ? "text-emerald-500 dark:text-emerald-500" : "text-rose-400"}>我 {myReturn >= 0 ? '+' : ''}{myReturn.toFixed(2)}%</span>
-                                                        <span className="text-slate-400 dark:text-slate-600"> / </span>
-                                                        <span className={bmReturn >= 0 ? "text-slate-500 dark:text-amber-800" : "text-rose-400"}>盤 {bmReturn >= 0 ? '+' : ''}{bmReturn.toFixed(2)}%</span>
+                                                    <div className="text-sm font-mono font-bold text-right transition-all duration-[250ms] ease-out md:hover:-translate-y-1 md:hover:scale-[1.04]">
+                                                        <span className={myReturn >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}>我 {myReturn >= 0 ? '+' : ''}{myReturn.toFixed(2)}%</span>
+                                                        <span className="text-slate-500 dark:text-slate-400"> / </span>
+                                                        <span className={bmReturn >= 0 ? "text-slate-600 dark:text-amber-300" : "text-rose-600 dark:text-rose-400"}>盤 {bmReturn >= 0 ? '+' : ''}{bmReturn.toFixed(2)}%</span>
                                                     </div>
                                                 </div>
                                             ) : (
@@ -3155,7 +3155,7 @@ Ask this box before you withdraw.`
                                                     <div className={"absolute inset-y-0 right-0 rounded-r-full " + (compoundExcess >= 0 ? "bg-emerald-500" : "bg-rose-500")} style={{width: myBarPct + '%'}} />
                                                 </div>
                                                 <div className="flex flex-wrap justify-between items-center mt-2 gap-1">
-                                                    <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500 whitespace-nowrap">
+                                                    <span className="text-sm sm:text-base font-mono font-bold text-slate-600 dark:text-slate-300 whitespace-nowrap">
                                                         {currentYearData.length} 筆
                                                         {winRate != null && <> ・贏 {winLoseResult.win} / 輸 {winLoseResult.lose}（勝率 {winRate.toFixed(0)}%）</>}
                                                     </span>
