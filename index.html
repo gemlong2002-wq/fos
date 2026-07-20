@@ -3338,6 +3338,7 @@ Ask this box before you withdraw.`
       const [assetPrefill, setAssetPrefill] = useState(null);
       const [unlocked, setUnlocked] = useState(!!getAccessToken());
       const [showPwGuide, setShowPwGuide] = useState(false);
+      const [pageLoadTime] = useState(() => new Date());
 
       useEffect(() => {
         triggerRelock = () => setUnlocked(false);
@@ -3356,6 +3357,16 @@ Ask this box before you withdraw.`
       useEffect(() => { const t = setTimeout(() => setAppReady(true), 2500); return () => clearTimeout(t); }, []);
 
       const isDark = theme === 'dark';
+      const formatLoadTime = (d) => {
+        const mo = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        return `${mo}/${day} ${hh}:${mm}`;
+      };
+      const handleForceRefresh = () => {
+        window.location.href = window.location.pathname + '?t=' + Date.now();
+      };
       const tabBase = "app-tab-btn px-3 sm:px-6 md:px-10 py-2 sm:py-3 rounded-xl sm:rounded-2xl text-xs sm:text-base md:text-lg font-black uppercase tracking-wider sm:tracking-widest";
       const tabActive = "bg-slate-800 dark:bg-amber-500 text-white dark:text-slate-900 shadow-lg";
       const tabIdle = "text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300";
@@ -3377,6 +3388,18 @@ Ask this box before you withdraw.`
               <button onClick={() => setActiveTab('fos')} className={`${tabBase} ${activeTab === 'fos' ? tabActive : tabIdle}`}>FOS BOSS</button>
             </div>
             <div className="flex items-center gap-2 sm:gap-3">
+              <div className="relative inline-block">
+                <button
+                  onClick={handleForceRefresh}
+                  title={`強制刷新（上次載入 ${formatLoadTime(pageLoadTime)}）`}
+                  className="px-3 sm:px-4 py-1.5 sm:py-2.5 rounded-xl sm:rounded-2xl text-sm sm:text-base font-bold border border-cyan-500/50 dark:border-cyan-400/50 bg-white dark:bg-slate-800 text-cyan-600 dark:text-cyan-400 hover:-translate-y-0.5 transition-all shadow-sm"
+                >
+                  🔄<span className="hidden sm:inline"> 強制刷新</span>
+                </button>
+                <div className="sm:hidden absolute top-full mt-1 right-0 whitespace-nowrap text-[9px] font-mono text-cyan-500 dark:text-cyan-400/80 pointer-events-none">
+                  {formatLoadTime(pageLoadTime)}
+                </div>
+              </div>
               <button onClick={() => setIsEng(!isEng)} className="px-3 sm:px-5 py-1.5 sm:py-2.5 rounded-xl sm:rounded-2xl text-sm sm:text-base font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:-translate-y-0.5 transition-all shadow-sm" title="FOS 語言切換">{isEng ? 'EN' : '中'}</button>
               <button onClick={() => setTheme(isDark ? 'light' : 'dark')} className="px-3 sm:px-5 py-1.5 sm:py-2.5 rounded-xl sm:rounded-2xl text-sm sm:text-base font-bold border border-slate-200 dark:border-amber-500/40 bg-white dark:bg-slate-800 text-slate-600 dark:text-amber-400 hover:-translate-y-0.5 transition-all shadow-sm">
                 {isDark ? '☀️' : '🌙'}<span className="hidden sm:inline">{isDark ? ' DAY' : ' STEALTH'}</span>
