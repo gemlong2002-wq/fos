@@ -3077,14 +3077,21 @@ Ask this box before you withdraw.`
 
 
                             // 年度真實超額（複利路徑A：逐筆還原 myChange = Alpha+Mix 連乘，不受本金進出污染）
-                            // 排除已確認入金污染日：20250710（6月→7月跳幅含入金）、20250826（市場平卻+17.59%）
-                            const EXCLUDED_CAPITAL_DATES = new Set(['20250710', '20250826']);
+                            // 排除已確認入金污染日：20250710（6月→7月跳幅含入金）、20250826（市場平卻+17.59%）、20250401（Boss確認之本金移出）
+                            const EXCLUDED_CAPITAL_DATES = new Set(['20250710', '20250826', '20250401']);
+                            // v12.7 — 自動偵測本金進出污染：總資產日對日變化絕對值 > 15% 視為資金進出而非真實投資損益。
+                            // 沿用 commit 當下已算好的 myChange（= bmAlpha + bmMix，定義見 handleInputChange 提交邏輯 bmAlpha = myChange - mix），
+                            // 不重新發明算法。手動清單（向後相容、供 Boss 未來手動覆寫）與自動偵測為 OR 關係，任一命中即排除，去重複只計一次。
+                            const CAPITAL_FLOW_THRESHOLD = 15; // %
                             const compoundResult = currentYearData.reduce((acc, item) => {
                                 const dateStr = String(item.日期).trim();
-                                if (EXCLUDED_CAPITAL_DATES.has(dateStr)) { acc.excludedCount++; return acc; }
                                 const alpha = item.bmAlpha; const mix = item.bmMix;
                                 if (alpha == null || alpha === '' || mix == null || mix === '') return acc;
                                 const a = Number(alpha); const m = Number(mix);
+                                const totalAssetChangeAbs = Math.abs(a + m); // 總資產日對日變化率（= myChange）
+                                const isManualExcluded = EXCLUDED_CAPITAL_DATES.has(dateStr);
+                                const isAutoExcluded = totalAssetChangeAbs > CAPITAL_FLOW_THRESHOLD;
+                                if (isManualExcluded || isAutoExcluded) { acc.excludedCount++; return acc; }
                                 acc.myFactor *= (1 + (a + m) / 100);
                                 acc.bmFactor *= (1 + m / 100);
                                 acc.count++;
@@ -3160,7 +3167,7 @@ Ask this box before you withdraw.`
                                                         {winRate != null && <> ・贏 {winLoseResult.win} / 輸 {winLoseResult.lose}（勝率 {winRate.toFixed(0)}%）</>}
                                                     </span>
                                                     {compoundResult.excludedCount > 0 && (
-                                                        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-600 opacity-50">已排除 {compoundResult.excludedCount} 筆資金變動日</span>
+                                                        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-600 opacity-50">已排除 {compoundResult.excludedCount} 筆本金進出</span>
                                                     )}
                                                 </div>
                                             </div>
