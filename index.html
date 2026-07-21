@@ -248,7 +248,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/07/21 14:35';
+    const APP_VERSION = '2026/07/21 14:56';
 
     /* ===================================================================
        共用工具
@@ -490,6 +490,7 @@
       const isDropTarget = dragInfo.zone === zone && dragInfo.overId === id && dragInfo.id !== id;
       return (
         <div
+          id={id}
           onDragOver={(e) => {
             e.preventDefault();
             if (dragInfo.zone === zone && dragInfo.id && dragInfo.overId !== id) {
@@ -1010,6 +1011,25 @@
       const cmSurplus = cmCash - cmTarget;
       const cmStatus = !cmHasTarget ? 'EXPOSED' : (cmProgress >= 1 ? 'FORTIFIED' : (cmProgress >= 0.5 ? 'BUILDING' : 'EXPOSED'));
 
+      const cardTitles = {
+        input: `${inputTab} INPUT`,
+        liquidity: 'LIQUIDITY DEFENSE',
+        mr: 'NOMINAL MR',
+        crash: 'CRASH RESISTANCE',
+        balance: t('1:1 BALANCE + P1 TACTICAL POOL', '1:1 BALANCE + P1 POOL'),
+        usEngine: t('美股固定比例分流引擎', 'US EQUITY SPLIT ENGINE'),
+        passthrough: t('穿透曝險 PASSTHROUGH EXPOSURE', 'PASSTHROUGH EXPOSURE'),
+        stress: t('壓力測試 STRESS TEST', 'STRESS TEST'),
+        crypto: 'CRYPTO 3-STATE',
+        radar: 'RADAR (LAST 10)',
+        history: 'HISTORY MATRIX',
+        cashMoat: t('現金護城河 CASH MOAT', 'CASH MOAT')
+      };
+      const cardIndexList = [...leftOrder, ...topOrder, ...bottomOrder].map(id => ({ id, title: cardTitles[id] }));
+      const scrollToCard = (cardId) => {
+        document.getElementById(cardId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      };
+
       const handleCopyReport = () => {
         const report = `【A】\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} | P1: ${p1Ratio}%\n【美股固定比例分流 v12.4】\nTSLA ${(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}% | SPCX ${(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}% | QLD ${(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%\n燈號: ${mrZoneInfo.label} ${splitResult.frozen ? '→ 注資凍結' : '→ 放行'}\n【加密三態】\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n【現金護城河】CASH: ${formatNumber(cmCash)} | TARGET: ${cmHasTarget ? formatNumber(cmTarget) : '未設定月付'} | 進度: ${cmHasTarget ? cmProgressPct + '%' : '—'} | 狀態: ${cmStatus}`;
         navigator.clipboard.writeText(report).then(() => setTerminalMsg('>> REPORT COPIED.')).catch(() => setTerminalMsg('>> COPY FAILED.'));
@@ -1023,7 +1043,7 @@
               <button onClick={handleCopyReport} className="tech-btn w-16 h-16 rounded-full bg-sky-500 text-white flex items-center justify-center text-2xl shadow-lg hover:bg-sky-400">📋</button>
             </div>
 
-            <header className="tech-panel p-8 md:p-12 mb-10 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-8 relative overflow-hidden">
+            <header className="tech-panel p-8 md:p-12 mb-10 flex flex-col xl:flex-row flex-wrap justify-between items-start xl:items-center gap-8 relative overflow-hidden">
               <div className="absolute right-0 top-0 opacity-10 dark:opacity-20 text-[8rem] md:text-[15rem] font-black leading-none pointer-events-none -mt-16 -mr-4 md:-mr-8 font-mono text-sky-900 dark:text-sky-300 drop-shadow-sm select-none hidden sm:block">V12</div>
 
               <div className="relative z-10">
@@ -1090,6 +1110,19 @@
                   </div>
                 )}
               </div>
+
+              <div className="basis-full w-full relative z-10 mt-2 pt-6 border-t border-sky-100 dark:border-sky-900/40 flex flex-wrap gap-2">
+                {cardIndexList.map(card => (
+                  <button
+                    key={card.id}
+                    type="button"
+                    onClick={() => scrollToCard(card.id)}
+                    className="px-3.5 py-1.5 rounded-full text-xs font-black uppercase tracking-wider border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-300 hover:bg-sky-500 hover:text-white hover:border-sky-500 dark:hover:bg-sky-500 dark:hover:text-white transition-colors"
+                  >
+                    {card.title}
+                  </button>
+                ))}
+              </div>
             </header>
 
             <div className="flex justify-end items-center gap-3 mb-6">
@@ -1112,20 +1145,6 @@
             </div>
 
             {(() => {
-              const cardTitles = {
-                input: `${inputTab} INPUT`,
-                liquidity: 'LIQUIDITY DEFENSE',
-                mr: 'NOMINAL MR',
-                crash: 'CRASH RESISTANCE',
-                balance: t('1:1 BALANCE + P1 TACTICAL POOL', '1:1 BALANCE + P1 POOL'),
-                usEngine: t('美股固定比例分流引擎', 'US EQUITY SPLIT ENGINE'),
-                passthrough: t('穿透曝險 PASSTHROUGH EXPOSURE', 'PASSTHROUGH EXPOSURE'),
-                stress: t('壓力測試 STRESS TEST', 'STRESS TEST'),
-                crypto: 'CRYPTO 3-STATE',
-                radar: 'RADAR (LAST 10)',
-                history: 'HISTORY MATRIX',
-                cashMoat: t('現金護城河 CASH MOAT', 'CASH MOAT')
-              };
               const cardInput = (
                 <div className="tech-panel p-8">
                   <div className="flex justify-between items-center mb-8">
