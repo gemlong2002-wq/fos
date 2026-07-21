@@ -248,7 +248,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/07/21 15:16';
+    const APP_VERSION = '2026/07/21 15:25';
 
     /* ===================================================================
        共用工具
@@ -1149,7 +1149,7 @@
                 <div className="tech-panel p-8">
                   <div className="flex justify-between items-center mb-8">
                     <h2 className="text-2xl font-black uppercase text-slate-800 dark:text-slate-100 flex items-center gap-3">
-                      <span className="w-2.5 h-2.5 rounded-full bg-sky-500 animate-pulse"></span> {inputTab} INPUT
+                      <span className="w-2.5 h-2.5 rounded-full bg-sky-500 animate-pulse"></span> {cardTitles.input}
                     </h2>
                     <div className="flex bg-slate-100 dark:bg-slate-800 rounded-full p-1 border border-slate-200 dark:border-slate-700">
                       <button onClick={() => setInputTab('A')} className={`px-5 py-1.5 text-sm font-black rounded-full transition-colors ${inputTab === 'A' ? 'bg-white dark:bg-slate-600 shadow-sm text-sky-600 dark:text-sky-300' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'}`}>A</button>
@@ -1239,7 +1239,7 @@
                 <div className="tech-panel p-8 bg-gradient-to-br from-rose-50 to-white dark:from-rose-950/20 dark:to-slate-900 border-rose-100 dark:border-rose-900/50">
                   <h2 className="text-xl font-black uppercase text-rose-600 dark:text-rose-500 mb-6 flex items-center gap-2">
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                    LIQUIDITY DEFENSE
+                    {cardTitles.liquidity}
                   </h2>
                   <div className="mb-5">
                     <label className="block text-sm font-bold mb-2 text-rose-400 uppercase tracking-wider">{t('提領死線檢核 (4.5)', 'WITHDRAWAL DEATHLINE CHECK (4.5)')}</label>
@@ -1304,7 +1304,7 @@ Ask this box before you withdraw.`
                   className="tech-panel p-5 cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors"
                 >
                   <div className="text-sm font-black uppercase tracking-widest text-slate-600 dark:text-slate-300 flex items-center gap-2">
-                    <span>▶</span> {t('穿透曝險 PASSTHROUGH EXPOSURE', 'PASSTHROUGH EXPOSURE')}
+                    <span>▶</span> {cardTitles.passthrough}
                   </div>
                   <div className="mt-2 text-xs font-bold text-slate-500 dark:text-slate-400 flex items-center gap-2 flex-wrap">
                     <span>{t('總曝險', 'TOTAL')} <span className={`font-mono text-sm ${overCap ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{(totalExposure * 100).toFixed(1)}%</span> {overCap ? '🔴' : ''}</span>
@@ -1320,7 +1320,7 @@ Ask this box before you withdraw.`
                   className="tech-panel p-5 cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors"
                 >
                   <div className="text-sm font-black uppercase tracking-widest text-slate-600 dark:text-slate-300 flex items-center gap-2">
-                    <span>▶</span> {t('壓力測試 STRESS TEST', 'STRESS TEST')}
+                    <span>▶</span> {cardTitles.stress}
                   </div>
                   <div className="mt-2 text-xs font-bold text-slate-500 dark:text-slate-400">
                     {t(`馬斯克 ${stressMuskDrop} / NDX −30% ${stressNdxVerdict}`, `Musk ${stressMuskDrop} / NDX −30% ${stressNdxVerdict}`)}
@@ -1334,7 +1334,7 @@ Ask this box before you withdraw.`
                   <div className={`tech-panel p-8 flex flex-col justify-between scale-card cursor-default overflow-hidden relative`}>
                     <div className={`absolute top-0 right-0 w-32 h-32 blur-3xl opacity-20 -mr-10 -mt-10 rounded-full transition-colors ${mrZoneInfo.dot.split(' ')[0]}`}></div>
                     <div className="flex justify-between items-start mb-4">
-                      <h2 className="text-lg font-black uppercase text-slate-400">NOMINAL MR</h2>
+                      <h2 className="text-lg font-black uppercase text-slate-400">{cardTitles.mr}</h2>
                       <span className={`w-3 h-3 rounded-full ${mrZoneInfo.dot}`}></span>
                     </div>
 
@@ -1357,7 +1357,7 @@ Ask this box before you withdraw.`
 
               const cardCrash = (
                   <div className={`tech-panel p-8 scale-card cursor-default`}>
-                    <h2 className="text-lg font-black uppercase text-slate-400 mb-6">CRASH RESISTANCE</h2>
+                    <h2 className="text-lg font-black uppercase text-slate-400 mb-6">{cardTitles.crash}</h2>
 
                     <div className="grid grid-cols-3 gap-3 mb-6">
                       <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-2 text-center border border-slate-100 dark:border-slate-700">
@@ -1410,7 +1410,7 @@ Ask this box before you withdraw.`
                 <div className="tech-panel p-8">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                     <div className="scale-card cursor-default">
-                      <h2 className="text-lg font-black uppercase text-slate-400 mb-4">1:1 BALANCE</h2>
+                      <h2 className="text-lg font-black uppercase text-slate-400 mb-4">{cardTitles.balance}</h2>
                       <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4 flex justify-between items-center mb-3 border border-slate-100 dark:border-slate-700">
                         <span className="text-sm font-bold text-slate-400 uppercase tracking-wider">DIFF</span>
                         <span className="text-xl font-black font-mono text-slate-700 dark:text-slate-300 data-text">{formatNumber(diffValue)}</span>
@@ -1440,7 +1440,7 @@ Ask this box before you withdraw.`
                     <div className="flex justify-between items-center">
                       <h2 className="text-xl font-black uppercase text-sky-600 dark:text-sky-400 flex items-center gap-2">
                         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                        {t('美股固定比例分流引擎', 'FIXED-RATIO SPLIT ENGINE')} <span className="text-sm opacity-60 ml-2">v12.2</span>
+                        {cardTitles.usEngine} <span className="text-sm opacity-60 ml-2">v12.2</span>
                       </h2>
                       <button onClick={() => setShowUsDetail(!showUsDetail)} className={`px-4 py-1.5 rounded-full text-sm font-black border cursor-pointer transition-all hover:scale-105 ${mrZoneInfo.zone === 'ZONE1' ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800' : mrZoneInfo.zone === 'ZONE2' ? 'bg-yellow-50 dark:bg-yellow-950/40 text-yellow-600 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800' : mrZoneInfo.zone === 'ZONE3' ? 'bg-orange-50 dark:bg-orange-950/40 text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800' : mrZoneInfo.zone === 'DANGER' ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700'}`}>
                         {mrZoneInfo.label} {showUsDetail ? '◀' : '▶'}
@@ -1542,7 +1542,7 @@ Ask this box before you withdraw.`
               const cardPassthrough = (
                     <div className="tech-panel p-8">
                       <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200 mb-6 flex items-center gap-2">
-                        {t('穿透曝險 PASSTHROUGH EXPOSURE', 'PASSTHROUGH EXPOSURE')}
+                        {cardTitles.passthrough}
                       </h2>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 text-center">
@@ -1573,7 +1573,7 @@ Ask this box before you withdraw.`
               const cardStress = (
                 <div className="tech-panel p-8">
                   <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200 mb-6 flex items-center gap-2">
-                    {t('壓力測試 STRESS TEST（唯讀）', 'STRESS TEST (READ-ONLY)')}
+                    {t('壓力測試（唯讀）', 'STRESS TEST (READ-ONLY)')}
                   </h2>
                   <div className="space-y-3">
                     <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
@@ -1602,7 +1602,7 @@ Ask this box before you withdraw.`
                   <div className="bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700 p-6 flex flex-wrap justify-between items-center gap-4">
                     <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200 flex items-center gap-2">
                       <svg className="w-5 h-5 text-violet-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
-                      CRYPTO 3-STATE
+                      {cardTitles.crypto}
                     </h2>
                     <div className="flex items-center gap-2">
                       <button onClick={handleSyncCrypto} className="tech-btn bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-300 hover:text-violet-500 dark:hover:text-violet-400 px-4 py-1.5 text-sm shadow-sm">SYNC P2/ATH</button>
@@ -1683,7 +1683,7 @@ Ask this box before you withdraw.`
                 <div className="tech-panel p-8 h-[500px] flex flex-col overflow-hidden">
                   <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200 mb-6 flex items-center gap-2">
                     <svg className="w-5 h-5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
-                    RADAR (LAST 10)
+                    {cardTitles.radar}
                   </h2>
                   <div className="w-full flex-1 relative"><canvas ref={chartRef}></canvas></div>
                 </div>
@@ -1693,7 +1693,7 @@ Ask this box before you withdraw.`
                 <div className="tech-panel p-0 overflow-hidden border-violet-300 dark:border-violet-700">
                   <h2 className="text-xl font-black uppercase bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 p-6 flex items-center gap-2">
                     <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                    HISTORY MATRIX
+                    {cardTitles.history}
                   </h2>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left whitespace-nowrap text-sm font-mono">
@@ -1744,7 +1744,7 @@ Ask this box before you withdraw.`
                   <div className="flex justify-between items-center mb-6">
                     <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200 flex items-center gap-2">
                       <span className={`w-2.5 h-2.5 rounded-none ${cmStyle.dot}`}></span>
-                      {t('現金護城河 CASH MOAT', 'CASH MOAT')}
+                      {cardTitles.cashMoat}
                     </h2>
                     <span className={`px-4 py-1.5 rounded-none text-sm font-black ${cmStyle.badge}`}>{cmStatus}</span>
                   </div>
