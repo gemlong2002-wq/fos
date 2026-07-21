@@ -248,7 +248,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/07/21 15:25';
+    const APP_VERSION = '2026/07/21 15:43';
 
     /* ===================================================================
        共用工具
@@ -3365,9 +3365,18 @@ Ask this box before you withdraw.`
       const [unlocked, setUnlocked] = useState(!!getAccessToken());
       const [showPwGuide, setShowPwGuide] = useState(false);
       const [showRefreshHelp, setShowRefreshHelp] = useState(false);
+      const [showBackToTop, setShowBackToTop] = useState(false);
 
       useEffect(() => {
         triggerRelock = () => setUnlocked(false);
+      }, []);
+
+      useEffect(() => {
+        const handleScroll = () => {
+          setShowBackToTop(window.scrollY > 300);
+        };
+        window.addEventListener('scroll', handleScroll);
+        return () => window.removeEventListener('scroll', handleScroll);
       }, []);
 
       useEffect(() => {
@@ -3385,6 +3394,9 @@ Ask this box before you withdraw.`
       const isDark = theme === 'dark';
       const handleForceRefresh = () => {
         window.location.href = window.location.pathname + '?t=' + Date.now();
+      };
+      const handleBackToTop = () => {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
       };
       const tabBase = "app-tab-btn px-3 sm:px-6 md:px-10 py-2 sm:py-3 rounded-xl sm:rounded-2xl text-xs sm:text-base md:text-lg font-black uppercase tracking-wider sm:tracking-widest";
       const tabActive = "bg-slate-800 dark:bg-amber-500 text-white dark:text-slate-900 shadow-lg";
@@ -3480,6 +3492,18 @@ Ask this box before you withdraw.`
               </div>
             </React.Fragment>,
             document.body
+          )}
+
+          {showBackToTop && (
+            <div className="fixed bottom-24 right-8 z-[9998]">
+              <button
+                onClick={handleBackToTop}
+                title="回到頂部"
+                className="tech-btn w-12 h-12 rounded-full bg-white dark:bg-slate-800 border border-cyan-500/50 dark:border-cyan-400/50 text-cyan-600 dark:text-cyan-400 flex items-center justify-center text-xl font-black shadow-lg hover:-translate-y-0.5 transition-all"
+              >
+                ↑
+              </button>
+            </div>
           )}
 
           <div style={{ display: activeTab === 'asset' ? 'block' : 'none' }}>
