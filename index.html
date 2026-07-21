@@ -248,7 +248,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/07/21 14:56';
+    const APP_VERSION = '2026/07/21 15:16';
 
     /* ===================================================================
        共用工具
@@ -1012,18 +1012,18 @@
       const cmStatus = !cmHasTarget ? 'EXPOSED' : (cmProgress >= 1 ? 'FORTIFIED' : (cmProgress >= 0.5 ? 'BUILDING' : 'EXPOSED'));
 
       const cardTitles = {
-        input: `${inputTab} INPUT`,
-        liquidity: 'LIQUIDITY DEFENSE',
-        mr: 'NOMINAL MR',
-        crash: 'CRASH RESISTANCE',
+        input: t(`${inputTab} 注入`, `${inputTab} INPUT`),
+        liquidity: t('流動性防禦', 'LIQUIDITY DEFENSE'),
+        mr: t('名目維持率 MR', 'NOMINAL MR'),
+        crash: t('崩盤抵抗', 'CRASH RESISTANCE'),
         balance: t('1:1 BALANCE + P1 TACTICAL POOL', '1:1 BALANCE + P1 POOL'),
         usEngine: t('美股固定比例分流引擎', 'US EQUITY SPLIT ENGINE'),
-        passthrough: t('穿透曝險 PASSTHROUGH EXPOSURE', 'PASSTHROUGH EXPOSURE'),
-        stress: t('壓力測試 STRESS TEST', 'STRESS TEST'),
-        crypto: 'CRYPTO 3-STATE',
-        radar: 'RADAR (LAST 10)',
-        history: 'HISTORY MATRIX',
-        cashMoat: t('現金護城河 CASH MOAT', 'CASH MOAT')
+        passthrough: t('穿透曝險', 'PASSTHROUGH EXPOSURE'),
+        stress: t('壓力測試', 'STRESS TEST'),
+        crypto: t('加密三態', 'CRYPTO 3-STATE'),
+        radar: t('雷達(近10筆)', 'RADAR (LAST 10)'),
+        history: t('歷史矩陣', 'HISTORY MATRIX'),
+        cashMoat: t('現金護城河', 'CASH MOAT')
       };
       const cardIndexList = [...leftOrder, ...topOrder, ...bottomOrder].map(id => ({ id, title: cardTitles[id] }));
       const scrollToCard = (cardId) => {
