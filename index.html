@@ -248,7 +248,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/07/21 03:00';
+    const APP_VERSION = '2026/07/21 14:35';
 
     /* ===================================================================
        共用工具
@@ -1417,14 +1417,17 @@ Ask this box before you withdraw.`
 
               const cardUsEngine = (
                 <div className="tech-panel p-0 overflow-hidden border-sky-500 dark:border-sky-500/50 shadow-[0_0_15px_rgba(14,165,233,0.15)]">
-                  <div className="bg-sky-50 dark:bg-slate-800/80 border-b border-sky-100 dark:border-slate-700 p-6 flex justify-between items-center">
-                    <h2 className="text-xl font-black uppercase text-sky-600 dark:text-sky-400 flex items-center gap-2">
-                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                      {t('美股固定比例分流引擎', 'FIXED-RATIO SPLIT ENGINE')} <span className="text-sm opacity-60 ml-2">v12.2</span>
-                    </h2>
-                    <button onClick={() => setShowUsDetail(!showUsDetail)} className={`px-4 py-1.5 rounded-full text-sm font-black border cursor-pointer transition-all hover:scale-105 ${mrZoneInfo.zone === 'ZONE1' ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800' : mrZoneInfo.zone === 'ZONE2' ? 'bg-yellow-50 dark:bg-yellow-950/40 text-yellow-600 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800' : mrZoneInfo.zone === 'ZONE3' ? 'bg-orange-50 dark:bg-orange-950/40 text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800' : mrZoneInfo.zone === 'DANGER' ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700'}`}>
-                      {mrZoneInfo.label} {showUsDetail ? '◀' : '▶'}
-                    </button>
+                  <div className="bg-sky-50 dark:bg-slate-800/80 border-b border-sky-100 dark:border-slate-700 p-6">
+                    <div className="flex justify-between items-center">
+                      <h2 className="text-xl font-black uppercase text-sky-600 dark:text-sky-400 flex items-center gap-2">
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                        {t('美股固定比例分流引擎', 'FIXED-RATIO SPLIT ENGINE')} <span className="text-sm opacity-60 ml-2">v12.2</span>
+                      </h2>
+                      <button onClick={() => setShowUsDetail(!showUsDetail)} className={`px-4 py-1.5 rounded-full text-sm font-black border cursor-pointer transition-all hover:scale-105 ${mrZoneInfo.zone === 'ZONE1' ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800' : mrZoneInfo.zone === 'ZONE2' ? 'bg-yellow-50 dark:bg-yellow-950/40 text-yellow-600 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800' : mrZoneInfo.zone === 'ZONE3' ? 'bg-orange-50 dark:bg-orange-950/40 text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800' : mrZoneInfo.zone === 'DANGER' ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700'}`}>
+                        {mrZoneInfo.label} {showUsDetail ? '◀' : '▶'}
+                      </button>
+                    </div>
+                    <div className="text-xs font-normal normal-case text-slate-400 dark:text-slate-500 mt-1">{`匯率手動維護（NT$/USD ${formDataB.usdRate}），記得定期更新`}</div>
                   </div>
 
                   {(!showUsDetail && (mrZoneInfo.zone === 'ZONE3' || mrZoneInfo.zone === 'DANGER')) ? (
@@ -1495,7 +1498,8 @@ Ask this box before you withdraw.`
                                     </div>
                                   ) : (
                                     <div className="p-2 rounded-lg text-center text-sm font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
-                                      {t('需買入', 'BUY')} ${formatNumber(diff)}
+                                      <div>{t('需買入', 'BUY')} ${formatNumber(diff)}</div>
+                                      <div className="text-xs font-normal text-amber-500/70 dark:text-amber-400/60 mt-0.5">≈ NT${formatNumber(Math.round(diff * (parseFloat(formDataB.usdRate) || 0)))}</div>
                                     </div>
                                   )}
                                   <div className="text-xs font-bold text-slate-400 mt-2 text-center">{item.desc}</div>
