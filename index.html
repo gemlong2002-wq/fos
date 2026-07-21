@@ -248,7 +248,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/07/21 19:13';
+    const APP_VERSION = '2026/07/21 19:26';
 
     /* ===================================================================
        共用工具
@@ -752,6 +752,8 @@
         const labels = chartData.map(item => item.dateId ? String(item.dateId).substring(0, 10) : 'N/A');
         const mrData = chartData.map(item => parseFloat(item.nominalMR || 0));
         const p1Data = chartData.map(item => parseFloat(item.p1Ratio || 0));
+        const MR_DANGER_THRESHOLD = 310;
+        const mrRefLineData = labels.map(() => MR_DANGER_THRESHOLD);
 
         if (chartInstance.current) chartInstance.current.destroy();
         const ctx = chartRef.current.getContext('2d');
@@ -770,8 +772,9 @@
           data: {
             labels: labels,
             datasets: [
-              { label: t('維持率 (MR %)', 'MR %'), data: mrData, borderColor: '#0ea5e9', backgroundColor: gradientMR, borderWidth: 4, tension: 0.4, fill: true, yAxisID: 'y', pointBackgroundColor: isDarkMode ? '#0f172a' : '#ffffff', pointBorderColor: '#0ea5e9', pointBorderWidth: 3, pointRadius: 6, pointHoverRadius: 10 },
-              { label: t('資金池 (P1 %)', 'P1 %'), data: p1Data, borderColor: '#8b5cf6', borderWidth: 3, borderDash: [6, 6], tension: 0.4, fill: false, yAxisID: 'y1', pointBackgroundColor: isDarkMode ? '#0f172a' : '#ffffff', pointBorderColor: '#8b5cf6', pointBorderWidth: 3, pointRadius: 6, pointHoverRadius: 10 }
+              { label: t('維持率 (MR %)', 'MR %'), data: mrData, borderColor: '#0ea5e9', backgroundColor: gradientMR, borderWidth: 4, tension: 0.4, fill: true, yAxisID: 'y', pointBackgroundColor: mrData.map(v => v < MR_DANGER_THRESHOLD ? '#8B1E3F' : (isDarkMode ? '#0f172a' : '#ffffff')), pointBorderColor: mrData.map(v => v < MR_DANGER_THRESHOLD ? '#8B1E3F' : '#0ea5e9'), pointBorderWidth: 3, pointRadius: 6, pointHoverRadius: 10 },
+              { label: t('資金池 (P1 %)', 'P1 %'), data: p1Data, borderColor: '#8b5cf6', borderWidth: 3, borderDash: [6, 6], tension: 0.4, fill: false, yAxisID: 'y1', pointBackgroundColor: isDarkMode ? '#0f172a' : '#ffffff', pointBorderColor: '#8b5cf6', pointBorderWidth: 3, pointRadius: 6, pointHoverRadius: 10 },
+              { label: String(MR_DANGER_THRESHOLD), data: mrRefLineData, borderColor: 'rgba(139, 30, 63, 0.4)', borderWidth: 2, borderDash: [6, 6], tension: 0, fill: false, yAxisID: 'y', pointRadius: 0, pointHoverRadius: 0 }
             ]
           },
           options: {
