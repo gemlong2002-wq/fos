@@ -248,7 +248,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/07/21 19:37';
+    const APP_VERSION = '2026/07/21 21:40';
 
     /* ===================================================================
        共用工具
@@ -597,6 +597,39 @@
 
       const [history, setHistory] = useState([]);
       const [radarRange, setRadarRange] = useState(safeGetStorage('fos_radarRange', '10'));
+
+      // v12.7 — HISTORY MATRIX 分年份手風琴 + LOAD_MORE 漸進渲染（比照 AMBER 頁機制，純前端渲染節流，不動抓取方式）
+      const [expandedYears, setExpandedYears] = useState({});
+      const [visibleRows, setVisibleRows] = useState({});
+
+      // 分組前濾掉樂觀更新塞入的暫存記錄（dateId 開頭 "(SYNC)"，非年份，避免冒出假年份分組）
+      const groupedHistory = useMemo(() => {
+        const groups = {};
+        history.forEach(item => {
+          const dateStr = String(item.dateId || '');
+          if (!/^\d{4}/.test(dateStr)) return; // 非純數字年份開頭（例如 "(SYNC) ..."）一律跳過
+          const year = dateStr.substring(0, 4);
+          if (!groups[year]) groups[year] = [];
+          groups[year].push(item);
+        });
+        return groups;
+      }, [history]);
+      const sortedHistoryYears = Object.keys(groupedHistory).sort((a, b) => b - a);
+
+      useEffect(() => {
+        if (sortedHistoryYears.length > 0 && Object.keys(expandedYears).length === 0) {
+          setExpandedYears({ [sortedHistoryYears[0]]: true });
+          setVisibleRows({ [sortedHistoryYears[0]]: 30 });
+        }
+      }, [sortedHistoryYears, expandedYears]);
+
+      const toggleHistoryYear = (year) => {
+        setExpandedYears(prev => ({ ...prev, [year]: !prev[year] }));
+        if (!visibleRows[year]) setVisibleRows(prev => ({ ...prev, [year]: 30 }));
+      };
+
+      const loadMoreHistoryRows = (year) => { setVisibleRows(prev => ({ ...prev, [year]: (prev[year] || 30) + 50 })); };
+
       const [isSyncing, setIsSyncing] = useState(false);
       const [aiFields, setAiFields] = useState({});
       const [isRecognizing, setIsRecognizing] = useState(false);
@@ -1711,37 +1744,60 @@ Ask this box before you withdraw.`
                     <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                     {cardTitles.history}
                   </h2>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left whitespace-nowrap text-sm font-mono">
-                      <thead>
-                        <tr className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 text-slate-400">
-                          <th className="p-4 font-semibold uppercase tracking-wider">TIME</th>
-                          <th className="p-4 font-semibold uppercase tracking-wider text-right">L</th>
-                          <th className="p-4 font-semibold uppercase tracking-wider text-right">C50</th>
-                          <th className="p-4 font-semibold uppercase tracking-wider text-right">C733</th>
-                          <th className="p-4 font-semibold uppercase tracking-wider text-right">P1</th>
-                          <th className="p-4 font-semibold uppercase tracking-wider text-right">MR%</th>
-                          <th className="p-4 font-semibold uppercase tracking-wider text-right">P1%</th>
-                          <th className="p-4 text-center font-semibold uppercase tracking-wider">ACT</th>
-                        </tr>
-                      </thead>
-                      <tbody className="text-slate-600 dark:text-slate-300 font-bold bg-white dark:bg-slate-900">
-                        {history.map((item, idx) => (
-                          <tr key={idx} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                            <td className="p-4 text-sky-600 dark:text-sky-400">{item.dateId}</td>
-                            <td className="p-4 text-right">{formatNumber(item.lAmount)}</td>
-                            <td className="p-4 text-right">{formatNumber(item.c0050)}</td>
-                            <td className="p-4 text-right">{formatNumber(item.c00733)}</td>
-                            <td className="p-4 text-right">{formatNumber(item.p1Value)}</td>
-                            <td className="p-4 text-right text-emerald-500">{item.nominalMR}%</td>
-                            <td className="p-4 text-right text-violet-500 dark:text-violet-400">{item.p1Ratio}%</td>
-                            <td className="p-4 text-center">
-                              <button onClick={() => handleDelete(item.dateId)} className="text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 px-3 py-1 rounded-full transition-colors text-xs font-bold">DEL</button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {sortedHistoryYears.map(year => {
+                      const yearData = groupedHistory[year];
+                      const isYearOpen = expandedYears[year];
+                      const yearLimit = visibleRows[year] || 30;
+                      const yearRendered = yearData.slice(0, yearLimit);
+                      return (
+                        <div key={year}>
+                          <button onClick={() => toggleHistoryYear(year)} className="w-full flex justify-between items-center px-6 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors text-left">
+                            <span className="text-lg font-black text-slate-700 dark:text-slate-200 font-mono">{year}</span>
+                            <span className="text-xs font-bold text-slate-400 dark:text-slate-500 tracking-wider">{yearData.length} {t('筆', 'RECORDS')} {isYearOpen ? '▲' : '▼'}</span>
+                          </button>
+                          {isYearOpen && (
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-left whitespace-nowrap text-sm font-mono">
+                                <thead>
+                                  <tr className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 text-slate-400">
+                                    <th className="p-4 font-semibold uppercase tracking-wider">TIME</th>
+                                    <th className="p-4 font-semibold uppercase tracking-wider text-right">L</th>
+                                    <th className="p-4 font-semibold uppercase tracking-wider text-right">C50</th>
+                                    <th className="p-4 font-semibold uppercase tracking-wider text-right">C733</th>
+                                    <th className="p-4 font-semibold uppercase tracking-wider text-right">P1</th>
+                                    <th className="p-4 font-semibold uppercase tracking-wider text-right">MR%</th>
+                                    <th className="p-4 font-semibold uppercase tracking-wider text-right">P1%</th>
+                                    <th className="p-4 text-center font-semibold uppercase tracking-wider">ACT</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="text-slate-600 dark:text-slate-300 font-bold bg-white dark:bg-slate-900">
+                                  {yearRendered.map((item, idx) => (
+                                    <tr key={idx} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                                      <td className="p-4 text-sky-600 dark:text-sky-400">{item.dateId}</td>
+                                      <td className="p-4 text-right">{formatNumber(item.lAmount)}</td>
+                                      <td className="p-4 text-right">{formatNumber(item.c0050)}</td>
+                                      <td className="p-4 text-right">{formatNumber(item.c00733)}</td>
+                                      <td className="p-4 text-right">{formatNumber(item.p1Value)}</td>
+                                      <td className="p-4 text-right text-emerald-500">{item.nominalMR}%</td>
+                                      <td className="p-4 text-right text-violet-500 dark:text-violet-400">{item.p1Ratio}%</td>
+                                      <td className="p-4 text-center">
+                                        <button onClick={() => handleDelete(item.dateId)} className="text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 px-3 py-1 rounded-full transition-colors text-xs font-bold">DEL</button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                              {yearLimit < yearData.length && (
+                                <div className="p-4 bg-slate-50 dark:bg-black/40 text-center border-t border-slate-200 dark:border-slate-800">
+                                  <button onClick={() => loadMoreHistoryRows(year)} className="text-sm font-mono text-slate-500 dark:text-violet-400 font-extrabold tracking-widest hover:text-violet-600 dark:hover:text-violet-300 transition-colors outline-none">[ LOAD_MORE_DATA ]</button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               );
