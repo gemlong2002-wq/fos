@@ -239,6 +239,18 @@
 
     .fire-bg { background: linear-gradient(45deg, #f59e0b, #ec4899, #8b5cf6); background-size: 400% 400%; animation: gradient 5s ease infinite; }
     @keyframes gradient { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+
+    /* FOS 卡片索引跳轉：目標卡片高亮閃爍（青藍色系，與索引膠囊一致），閃3下後淡出，不留殘留樣式 */
+    @keyframes cardHighlightFlash {
+      0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+      8% { box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.95), 0 0 26px 6px rgba(56, 189, 248, 0.55); }
+      20% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+      28% { box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.95), 0 0 26px 6px rgba(56, 189, 248, 0.55); }
+      40% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+      48% { box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.85), 0 0 26px 6px rgba(56, 189, 248, 0.45); }
+      100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+    }
+    .card-highlight-flash { animation: cardHighlightFlash 1.6s ease-out 1; border-radius: 1rem; }
   </style>
 </head>
 <body>
@@ -248,7 +260,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/07/22 09:20';
+    const APP_VERSION = '2026/07/22 10:15';
 
     /* ===================================================================
        共用工具
@@ -1068,7 +1080,14 @@
       };
       const cardIndexList = [...leftOrder, ...topOrder, ...bottomOrder].map(id => ({ id, title: cardTitles[id] }));
       const scrollToCard = (cardId) => {
-        document.getElementById(cardId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const el = document.getElementById(cardId);
+        if (!el) return;
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.remove('card-highlight-flash');
+        void el.offsetWidth; // 強制 reflow，允許連續點擊同一張卡片時動畫能重新觸發
+        el.classList.add('card-highlight-flash');
+        const clearHighlight = () => el.classList.remove('card-highlight-flash');
+        el.addEventListener('animationend', clearHighlight, { once: true });
       };
 
       const handleCopyReport = () => {
