@@ -240,17 +240,31 @@
     .fire-bg { background: linear-gradient(45deg, #f59e0b, #ec4899, #8b5cf6); background-size: 400% 400%; animation: gradient 5s ease infinite; }
     @keyframes gradient { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
 
-    /* FOS 卡片索引跳轉：目標卡片高亮閃爍（青藍色系，與索引膠囊一致），閃3下後淡出，不留殘留樣式 */
+    /* FOS 卡片索引跳轉：目標卡片高亮閃爍（青藍色系，與索引膠囊一致），閃10下後淡出，不留殘留樣式 */
     @keyframes cardHighlightFlash {
       0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
-      8% { box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.95), 0 0 26px 6px rgba(56, 189, 248, 0.55); }
+      5% { box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.95), 0 0 26px 6px rgba(56, 189, 248, 0.55); }
+      10% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+      15% { box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.95), 0 0 26px 6px rgba(56, 189, 248, 0.55); }
       20% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
-      28% { box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.95), 0 0 26px 6px rgba(56, 189, 248, 0.55); }
+      25% { box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.95), 0 0 26px 6px rgba(56, 189, 248, 0.55); }
+      30% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+      35% { box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.9), 0 0 26px 6px rgba(56, 189, 248, 0.5); }
       40% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
-      48% { box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.85), 0 0 26px 6px rgba(56, 189, 248, 0.45); }
+      45% { box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.9), 0 0 26px 6px rgba(56, 189, 248, 0.5); }
+      50% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+      55% { box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.85), 0 0 26px 6px rgba(56, 189, 248, 0.45); }
+      60% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+      65% { box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.8), 0 0 26px 6px rgba(56, 189, 248, 0.4); }
+      70% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+      75% { box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.7), 0 0 26px 6px rgba(56, 189, 248, 0.35); }
+      80% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+      85% { box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.55), 0 0 26px 6px rgba(56, 189, 248, 0.28); }
+      90% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+      95% { box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.35), 0 0 20px 4px rgba(56, 189, 248, 0.18); }
       100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
     }
-    .card-highlight-flash { animation: cardHighlightFlash 1.6s ease-out 1; border-radius: 1rem; }
+    .card-highlight-flash { animation: cardHighlightFlash 10s ease-out 1; border-radius: 1rem; }
   </style>
 </head>
 <body>
@@ -260,7 +274,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/07/22 10:15';
+    const APP_VERSION = '2026/07/22 11:05';
 
     /* ===================================================================
        共用工具
