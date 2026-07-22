@@ -248,7 +248,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/07/21 21:40';
+    const APP_VERSION = '2026/07/22 09:20';
 
     /* ===================================================================
        共用工具
@@ -1072,7 +1072,10 @@
       };
 
       const handleCopyReport = () => {
-        const report = `【A】\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} | P1: ${p1Ratio}%\n【美股固定比例分流 v12.4】\nTSLA ${(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}% | SPCX ${(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}% | QLD ${(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%\n燈號: ${mrZoneInfo.label} ${splitResult.frozen ? '→ 注資凍結' : '→ 放行'}\n【加密三態】\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n【現金護城河】CASH: ${formatNumber(cmCash)} | TARGET: ${cmHasTarget ? formatNumber(cmTarget) : '未設定月付'} | 進度: ${cmHasTarget ? cmProgressPct + '%' : '—'} | 狀態: ${cmStatus}`;
+        const report = t(
+          `【A】\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} | P1: ${p1Ratio}%\n【美股固定比例分流 v12.4】\nTSLA ${(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}% | SPCX ${(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}% | QLD ${(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%\n燈號: ${mrZoneInfo.label} ${splitResult.frozen ? '→ 注資凍結' : '→ 放行'}\n【加密三態】\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n【現金護城河】CASH: ${formatNumber(cmCash)} | TARGET: ${cmHasTarget ? formatNumber(cmTarget) : '未設定月付'} | 進度: ${cmHasTarget ? cmProgressPct + '%' : '—'} | 狀態: ${cmStatus}`,
+          `[A]\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} | P1: ${p1Ratio}%\n[US EQUITY SPLIT v12.4]\nTSLA ${(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}% | SPCX ${(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}% | QLD ${(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%\nSignal: ${mrZoneInfo.label} ${splitResult.frozen ? '→ INJECTION FROZEN' : '→ RELEASED'}\n[CRYPTO 3-STATE]\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n[CASH MOAT] CASH: ${formatNumber(cmCash)} | TARGET: ${cmHasTarget ? formatNumber(cmTarget) : 'NOT SET'} | Progress: ${cmHasTarget ? cmProgressPct + '%' : '—'} | Status: ${cmStatus}`
+        );
         navigator.clipboard.writeText(report).then(() => setTerminalMsg('>> REPORT COPIED.')).catch(() => setTerminalMsg('>> COPY FAILED.'));
       };
 
@@ -1117,7 +1120,7 @@
                       <div className="space-y-4">
                         <div className="grid grid-cols-2 gap-4">
                           <div className="bg-white dark:bg-slate-800 p-4 text-center rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm scale-card cursor-default">
-                            <div className="text-sm font-bold mb-1 text-slate-400 uppercase">80% 美股引擎</div>
+                            <div className="text-sm font-bold mb-1 text-slate-400 uppercase">{t('80% 美股引擎', '80% US EQUITY ENGINE')}</div>
                             <div className="text-2xl font-black text-sky-500 dark:text-sky-400 font-mono data-text">{formatNumber(stockInject)}</div>
                           </div>
                           <div className="bg-white dark:bg-slate-800 p-4 text-center rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm scale-card cursor-default">
@@ -1487,7 +1490,7 @@ Ask this box before you withdraw.`
                         {mrZoneInfo.label} {showUsDetail ? '◀' : '▶'}
                       </button>
                     </div>
-                    <div className="text-xs font-normal normal-case text-slate-400 dark:text-slate-500 mt-1">{`匯率手動維護（NT$/USD ${formDataB.usdRate}），記得定期更新`}</div>
+                    <div className="text-xs font-normal normal-case text-slate-400 dark:text-slate-500 mt-1">{t(`匯率手動維護（NT$/USD ${formDataB.usdRate}），記得定期更新`, `Exchange rate is manually maintained (NT$/USD ${formDataB.usdRate}) — remember to update it periodically`)}</div>
                   </div>
 
                   {(!showUsDetail && (mrZoneInfo.zone === 'ZONE3' || mrZoneInfo.zone === 'DANGER')) ? (
@@ -1867,11 +1870,15 @@ Ask this box before you withdraw.`
                     </div>
                   ) : (
                     <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-300 dark:border-rose-800 text-sm text-rose-700 dark:text-rose-400 whitespace-pre-line font-bold">
-{`⚠️ 這筆錢不是子彈。
+{t(`⚠️ 這筆錢不是子彈。
 崩盤時它會極度誘人——但崩盤與失業高度相關。
 抄底抄到一半失業，月付繳不出，聯徵掛了，
 那次抄底的獲利，遠遠賠不起你毀掉的信用。
-先築牆，再進攻。`}
+先築牆，再進攻。`, `⚠️ This money is not ammo.
+It will be extremely tempting during a crash — but crashes correlate heavily with layoffs.
+Buy the dip halfway, lose your job, miss a payment, wreck your credit score,
+and that dip's profit won't come close to covering the credit you destroyed.
+Build the wall first. Attack second.`)}
                     </div>
                   )}
                 </div>
@@ -3431,6 +3438,7 @@ Ask this box before you withdraw.`
         return 'light';
       });
       const [isEng, setIsEng] = useState(safeGetStorage('fos_lang', 'false') === 'true');
+      const t = (zh, en) => isEng ? en : zh;
       const [activeTab, setActiveTab] = useState(safeGetStorage('app_active_tab', 'asset'));
       const [appReady, setAppReady] = useState(false);
       const [assetPrefill, setAssetPrefill] = useState(null);
@@ -3487,7 +3495,7 @@ Ask this box before you withdraw.`
           <div className="app-tabbar px-4 md:px-10 py-4 flex items-center justify-between gap-4 flex-wrap">
             <div className="flex items-center gap-2 md:gap-4">
               <span className="text-sm sm:text-xl md:text-2xl font-black tracking-tighter text-slate-800 dark:text-amber-400 font-mono select-none mr-1 sm:mr-2 hidden sm:inline">⌘ UNIFIED</span><span className="text-sm font-black text-slate-800 dark:text-amber-400 font-mono select-none mr-1 sm:hidden">⌘</span>
-              <button onClick={() => setActiveTab('asset')} className={`${tabBase} ${activeTab === 'asset' ? tabActive : tabIdle}`}>總資產 ASSET</button>
+              <button onClick={() => setActiveTab('asset')} className={`${tabBase} ${activeTab === 'asset' ? tabActive : tabIdle}`}>{t('總資產 ASSET', 'ASSET')}</button>
               <button onClick={() => setActiveTab('fos')} className={`${tabBase} ${activeTab === 'fos' ? tabActive : tabIdle}`}>FOS BOSS</button>
             </div>
             <div className="flex items-center gap-2 sm:gap-3">
@@ -3495,14 +3503,14 @@ Ask this box before you withdraw.`
                 <div className="flex items-stretch rounded-xl sm:rounded-2xl border border-cyan-500/50 dark:border-cyan-400/50 bg-white dark:bg-slate-800 overflow-hidden shadow-sm">
                   <button
                     onClick={handleForceRefresh}
-                    title={`強制刷新（版本時間：${APP_VERSION}）`}
+                    title={t(`強制刷新（版本時間：${APP_VERSION}）`, `Force refresh (build: ${APP_VERSION})`)}
                     className="px-3 sm:px-4 py-1.5 sm:py-2.5 text-sm sm:text-base font-bold text-cyan-600 dark:text-cyan-400 hover:-translate-y-0.5 transition-all"
                   >
-                    🔄<span className="hidden sm:inline"> 強制刷新</span>
+                    🔄<span className="hidden sm:inline"> {t('強制刷新', 'REFRESH')}</span>
                   </button>
                   <button
                     onClick={() => setShowRefreshHelp(true)}
-                    title="畫面顯示舊資料？點我看排解步驟"
+                    title={t('畫面顯示舊資料？點我看排解步驟', 'Seeing stale data? Click for troubleshooting steps')}
                     className="px-2 sm:px-2.5 py-1.5 sm:py-2.5 text-sm sm:text-base font-black text-cyan-600 dark:text-cyan-400 border-l border-cyan-500/50 dark:border-cyan-400/50 hover:-translate-y-0.5 transition-all"
                   >
                     ?
@@ -3512,12 +3520,12 @@ Ask this box before you withdraw.`
                   {APP_VERSION}
                 </div>
               </div>
-              <button onClick={() => setIsEng(!isEng)} className="px-3 sm:px-5 py-1.5 sm:py-2.5 rounded-xl sm:rounded-2xl text-sm sm:text-base font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:-translate-y-0.5 transition-all shadow-sm" title="FOS 語言切換">{isEng ? 'EN' : '中'}</button>
+              <button onClick={() => setIsEng(!isEng)} className="px-3 sm:px-5 py-1.5 sm:py-2.5 rounded-xl sm:rounded-2xl text-sm sm:text-base font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:-translate-y-0.5 transition-all shadow-sm" title={t('FOS 語言切換', 'Language toggle')}>{isEng ? 'EN' : '中'}</button>
               <button onClick={() => setTheme(isDark ? 'light' : 'dark')} className="px-3 sm:px-5 py-1.5 sm:py-2.5 rounded-xl sm:rounded-2xl text-sm sm:text-base font-bold border border-slate-200 dark:border-amber-500/40 bg-white dark:bg-slate-800 text-slate-600 dark:text-amber-400 hover:-translate-y-0.5 transition-all shadow-sm">
                 {isDark ? '☀️' : '🌙'}<span className="hidden sm:inline">{isDark ? ' DAY' : ' STEALTH'}</span>
               </button>
-              <button onClick={() => setShowPwGuide(true)} title="改密碼標準流程" className="px-3 sm:px-4 py-1.5 sm:py-2.5 rounded-xl sm:rounded-2xl text-sm sm:text-base font-bold border border-slate-200 dark:border-amber-500/40 bg-white dark:bg-slate-800 text-slate-600 dark:text-amber-400 hover:-translate-y-0.5 transition-all shadow-sm">
-                🔑<span className="hidden sm:inline"> 改密碼</span>
+              <button onClick={() => setShowPwGuide(true)} title={t('改密碼標準流程', 'Password change procedure')} className="px-3 sm:px-4 py-1.5 sm:py-2.5 rounded-xl sm:rounded-2xl text-sm sm:text-base font-bold border border-slate-200 dark:border-amber-500/40 bg-white dark:bg-slate-800 text-slate-600 dark:text-amber-400 hover:-translate-y-0.5 transition-all shadow-sm">
+                🔑<span className="hidden sm:inline"> {t('改密碼', 'CHANGE PW')}</span>
               </button>
             </div>
           </div>
@@ -3529,17 +3537,21 @@ Ask this box before you withdraw.`
                 className="fixed top-1/2 left-1/2 z-[1000] w-[90vw] max-w-sm sm:max-w-md -translate-x-1/2 -translate-y-1/2 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-amber-500/30 p-6 sm:p-8 font-mono max-h-[85vh] overflow-y-auto"
               >
                 <div className="flex items-center justify-between mb-4">
-                  <span className="text-lg sm:text-xl font-black tracking-wider text-slate-800 dark:text-amber-400">🔑 改密碼標準流程</span>
+                  <span className="text-lg sm:text-xl font-black tracking-wider text-slate-800 dark:text-amber-400">{t('🔑 改密碼標準流程', '🔑 Password Change Procedure')}</span>
                   <button onClick={() => setShowPwGuide(false)} className="text-slate-400 hover:text-slate-700 dark:hover:text-amber-300 text-xl leading-none">✕</button>
                 </div>
                 <div className="text-sm sm:text-base leading-relaxed text-slate-700 dark:text-slate-300 space-y-3 whitespace-pre-line">
-                  <p>密碼分存於兩個後台，改時「兩邊都要改」，缺一邊會導致資料讀不出來。</p>
-                  <p className="font-bold text-slate-800 dark:text-amber-400">步驟：</p>
-                  <p>1. 開啟 AMBER（總資產）GAS 專案 → 專案設定 ⚙️ → 指令碼屬性{"\n"}   → 修改 WRITE_SECRET 為新值</p>
-                  <p>2. 開啟 FOS（FOS BOSS）GAS 專案 → 同上路徑{"\n"}   → 將 WRITE_SECRET 改成「與 AMBER 完全相同」的新值</p>
-                  <p>3. 兩邊改完即時生效，不需重新部署</p>
-                  <p className="text-amber-600 dark:text-amber-400">⚠️ 備援碼（BACKUP_CODE）若要改，同樣兩邊都要改。</p>
-                  <p className="text-amber-600 dark:text-amber-400">⚠️ 兩邊的值必須一模一樣，否則其中一邊會驗證失敗。</p>
+                  <p>{t('密碼分存於兩個後台，改時「兩邊都要改」，缺一邊會導致資料讀不出來。', 'The password is stored in two separate backends. When changing it, you must update BOTH sides — missing either one will make data unreadable.')}</p>
+                  <p className="font-bold text-slate-800 dark:text-amber-400">{t('步驟：', 'Steps:')}</p>
+                  <p>{t(`1. 開啟 AMBER（總資產）GAS 專案 → 專案設定 ⚙️ → 指令碼屬性
+   → 修改 WRITE_SECRET 為新值`, `1. Open the AMBER (Asset) GAS project → Project Settings ⚙️ → Script Properties
+   → Change WRITE_SECRET to the new value`)}</p>
+                  <p>{t(`2. 開啟 FOS（FOS BOSS）GAS 專案 → 同上路徑
+   → 將 WRITE_SECRET 改成「與 AMBER 完全相同」的新值`, `2. Open the FOS (FOS BOSS) GAS project → same path as above
+   → Set WRITE_SECRET to the EXACT SAME new value as AMBER`)}</p>
+                  <p>{t('3. 兩邊改完即時生效，不需重新部署', '3. Both changes take effect immediately — no redeployment needed')}</p>
+                  <p className="text-amber-600 dark:text-amber-400">{t('⚠️ 備援碼（BACKUP_CODE）若要改，同樣兩邊都要改。', '⚠️ If you also change the BACKUP_CODE, it must be updated on both sides too.')}</p>
+                  <p className="text-amber-600 dark:text-amber-400">{t('⚠️ 兩邊的值必須一模一樣，否則其中一邊會驗證失敗。', '⚠️ The values on both sides must match exactly, or authentication will fail on one side.')}</p>
                 </div>
               </div>
             </React.Fragment>,
@@ -3553,13 +3565,13 @@ Ask this box before you withdraw.`
                 className="fixed top-1/2 left-1/2 z-[1000] w-[90vw] max-w-sm sm:max-w-md -translate-x-1/2 -translate-y-1/2 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-cyan-500/30 p-6 sm:p-8 font-mono max-h-[85vh] overflow-y-auto"
               >
                 <div className="flex items-center justify-between mb-4">
-                  <span className="text-lg sm:text-xl font-black tracking-wider text-slate-800 dark:text-cyan-400">🔄 畫面顯示舊資料？這樣排解</span>
+                  <span className="text-lg sm:text-xl font-black tracking-wider text-slate-800 dark:text-cyan-400">{t('🔄 畫面顯示舊資料？這樣排解', '🔄 Seeing Stale Data? Try This')}</span>
                   <button onClick={() => setShowRefreshHelp(false)} className="text-slate-400 hover:text-slate-700 dark:hover:text-cyan-300 text-xl leading-none">✕</button>
                 </div>
                 <div className="text-sm sm:text-base leading-relaxed text-slate-700 dark:text-slate-300 space-y-3 whitespace-pre-line">
-                  <p>① 按上方「強制刷新」按鈕</p>
-                  <p>② 改用一般 Safari 或 Chrome 開本站</p>
-                  <p>③ 若是 Dock / 主畫面捷徑仍卡住 → 刪掉捷徑，用一般 Safari 重新「加入 Dock」</p>
+                  <p>{t('① 按上方「強制刷新」按鈕', '① Click the "Force Refresh" button above')}</p>
+                  <p>{t('② 改用一般 Safari 或 Chrome 開本站', '② Open this site in a regular Safari or Chrome tab')}</p>
+                  <p>{t('③ 若是 Dock / 主畫面捷徑仍卡住 → 刪掉捷徑，用一般 Safari 重新「加入 Dock」', '③ If a Dock / Home Screen shortcut is still stuck → delete the shortcut, then re-add it via a regular Safari tab')}</p>
                 </div>
               </div>
             </React.Fragment>,
@@ -3570,7 +3582,7 @@ Ask this box before you withdraw.`
             <div className="fixed bottom-24 right-8 z-[9998]">
               <button
                 onClick={handleBackToTop}
-                title="回到頂部"
+                title={t('回到頂部', 'Back to top')}
                 className="tech-btn w-12 h-12 rounded-full bg-white dark:bg-slate-800 border border-cyan-500/50 dark:border-cyan-400/50 text-cyan-600 dark:text-cyan-400 flex items-center justify-center text-xl font-black shadow-lg hover:-translate-y-0.5 transition-all"
               >
                 ↑
