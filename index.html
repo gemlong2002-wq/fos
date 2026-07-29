@@ -274,7 +274,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/07/22 11:45';
+    const APP_VERSION = '2026/07/22 12:20';
 
     /* ===================================================================
        共用工具
@@ -1246,10 +1246,10 @@
 
                   {inputTab === 'A' ? (
                     <div className="space-y-5">
-                      <div><label className="block text-sm font-bold mb-1.5 text-slate-500 uppercase tracking-wider">L AMOUNT</label><input type="number" name="lAmount" value={formData.lAmount} onChange={handleInputChange} onKeyDown={handleEnterJump(aInputRefs, 0)} ref={el => aInputRefs.current[0] = el} className="w-full tech-input font-mono" placeholder="0" /></div>
+                      <div><label className="block text-sm font-bold mb-1.5 text-slate-500 uppercase tracking-wider">L AMOUNT</label><input type="number" inputMode="decimal" name="lAmount" value={formData.lAmount} onChange={handleInputChange} onKeyDown={handleEnterJump(aInputRefs, 0)} ref={el => aInputRefs.current[0] = el} className="w-full tech-input font-mono" placeholder="0" /></div>
                       <div className="grid grid-cols-2 gap-4">
-                        <div><label className="block text-sm font-bold mb-1.5 text-slate-500 uppercase tracking-wider">C 0050</label><input type="number" name="c0050" value={formData.c0050} onChange={handleInputChange} onKeyDown={handleEnterJump(aInputRefs, 1)} ref={el => aInputRefs.current[1] = el} className="w-full tech-input font-mono" placeholder="0" /></div>
-                        <div><label className="block text-sm font-bold mb-1.5 text-slate-500 uppercase tracking-wider">C 00733</label><input type="number" name="c00733" value={formData.c00733} onChange={handleInputChange} onKeyDown={handleEnterJump(aInputRefs, 2)} ref={el => aInputRefs.current[2] = el} className="w-full tech-input font-mono" placeholder="0" /></div>
+                        <div><label className="block text-sm font-bold mb-1.5 text-slate-500 uppercase tracking-wider">C 0050</label><input type="number" inputMode="decimal" name="c0050" value={formData.c0050} onChange={handleInputChange} onKeyDown={handleEnterJump(aInputRefs, 1)} ref={el => aInputRefs.current[1] = el} className="w-full tech-input font-mono" placeholder="0" /></div>
+                        <div><label className="block text-sm font-bold mb-1.5 text-slate-500 uppercase tracking-wider">C 00733</label><input type="number" inputMode="decimal" name="c00733" value={formData.c00733} onChange={handleInputChange} onKeyDown={handleEnterJump(aInputRefs, 2)} ref={el => aInputRefs.current[2] = el} className="w-full tech-input font-mono" placeholder="0" /></div>
                       </div>
 
                       <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
@@ -1257,11 +1257,11 @@
                         <div className="grid grid-cols-2 gap-4">
                           <div>
                             <label className="block text-xs font-bold mb-1 text-slate-400 uppercase">00675L</label>
-                            <input type="number" name="p1_00675L" value={formData.p1_00675L} onChange={handleInputChange} onKeyDown={handleEnterJump(aInputRefs, 3)} ref={el => aInputRefs.current[3] = el} className="w-full tech-input font-mono text-lg py-2 focus:border-violet-400 focus:shadow-[0_0_0_4px_rgba(139,92,246,0.15)] dark:focus:shadow-[0_0_0_4px_rgba(139,92,246,0.25)]" placeholder="0" />
+                            <input type="number" inputMode="decimal" name="p1_00675L" value={formData.p1_00675L} onChange={handleInputChange} onKeyDown={handleEnterJump(aInputRefs, 3)} ref={el => aInputRefs.current[3] = el} className="w-full tech-input font-mono text-lg py-2 focus:border-violet-400 focus:shadow-[0_0_0_4px_rgba(139,92,246,0.15)] dark:focus:shadow-[0_0_0_4px_rgba(139,92,246,0.25)]" placeholder="0" />
                           </div>
                           <div>
                             <label className="block text-xs font-bold mb-1 text-slate-400 uppercase">00631L</label>
-                            <input type="number" name="p1_00631L" value={formData.p1_00631L} onChange={handleInputChange} onKeyDown={handleEnterJump(aInputRefs, 4)} ref={el => aInputRefs.current[4] = el} className="w-full tech-input font-mono text-lg py-2 focus:border-violet-400 focus:shadow-[0_0_0_4px_rgba(139,92,246,0.15)] dark:focus:shadow-[0_0_0_4px_rgba(139,92,246,0.25)]" placeholder="0" />
+                            <input type="number" inputMode="decimal" name="p1_00631L" value={formData.p1_00631L} onChange={handleInputChange} onKeyDown={handleEnterJump(aInputRefs, 4)} ref={el => aInputRefs.current[4] = el} className="w-full tech-input font-mono text-lg py-2 focus:border-violet-400 focus:shadow-[0_0_0_4px_rgba(139,92,246,0.15)] dark:focus:shadow-[0_0_0_4px_rgba(139,92,246,0.25)]" placeholder="0" />
                           </div>
                         </div>
                         <div className="text-right mt-2 text-xs font-bold text-slate-500 dark:text-slate-400 tracking-wider">
@@ -1274,7 +1274,7 @@
                     <div className="space-y-5">
                       <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 bg-slate-50 dark:bg-slate-800 p-3 rounded-2xl border border-slate-200 dark:border-slate-700">
                          <span className="font-bold text-sm text-slate-500 dark:text-slate-400 uppercase">USD RATE</span>
-                         <input type="number" name="usdRate" value={formDataB.usdRate} onChange={handleInputBChange} onKeyDown={handleEnterJump(bInputRefs, 0)} ref={el => bInputRefs.current[0] = el} className="w-full sm:w-24 tech-input text-base p-1 text-center font-mono" />
+                         <input type="number" inputMode="decimal" name="usdRate" value={formDataB.usdRate} onChange={handleInputBChange} onKeyDown={handleEnterJump(bInputRefs, 0)} ref={el => bInputRefs.current[0] = el} className="w-full sm:w-24 tech-input text-base p-1 text-center font-mono" />
                       </div>
 
                       {/* 截圖辨識上傳 */}
@@ -1299,7 +1299,7 @@
                         {[{name:'tsla',label:'TSLA'},{name:'spcx',label:'SPCX'},{name:'qld',label:'QLD'}].map((f, fIdx) => (
                           <div key={f.name} className="relative">
                             <label className="block text-xs font-bold mb-1 text-slate-500 dark:text-slate-400">{f.label}</label>
-                            <input type="number" name={f.name} value={formDataB[f.name]} onChange={handleInputBChange} onKeyDown={handleEnterJump(bInputRefs, fIdx + 1)} ref={el => bInputRefs.current[fIdx + 1] = el} className={`w-full tech-input text-lg py-2 font-mono ${aiFields[f.name] ? 'ring-2 ring-violet-400 ring-offset-1 dark:ring-offset-slate-900' : ''}`} placeholder="0" />
+                            <input type="number" inputMode="decimal" name={f.name} value={formDataB[f.name]} onChange={handleInputBChange} onKeyDown={handleEnterJump(bInputRefs, fIdx + 1)} ref={el => bInputRefs.current[fIdx + 1] = el} className={`w-full tech-input text-lg py-2 font-mono ${aiFields[f.name] ? 'ring-2 ring-violet-400 ring-offset-1 dark:ring-offset-slate-900' : ''}`} placeholder="0" />
                             {aiFields[f.name] && <span className="absolute top-0 right-1 text-[10px] font-black text-violet-500 bg-violet-100 dark:bg-violet-900/50 px-1.5 py-0.5 rounded-bl-lg rounded-tr-xl">AI</span>}
                           </div>
                         ))}
@@ -1307,12 +1307,12 @@
                       <div className="grid grid-cols-2 gap-4">
                         <div className="relative">
                           <label className="block text-sm font-bold mb-1 text-sky-500 dark:text-sky-400">ETH</label>
-                          <input type="number" name="eth" value={formDataB.eth} onChange={handleInputBChange} onKeyDown={handleEnterJump(bInputRefs, 4)} ref={el => bInputRefs.current[4] = el} className={`w-full tech-input font-mono ${aiFields.eth ? 'ring-2 ring-violet-400 ring-offset-1 dark:ring-offset-slate-900' : 'focus:border-sky-400'}`} placeholder="0" />
+                          <input type="number" inputMode="decimal" name="eth" value={formDataB.eth} onChange={handleInputBChange} onKeyDown={handleEnterJump(bInputRefs, 4)} ref={el => bInputRefs.current[4] = el} className={`w-full tech-input font-mono ${aiFields.eth ? 'ring-2 ring-violet-400 ring-offset-1 dark:ring-offset-slate-900' : 'focus:border-sky-400'}`} placeholder="0" />
                           {aiFields.eth && <span className="absolute top-0 right-1 text-[10px] font-black text-violet-500 bg-violet-100 dark:bg-violet-900/50 px-1.5 py-0.5 rounded-bl-lg rounded-tr-xl">AI</span>}
                         </div>
                         <div className="relative">
                           <label className="block text-sm font-bold mb-1 text-amber-500 dark:text-amber-400">BTC</label>
-                          <input type="number" name="btc" value={formDataB.btc} onChange={handleInputBChange} onKeyDown={handleEnterJump(bInputRefs, 5)} ref={el => bInputRefs.current[5] = el} className={`w-full tech-input font-mono ${aiFields.btc ? 'ring-2 ring-violet-400 ring-offset-1 dark:ring-offset-slate-900' : 'focus:border-amber-400'}`} placeholder="0" />
+                          <input type="number" inputMode="decimal" name="btc" value={formDataB.btc} onChange={handleInputBChange} onKeyDown={handleEnterJump(bInputRefs, 5)} ref={el => bInputRefs.current[5] = el} className={`w-full tech-input font-mono ${aiFields.btc ? 'ring-2 ring-violet-400 ring-offset-1 dark:ring-offset-slate-900' : 'focus:border-amber-400'}`} placeholder="0" />
                           {aiFields.btc && <span className="absolute top-0 right-1 text-[10px] font-black text-violet-500 bg-violet-100 dark:bg-violet-900/50 px-1.5 py-0.5 rounded-bl-lg rounded-tr-xl">AI</span>}
                         </div>
                       </div>
