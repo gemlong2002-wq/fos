@@ -274,7 +274,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/07/22 12:20';
+    const APP_VERSION = '2026/07/22 13:40';
 
     /* ===================================================================
        共用工具
@@ -3003,22 +3003,35 @@ Build the wall first. Attack second.`)}
                                                     <span className="text-2xl md:text-3xl font-mono font-extrabold text-rose-600 dark:text-rose-400 whitespace-nowrap vibe-hover-text">
                                                         <span>▼ -</span>{athDeficitAmt.toLocaleString()}
                                                     </span>
-                                                    <span className="text-sm font-mono font-bold text-rose-500/70 vibe-hover-text">MDD: -{athDeficitPct.toFixed(2)}%</span>
+                                                    <span className="text-sm font-mono font-bold text-rose-500/70 vibe-hover-text">距高點: -{athDeficitPct.toFixed(2)}%</span>
                                                 </div>
                                                 <div className="w-full bg-slate-200 dark:bg-slate-800/80 h-3 rounded overflow-hidden shadow-inner relative mt-1 mb-1">
                                                     <div className="bg-gradient-to-r from-rose-500 to-amber-500 h-full transition-all duration-1000" style={{ width: ((totalAssets / (ath || 1)) * 100) + "%" }}></div>
                                                 </div>
                                                 <div className="flex justify-between text-[10px] font-mono font-bold text-slate-500 dark:text-amber-500/70 mt-1">
                                                     <span>INTEGRITY: {((totalAssets / (ath || 1)) * 100).toFixed(1)}%</span>
-                                                    <span>RECOVERY: +{((athDeficitAmt / (totalAssets || 1)) * 100).toFixed(1)}%</span>
+                                                    <span>回補需漲: +{((athDeficitAmt / (totalAssets || 1)) * 100).toFixed(1)}%</span>
                                                 </div>
                                             </Fragment>
                                         )}
                                     </div>
-                                    <div className={"absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 flex flex-col justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl " + (isATH ? "border-cyan-500 dark:border-cyan-400/30" : "border-rose-500 dark:border-rose-500/30")}>
+                                    <div className={"absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 flex flex-col justify-start opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl overflow-y-auto " + (isATH ? "border-cyan-500 dark:border-cyan-400/30" : "border-rose-500 dark:border-rose-500/30")}>
                                         <span className="text-cyan-600 dark:text-cyan-400 text-lg font-bold tracking-widest mb-1">[ARMOR_STATUS]</span>
                                         <span className="text-slate-600 dark:text-cyan-200/80 text-sm md:text-base font-semibold leading-tight">
-                                            {isATH ? <span>裝甲完好。突破天際，顯示碾壓舊歷史高點的動能金額。</span> : <span>裝甲受損。顯示重返歷史榮耀所需的相對漲幅與當前資本血量。</span>}
+                                            {isATH ? <span>裝甲完好。突破天際，顯示碾壓舊歷史高點的動能金額。</span> : (
+                                                <div className="space-y-2">
+                                                    <div>▼ 金額：現在距離歷史最高點還差多少錢</div>
+                                                    <div>距高點：現在比歷史最高點低多少 %
+                                                        <div className="text-xs font-normal opacity-60 mt-0.5 leading-snug">（算的是「高點→今天」，不是「高點→歷史谷底」，所以不等於金融學定義的最大回撤 MDD）</div>
+                                                    </div>
+                                                    <div>回補需漲：還要再漲多少 % 才能回到歷史最高點
+                                                        <div className="text-xs font-normal opacity-60 mt-0.5 leading-snug">（跌 22% 要漲 29% 才回本，這是複利數學）</div>
+                                                    </div>
+                                                    <div>INTEGRITY：現值占歷史最高點的比例
+                                                        <div className="text-xs font-normal opacity-60 mt-0.5 leading-snug">（= 100% 減去「距高點」，兩者是同一件事的兩面）</div>
+                                                    </div>
+                                                </div>
+                                            )}
                                         </span>
                                     </div>
                                 </div>
