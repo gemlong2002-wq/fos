@@ -274,7 +274,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/07/22 13:40';
+    const APP_VERSION = '2026/07/22 14:30';
 
     /* ===================================================================
        共用工具
@@ -2187,6 +2187,12 @@ Build the wall first. Attack second.`)}
         );
     };
 
+    // v12.8 — 本金進出排除清單（單一來源，「vs大盤累計超額」卡與「損益收益 P&L/YIELD」卡共用，避免兩份清單不同步）
+    // 排除已確認入金污染日：20250710（6月→7月跳幅含入金）、20250826（市場平卻+17.59%）、20250401（Boss確認之本金移出）
+    const EXCLUDED_CAPITAL_DATES = new Set(['20250710', '20250826', '20250401']);
+    // 自動偵測本金進出污染：總資產日對日變化絕對值 > 15% 視為資金進出而非真實投資損益
+    const CAPITAL_FLOW_THRESHOLD = 15; // %
+
     const AssetTerminal = ({ theme, assetPrefill, clearPrefill }) => {
         const tierConfigs = useMemo(() => {
             return compoundTargets.map((data, index) => {
@@ -2710,16 +2716,35 @@ Build the wall first. Attack second.`)}
 
         const timeShiftBaseAsset = targetRecords.length > 0 ? (Number(targetRecords[0].總資產) || 1) : 1;
         const timeShiftLatestAsset = targetRecords.length > 0 ? (Number(targetRecords[targetRecords.length - 1].總資產) || 0) : 0;
+        // dynamicPlAmt 維持「終點-起點」不變：這是「帳面變化」，刻意保留含資金進出的原始金額，正名見卡片標籤
         const dynamicPlAmt = targetRecords.length > 0 ? (timeShiftLatestAsset - timeShiftBaseAsset) : 0;
-        const dynamicGrowthPct = targetRecords.length > 0 && timeShiftBaseAsset > 0 ? ((timeShiftLatestAsset - timeShiftBaseAsset) / timeShiftBaseAsset) * 100 : 0;
+
+        // v12.8 — 純投資報酬（逐日複利連乘，排除本金進出污染），沿用「vs大盤累計超額」卡的 compoundResult 同一套邏輯與同一份
+        // EXCLUDED_CAPITAL_DATES / CAPITAL_FLOW_THRESHOLD（模組層級共用常數，不重新發明、不另建清單）
+        const cleanCompound = useMemo(() => {
+            let myFactor = 1, count = 0, excludedCount = 0;
+            targetRecords.forEach(item => {
+                const dateStr = String(item.日期).trim();
+                const alpha = item.bmAlpha; const mix = item.bmMix;
+                if (alpha == null || alpha === '' || mix == null || mix === '') return;
+                const a = Number(alpha); const m = Number(mix);
+                const totalAssetChangeAbs = Math.abs(a + m);
+                const isManualExcluded = EXCLUDED_CAPITAL_DATES.has(dateStr);
+                const isAutoExcluded = totalAssetChangeAbs > CAPITAL_FLOW_THRESHOLD;
+                if (isManualExcluded || isAutoExcluded) { excludedCount++; return; }
+                myFactor *= (1 + (a + m) / 100);
+                count++;
+            });
+            return { myFactor, count, excludedCount };
+        }, [targetRecords]);
+        // dynamicGrowthPct 改為「純投資報酬」：已排除本金進出污染的逐日複利連乘結果，不再是兩點式 (終點-起點)/起點
+        const dynamicGrowthPct = cleanCompound.count > 0 ? (cleanCompound.myFactor - 1) * 100 : 0;
 
         const { cagr, holdingYears, cagrWarning } = useMemo(() => {
             if (targetRecords.length < 2) return { cagr: 0, holdingYears: 0, cagrWarning: false };
             const firstData = targetRecords[0];
             const lastData = targetRecords[targetRecords.length - 1];
             const rawBegin = Number(firstData.總資產);
-            const beginAsset = rawBegin || 1;
-            const endAsset = Number(lastData.總資產) || 0;
 
             const firstDateObj = parseYMD(firstData.日期);
             const lastDateObj = parseYMD(lastData.日期);
@@ -2729,13 +2754,15 @@ Build the wall first. Attack second.`)}
             let days = rawDays;
             if (days <= 0) days = 1;
 
-            const warn = (!rawBegin || rawBegin <= 0) || (rawDays <= 0);
+            const warn = (!rawBegin || rawBegin <= 0) || (rawDays <= 0) || cleanCompound.count === 0;
 
             const years = days / 365.25;
-            const cagrValue = (Math.pow(endAsset / beginAsset, 1 / years) - 1) * 100;
+            // v12.8 — CAGR 連動：改用排除本金污染後的乾淨複利報酬率（cleanCompound.myFactor）年化，
+            // 不再用含污染的 endAsset/beginAsset 兩點式。年化期間(years)算法不變，仍是日期差/365.25。
+            const cagrValue = cleanCompound.count > 0 ? (Math.pow(cleanCompound.myFactor, 1 / years) - 1) * 100 : 0;
 
             return { cagr: cagrValue, holdingYears: years, cagrWarning: warn };
-        }, [targetRecords]);
+        }, [targetRecords, cleanCompound]);
 
         const extremesCalc = useMemo(() => {
             if (targetRecords.length === 0) return { h: 0, hDate: '--', l: 0, lDate: '--' };
@@ -3044,16 +3071,23 @@ Build the wall first. Attack second.`)}
                                 </div>
                                 <div className="group relative flex-grow cursor-crosshair">
                                     <div className={"absolute inset-0 px-5 pb-4 flex flex-col justify-center border-l-[6px] transition-all duration-300 group-hover:opacity-0 group-hover:scale-95 bg-slate-50/50 dark:bg-slate-900/50 " + (dynamicPlAmt >= 0 ? "border-blue-500 dark:border-amber-500" : "border-rose-500")}>
+                                        <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-0.5">帳面變化（含存提款）</span>
                                         <span className={"text-3xl md:text-4xl font-mono font-extrabold leading-none mb-3 whitespace-nowrap vibe-hover-text " + (dynamicPlAmt >= 0 ? "text-blue-600 dark:text-amber-400" : "text-rose-600 dark:text-rose-400")}>
                                             {dynamicPlAmt >= 0 ? <span>▲ +</span> : <span>▼ </span>}{Math.abs(dynamicPlAmt).toLocaleString()}
                                         </span>
                                         <span className={"text-2xl md:text-3xl font-mono font-bold whitespace-nowrap vibe-hover-text " + (growthIsPos ? "text-indigo-600 dark:text-blue-400" : "text-rose-600 dark:text-rose-400")}>
                                             {growthIsPos ? <span className="animate-rocket mr-1">🚀</span> : <span>⚠️ </span>}{growthIsPos ? <span>+</span> : null}{dynamicGrowthPct.toFixed(2)}%
                                         </span>
+                                        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-600 opacity-70">純投資報酬・已排除 {cleanCompound.excludedCount} 筆本金進出</span>
                                     </div>
-                                    <div className="absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 border-blue-500 dark:border-amber-500/30 flex flex-col justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl">
+                                    <div className="absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 border-blue-500 dark:border-amber-500/30 flex flex-col justify-start opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl overflow-y-auto">
                                         <span className="text-blue-600 dark:text-amber-500 text-lg font-bold tracking-widest mb-1">[PERFORMANCE_MATRIX]</span>
-                                        <span className="text-slate-600 dark:text-amber-300 text-sm md:text-base font-semibold leading-tight">綜合時空績效矩陣。連動全局年份，同步檢索期間內的絕對淨利與相對增幅。</span>
+                                        <span className="text-slate-600 dark:text-amber-300 text-sm md:text-base font-semibold leading-tight">
+                                            <div className="space-y-2">
+                                                <div>金額：終點與起點的帳面差額，<span className="font-normal opacity-70">含期間內的存款/提款，不是純投資損益</span></div>
+                                                <div>百分比：純投資報酬，<span className="font-normal opacity-70">逐日複利連乘，已排除本金進出污染（已排除 {cleanCompound.excludedCount} 筆）</span></div>
+                                            </div>
+                                        </span>
                                     </div>
                                 </div>
                             </div>
@@ -3070,9 +3104,14 @@ Build the wall first. Attack second.`)}
                                             {cagrWarning && <span className="ml-2 text-amber-500 cursor-help text-2xl" title="資料不足或異常，此數字不可靠（起始資產為0或日期區間過短）">⚠️</span>}
                                         </span>
                                     </div>
-                                    <div className={"absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 flex flex-col justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl " + (cagrIsPos ? "border-indigo-500 dark:border-blue-500/30" : "border-rose-500 dark:border-rose-500/30")}>
+                                    <div className={"absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 flex flex-col justify-start opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl overflow-y-auto " + (cagrIsPos ? "border-indigo-500 dark:border-blue-500/30" : "border-rose-500 dark:border-rose-500/30")}>
                                         <span className="text-indigo-600 dark:text-blue-400 text-lg font-bold tracking-widest mb-1">[COMPOUND_YIELD]</span>
-                                        <span className="text-slate-600 dark:text-blue-200/80 text-sm md:text-base font-semibold leading-tight">真實年化複利。將期間總增幅依據實際在市天數進行年化權重換算。</span>
+                                        <span className="text-slate-600 dark:text-blue-200/80 text-sm md:text-base font-semibold leading-tight">
+                                            <div className="space-y-2">
+                                                <div>用「排除本金進出污染後」的乾淨報酬率年化，<span className="font-normal opacity-70">不是用含存提款的帳面總資產去算</span></div>
+                                                <div>年化期間 [{holdingYears.toFixed(2)} YRS]：<span className="font-normal opacity-70">區間起訖日期差 ÷ 365.25，期間不足一年會被複利公式外推放大，數字僅供參考</span></div>
+                                            </div>
+                                        </span>
                                     </div>
                                 </div>
                             </div>
@@ -3238,12 +3277,9 @@ Build the wall first. Attack second.`)}
 
 
                             // 年度真實超額（複利路徑A：逐筆還原 myChange = Alpha+Mix 連乘，不受本金進出污染）
-                            // 排除已確認入金污染日：20250710（6月→7月跳幅含入金）、20250826（市場平卻+17.59%）、20250401（Boss確認之本金移出）
-                            const EXCLUDED_CAPITAL_DATES = new Set(['20250710', '20250826', '20250401']);
-                            // v12.7 — 自動偵測本金進出污染：總資產日對日變化絕對值 > 15% 視為資金進出而非真實投資損益。
+                            // EXCLUDED_CAPITAL_DATES / CAPITAL_FLOW_THRESHOLD 已提升到模組層級（與 P&L/YIELD 卡共用同一份，見檔案上方宣告）
                             // 沿用 commit 當下已算好的 myChange（= bmAlpha + bmMix，定義見 handleInputChange 提交邏輯 bmAlpha = myChange - mix），
                             // 不重新發明算法。手動清單（向後相容、供 Boss 未來手動覆寫）與自動偵測為 OR 關係，任一命中即排除，去重複只計一次。
-                            const CAPITAL_FLOW_THRESHOLD = 15; // %
                             const compoundResult = currentYearData.reduce((acc, item) => {
                                 const dateStr = String(item.日期).trim();
                                 const alpha = item.bmAlpha; const mix = item.bmMix;
