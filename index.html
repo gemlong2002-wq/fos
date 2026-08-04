@@ -274,7 +274,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/07/23 09:15';
+    const APP_VERSION = '2026/08/04 14:44';
 
     /* ===================================================================
        共用工具
@@ -556,6 +556,70 @@
         </div>
       );
     };
+
+    /* ===================================================================
+       v12.9 — 懸浮彈窗可拖曳（最小顆粒共用 hook，只回傳位移量，
+       四個彈窗各自的 JSX/定位邏輯完全不動，只在既有 style 上疊加 transform）
+       只做桌機滑鼠事件，不做觸控（手機彈窗本來就佔滿畫面，拖曳無意義）
+    =================================================================== */
+    function useDraggableOffset(headerRef, isOpen) {
+      const [offset, setOffset] = useState({ dx: 0, dy: 0 });
+      const offsetRef = useRef({ dx: 0, dy: 0 });
+      const draggingRef = useRef(false);
+      const startRef = useRef({ x: 0, y: 0 });
+      const justDraggedRef = useRef(false);
+
+      // 彈窗每次「重新打開」都重置位移（不記憶位置），靠 isOpen 從 false→true 的轉換觸發
+      useEffect(() => {
+        if (isOpen) {
+          offsetRef.current = { dx: 0, dy: 0 };
+          setOffset({ dx: 0, dy: 0 });
+        }
+      }, [isOpen]);
+
+      useEffect(() => {
+        if (!isOpen) return;
+        const header = headerRef.current;
+        if (!header) return;
+
+        const handleMouseDown = (e) => {
+          if (e.target.closest('button')) return; // 排除按鈕，避免✕關閉鈕被攔截
+          draggingRef.current = true;
+          startRef.current = { x: e.clientX - offsetRef.current.dx, y: e.clientY - offsetRef.current.dy };
+          e.preventDefault();
+        };
+        const handleMouseMove = (e) => {
+          if (!draggingRef.current) return;
+          const next = { dx: e.clientX - startRef.current.x, dy: e.clientY - startRef.current.y };
+          offsetRef.current = next;
+          setOffset(next);
+        };
+        const handleMouseUp = () => {
+          if (draggingRef.current) {
+            draggingRef.current = false;
+            justDraggedRef.current = true;
+            // 拖曳結束後緊接著的下一次 click 吞掉一次，避免滑鼠放開時剛好在遮罩上誤觸關閉
+            setTimeout(() => { justDraggedRef.current = false; }, 0);
+          }
+        };
+        const handleClickCapture = (e) => {
+          if (justDraggedRef.current) { e.stopPropagation(); }
+        };
+
+        header.addEventListener('mousedown', handleMouseDown);
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+        document.addEventListener('click', handleClickCapture, true); // capture階段，搶在遮罩 onClick 前面攔截
+        return () => {
+          header.removeEventListener('mousedown', handleMouseDown);
+          document.removeEventListener('mousemove', handleMouseMove);
+          document.removeEventListener('mouseup', handleMouseUp);
+          document.removeEventListener('click', handleClickCapture, true);
+        };
+      }, [headerRef, isOpen]);
+
+      return offset;
+    }
 
     /* ===================================================================
        FOS 子元件 (Boss Terminal v12.2)  — isDarkMode / isEng 由 AppShell 注入
@@ -2229,6 +2293,12 @@ Build the wall first. Attack second.`)}
         const [alphaPopover, setAlphaPopover] = useState(null);
         const [alphaPopoverPos, setAlphaPopoverPos] = useState(null);
 
+        // v12.9 — 懸浮彈窗拖曳：標題列 ref + 共用 hook，位置不記憶（isOpen 控制重置時機）
+        const destinyHeaderRef = useRef(null);
+        const destinyDragOffset = useDraggableOffset(destinyHeaderRef, showDestinyModal);
+        const alphaHeaderRef = useRef(null);
+        const alphaDragOffset = useDraggableOffset(alphaHeaderRef, !!alphaPopover);
+
         const [timeShiftYear, setTimeShiftYear] = useState('ALL_TIME');
 
         const lineChartRef = useRef(null);
@@ -2858,12 +2928,12 @@ Build the wall first. Attack second.`)}
                     <div
                         className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-amber-500/30 overflow-hidden"
                         style={alphaPopoverPos
-                            ? { position: 'fixed', left: alphaPopoverPos.left, top: alphaPopoverPos.top, width: 320, zIndex: 120 }
-                            : { position: 'fixed', left: '50%', top: '50%', transform: 'translate(-50%,-50%)', width: 'min(90vw,360px)', zIndex: 120 }
+                            ? { position: 'fixed', left: alphaPopoverPos.left + alphaDragOffset.dx, top: alphaPopoverPos.top + alphaDragOffset.dy, width: 320, zIndex: 120 }
+                            : { position: 'fixed', left: '50%', top: '50%', transform: `translate(calc(-50% + ${alphaDragOffset.dx}px), calc(-50% + ${alphaDragOffset.dy}px))`, width: 'min(90vw,360px)', zIndex: 120 }
                         }
                         onClick={e => e.stopPropagation()}
                     >
-                            <div className="flex justify-between items-center px-6 py-4 border-b border-slate-100 dark:border-amber-500/20">
+                            <div ref={alphaHeaderRef} className="flex justify-between items-center px-6 py-4 border-b border-slate-100 dark:border-amber-500/20 cursor-grab active:cursor-grabbing select-none">
                                 <div>
                                     <div className="text-sm font-mono uppercase tracking-wider font-extrabold text-slate-500 dark:text-cyan-500/80">📊 vs 大盤明細</div>
                                     <div className="text-xs font-mono text-slate-400 mt-0.5">{alphaPopover.date}</div>
@@ -2912,9 +2982,10 @@ Build the wall first. Attack second.`)}
                     <div className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto p-4 md:p-10" onClick={() => setShowDestinyModal(false)}>
                         <div
                             className="bg-white dark:bg-slate-900 p-8 rounded-2xl w-full max-w-[480px] max-h-[80vh] overflow-y-auto shadow-2xl border border-slate-200 dark:border-amber-500/30 modal-scroll my-8"
+                            style={{ transform: `translate(${destinyDragOffset.dx}px, ${destinyDragOffset.dy}px)` }}
                             onClick={e => e.stopPropagation()}
                         >
-                            <div className="flex justify-between items-center mb-6 border-b border-slate-100 dark:border-amber-500/20 pb-4 sticky top-0 bg-white dark:bg-slate-900 z-10">
+                            <div ref={destinyHeaderRef} className="flex justify-between items-center mb-6 border-b border-slate-100 dark:border-amber-500/20 pb-4 sticky top-0 bg-white dark:bg-slate-900 z-10 cursor-grab active:cursor-grabbing select-none">
                                 <h2 className="text-2xl font-black font-mono text-slate-800 dark:text-amber-500">DESTINY MATRIX (60 LEVELS)</h2>
                                 <button onClick={() => setShowDestinyModal(false)} className="text-slate-400 dark:text-amber-500/50 hover:text-slate-600 dark:hover:text-amber-400 font-bold text-3xl outline-none transition-colors">&times;</button>
                             </div>
@@ -3583,6 +3654,11 @@ Build the wall first. Attack second.`)}
       const [showPwGuide, setShowPwGuide] = useState(false);
       const [showRefreshHelp, setShowRefreshHelp] = useState(false);
       const [showBackToTop, setShowBackToTop] = useState(false);
+      // v12.9 — 懸浮彈窗拖曳：標題列 ref + 共用 hook，位置不記憶（isOpen 控制重置時機）
+      const pwGuideHeaderRef = useRef(null);
+      const pwGuideDragOffset = useDraggableOffset(pwGuideHeaderRef, showPwGuide);
+      const refreshHelpHeaderRef = useRef(null);
+      const refreshHelpDragOffset = useDraggableOffset(refreshHelpHeaderRef, showRefreshHelp);
 
       useEffect(() => {
         triggerRelock = () => setUnlocked(false);
@@ -3671,9 +3747,10 @@ Build the wall first. Attack second.`)}
             <React.Fragment>
               <div className="fixed inset-0 z-[999] bg-black/40" onClick={() => setShowPwGuide(false)} />
               <div
-                className="fixed top-1/2 left-1/2 z-[1000] w-[90vw] max-w-sm sm:max-w-md -translate-x-1/2 -translate-y-1/2 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-amber-500/30 p-6 sm:p-8 font-mono max-h-[85vh] overflow-y-auto"
+                className="fixed top-1/2 left-1/2 z-[1000] w-[90vw] max-w-sm sm:max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-amber-500/30 p-6 sm:p-8 font-mono max-h-[85vh] overflow-y-auto"
+                style={{ transform: `translate(calc(-50% + ${pwGuideDragOffset.dx}px), calc(-50% + ${pwGuideDragOffset.dy}px))` }}
               >
-                <div className="flex items-center justify-between mb-4">
+                <div ref={pwGuideHeaderRef} className="flex items-center justify-between mb-4 cursor-grab active:cursor-grabbing select-none">
                   <span className="text-lg sm:text-xl font-black tracking-wider text-slate-800 dark:text-amber-400">{t('🔑 改密碼標準流程', '🔑 Password Change Procedure')}</span>
                   <button onClick={() => setShowPwGuide(false)} className="text-slate-400 hover:text-slate-700 dark:hover:text-amber-300 text-xl leading-none">✕</button>
                 </div>
@@ -3699,9 +3776,10 @@ Build the wall first. Attack second.`)}
             <React.Fragment>
               <div className="fixed inset-0 z-[999] bg-black/40" onClick={() => setShowRefreshHelp(false)} />
               <div
-                className="fixed top-1/2 left-1/2 z-[1000] w-[90vw] max-w-sm sm:max-w-md -translate-x-1/2 -translate-y-1/2 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-cyan-500/30 p-6 sm:p-8 font-mono max-h-[85vh] overflow-y-auto"
+                className="fixed top-1/2 left-1/2 z-[1000] w-[90vw] max-w-sm sm:max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-cyan-500/30 p-6 sm:p-8 font-mono max-h-[85vh] overflow-y-auto"
+                style={{ transform: `translate(calc(-50% + ${refreshHelpDragOffset.dx}px), calc(-50% + ${refreshHelpDragOffset.dy}px))` }}
               >
-                <div className="flex items-center justify-between mb-4">
+                <div ref={refreshHelpHeaderRef} className="flex items-center justify-between mb-4 cursor-grab active:cursor-grabbing select-none">
                   <span className="text-lg sm:text-xl font-black tracking-wider text-slate-800 dark:text-cyan-400">{t('🔄 畫面顯示舊資料？這樣排解', '🔄 Seeing Stale Data? Try This')}</span>
                   <button onClick={() => setShowRefreshHelp(false)} className="text-slate-400 hover:text-slate-700 dark:hover:text-cyan-300 text-xl leading-none">✕</button>
                 </div>
