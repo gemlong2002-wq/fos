@@ -274,7 +274,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/05 10:55';
+    const APP_VERSION = '2026/08/05 11:04';
 
     /* ===================================================================
        共用工具
@@ -3079,7 +3079,7 @@ Build the wall first. Attack second.`)}
                                             ({momDeltaIsPos ? <span>+</span> : null}{momDeltaPct.toFixed(2)}%)
                                         </span>
                                     </div>
-                                    <div className="absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 border-emerald-500 flex flex-col justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl">
+                                    <div className="absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 border-emerald-500 flex flex-col justify-start opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl overflow-y-auto">
                                         <span className="text-emerald-600 dark:text-emerald-400 text-lg font-bold tracking-widest mb-1">[PULSE_SCAN]</span>
                                         <span className="text-slate-600 dark:text-emerald-200/80 text-sm md:text-base font-semibold leading-tight">
                                             <div className="space-y-2">
@@ -3226,7 +3226,7 @@ Build the wall first. Attack second.`)}
                                             <span className="text-2xl font-mono font-extrabold text-slate-700 dark:text-cyan-400 block vibe-hover-text">{timeShiftLatestAsset.toLocaleString()} TWD</span>
                                         </div>
                                     </div>
-                                    <div className="absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 border-violet-500 dark:border-cyan-500/30 flex flex-col justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl">
+                                    <div className="absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 border-violet-500 dark:border-cyan-500/30 flex flex-col justify-start opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl overflow-y-auto">
                                         <span className="text-violet-600 dark:text-cyan-400 text-lg font-bold tracking-widest mb-1">[TIME_SHIFT_LIMITS]</span>
                                         <span className="text-slate-600 dark:text-cyan-200/80 text-sm md:text-base font-semibold leading-tight">
                                             <div className="space-y-2">
@@ -3254,7 +3254,7 @@ Build the wall first. Attack second.`)}
                                         </span>
                                         <span className={"text-xl font-mono font-bold vibe-hover-text " + (velocityIsPos ? "text-amber-600/70 dark:text-yellow-500/70" : "text-rose-600/70 dark:text-rose-500/70")}>TWD / DAY</span>
                                     </div>
-                                    <div className={"absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 flex flex-col justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl " + (velocityIsPos ? "border-amber-500 dark:border-yellow-500/30" : "border-rose-500 dark:border-rose-500/30")}>
+                                    <div className={"absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 flex flex-col justify-start opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl overflow-y-auto " + (velocityIsPos ? "border-amber-500 dark:border-yellow-500/30" : "border-rose-500 dark:border-rose-500/30")}>
                                         <span className={"text-lg font-bold tracking-widest mb-1 " + (velocityIsPos ? "text-amber-600 dark:text-yellow-400" : "text-rose-600 dark:text-rose-400")}>[DAILY_PRINT_RATE]</span>
                                         <span className="text-slate-600 dark:text-yellow-200/80 text-sm md:text-base font-semibold leading-tight">
                                             <div className="space-y-2">
