@@ -274,7 +274,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/04 14:44';
+    const APP_VERSION = '2026/08/05 10:55';
 
     /* ===================================================================
        共用工具
@@ -3081,7 +3081,13 @@ Build the wall first. Attack second.`)}
                                     </div>
                                     <div className="absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 border-emerald-500 flex flex-col justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl">
                                         <span className="text-emerald-600 dark:text-emerald-400 text-lg font-bold tracking-widest mb-1">[PULSE_SCAN]</span>
-                                        <span className="text-slate-600 dark:text-emerald-200/80 text-sm md:text-base font-semibold leading-tight">單筆瞬態動能。與前次系統快照對比之絕對金額與增幅比例。</span>
+                                        <span className="text-slate-600 dark:text-emerald-200/80 text-sm md:text-base font-semibold leading-tight">
+                                            <div className="space-y-2">
+                                                <div>▼/▲ 金額：<span className="font-normal opacity-70">與前一筆記錄相比，總資產的變化金額</span></div>
+                                                <div>括號百分比：<span className="font-normal opacity-70">同上變化的百分比（分母為前一筆總資產）</span></div>
+                                                <div className="text-xs font-normal opacity-60 mt-0.5 leading-snug">註：比的是「前一筆記錄」，不是固定基準，若兩筆記錄相隔多日，這個差值涵蓋的是整段期間</div>
+                                            </div>
+                                        </span>
                                     </div>
                                 </div>
                             </div>
@@ -3181,13 +3187,17 @@ Build the wall first. Attack second.`)}
                                             {cagrIsPos ? <span className="animate-flame mr-1">🔥</span> : <span>❄️ </span>}{cagrIsPos ? <span>+</span> : null}{(isNaN(cagr) ? 0 : cagr).toFixed(2)}%
                                             {cagrWarning && <span className="ml-2 text-amber-500 cursor-help text-2xl" title="資料不足或異常，此數字不可靠（起始資產為0或日期區間過短）">⚠️</span>}
                                         </span>
+                                        {!cagrWarning && holdingYears < 1 && <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400 uppercase tracking-widest mt-1">⚠️ 短期年化，參考性低</span>}
                                     </div>
                                     <div className={"absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 flex flex-col justify-start opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl overflow-y-auto " + (cagrIsPos ? "border-indigo-500 dark:border-blue-500/30" : "border-rose-500 dark:border-rose-500/30")}>
                                         <span className="text-indigo-600 dark:text-blue-400 text-lg font-bold tracking-widest mb-1">[COMPOUND_YIELD]</span>
                                         <span className="text-slate-600 dark:text-blue-200/80 text-sm md:text-base font-semibold leading-tight">
                                             <div className="space-y-2">
                                                 <div>用「排除本金進出污染後」的乾淨報酬率年化，<span className="font-normal opacity-70">不是用含存提款的帳面總資產去算</span></div>
-                                                <div>年化期間 [{holdingYears.toFixed(2)} YRS]：<span className="font-normal opacity-70">區間起訖日期差 ÷ 365.25，期間不足一年會被複利公式外推放大，數字僅供參考</span></div>
+                                                <div>年化複利：<span className="font-normal opacity-70">把期間總報酬換算成「假設持續一整年」的速度</span>
+                                                    <div className="text-xs font-normal opacity-60 mt-0.5 leading-snug">⚠️ 期間不足一年時，這是數學外推，不代表真實年報酬。期間越短、外推失真越嚴重（例如 0.5 年賺 50%，年化會顯示約 125%，但那不是你真的賺到的）</div>
+                                                </div>
+                                                <div>年化期間 [{holdingYears.toFixed(2)} YRS]：<span className="font-normal opacity-70">區間起訖日期差 ÷ 365.25</span></div>
                                             </div>
                                         </span>
                                     </div>
@@ -3218,7 +3228,15 @@ Build the wall first. Attack second.`)}
                                     </div>
                                     <div className="absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 border-violet-500 dark:border-cyan-500/30 flex flex-col justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl">
                                         <span className="text-violet-600 dark:text-cyan-400 text-lg font-bold tracking-widest mb-1">[TIME_SHIFT_LIMITS]</span>
-                                        <span className="text-slate-600 dark:text-cyan-200/80 text-sm md:text-base font-semibold leading-tight">動態時空極限。連動全局年份，檢索指定期間內的資產最高、最低與期末餘額。</span>
+                                        <span className="text-slate-600 dark:text-cyan-200/80 text-sm md:text-base font-semibold leading-tight">
+                                            <div className="space-y-2">
+                                                <div>HIGH / LOW：<span className="font-normal opacity-70">選定範圍內總資產的最高／最低點與日期</span></div>
+                                                <div>期末結算（FINAL）：<span className="font-normal opacity-70">選定範圍內「最後一筆」的總資產</span>
+                                                    <div className="text-xs font-normal opacity-60 mt-0.5 leading-snug">⚠️ 切到過去年份時，顯示的是那年最後一筆，不是今天的資產；只有選 ALL_TIME 時才等於現在</div>
+                                                </div>
+                                                <div className="text-xs font-normal opacity-60 leading-snug">以上三者都跟隨上方 TIME_SYNC 年份選單連動</div>
+                                            </div>
+                                        </span>
                                     </div>
                                 </div>
                             </div>
@@ -3226,7 +3244,7 @@ Build the wall first. Attack second.`)}
                             <div className="relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card" onMouseMove={handleMouseMove}>
                                 <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
                                     <span className="text-slate-500 dark:text-yellow-500/80 text-sm md:text-base font-mono uppercase tracking-wider font-extrabold shrink-0 vibe-hover-text">資本流速 VELOCITY</span>
-                                    <span className="text-amber-600 dark:text-yellow-500/50 text-xs md:text-sm font-mono tracking-widest border border-amber-200 dark:border-yellow-500/30 px-2 py-1 rounded bg-amber-50 dark:bg-yellow-950/40 font-bold vibe-hover-text">[{opDays} OP_DAYS]</span>
+                                    <span className="text-amber-600 dark:text-yellow-500/50 text-xs md:text-sm font-mono tracking-widest border border-amber-200 dark:border-yellow-500/30 px-2 py-1 rounded bg-amber-50 dark:bg-yellow-950/40 font-bold vibe-hover-text">[{opDays} CAL_DAYS]</span>
                                 </div>
                                 <div className="group relative flex-grow cursor-crosshair">
                                     <div className={"absolute inset-0 px-5 pb-4 flex flex-col justify-center border-l-[6px] transition-all duration-300 group-hover:opacity-0 group-hover:scale-95 bg-slate-50/50 dark:bg-slate-900/50 " + (velocityIsPos ? "border-amber-500 dark:border-yellow-400" : "border-rose-500")}>
@@ -3238,7 +3256,14 @@ Build the wall first. Attack second.`)}
                                     </div>
                                     <div className={"absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 flex flex-col justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl " + (velocityIsPos ? "border-amber-500 dark:border-yellow-500/30" : "border-rose-500 dark:border-rose-500/30")}>
                                         <span className={"text-lg font-bold tracking-widest mb-1 " + (velocityIsPos ? "text-amber-600 dark:text-yellow-400" : "text-rose-600 dark:text-rose-400")}>[DAILY_PRINT_RATE]</span>
-                                        <span className="text-slate-600 dark:text-yellow-200/80 text-sm md:text-base font-semibold leading-tight">資本流速 (日均印鈔力)。連動全局年份，將期間總損益除以實際運作天數，顯示平均每天的絕對資金進出量。</span>
+                                        <span className="text-slate-600 dark:text-yellow-200/80 text-sm md:text-base font-semibold leading-tight">
+                                            <div className="space-y-2">
+                                                <div>TWD/DAY = <span className="font-normal opacity-70">期間總損益 ÷ 日曆天數</span></div>
+                                                <div>日曆天：<span className="font-normal opacity-70">範圍內第一筆到最後一筆的實際天數差</span>
+                                                    <div className="text-xs font-normal opacity-60 mt-0.5 leading-snug">⚠️ 包含完全沒有記錄的空白期，不是「有在操作的天數」；若中間長期沒記錄，日均會被空白期稀釋</div>
+                                                </div>
+                                            </div>
+                                        </span>
                                     </div>
                                 </div>
                             </div>
