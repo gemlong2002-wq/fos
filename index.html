@@ -274,7 +274,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/06 12:22';
+    const APP_VERSION = '2026/08/06 13:12';
 
     /* ===================================================================
        共用工具
@@ -2863,6 +2863,19 @@ Build the wall first. Attack second.`)}
         const extLow = extremesCalc.l;
         const extLowDate = extremesCalc.lDate;
 
+        // v12.10 — 區間定位 RANGE POSITION：沿用 EXTREMES 的 targetRecords/HIGH/LOW，不重新掃描資料
+        const rangePositionCalc = useMemo(() => {
+            if (targetRecords.length < 2) return { hasData: false };
+            const spanAmt = extHigh - extLow;
+            const gainFromLowPct = extLow > 0 ? ((timeShiftLatestAsset - extLow) / extLow) * 100 : null;
+            const positionPct = spanAmt > 0 ? ((timeShiftLatestAsset - extLow) / spanAmt) * 100 : null;
+            const highDateObj = parseYMD(extHighDate);
+            const lowDateObj = parseYMD(extLowDate);
+            const msPerDay = 1000 * 60 * 60 * 24;
+            const spanDays = Math.round(Math.abs((highDateObj - lowDateObj) / msPerDay));
+            return { hasData: true, spanAmt, gainFromLowPct, positionPct, spanDays };
+        }, [targetRecords, extHigh, extLow, extHighDate, extLowDate, timeShiftLatestAsset]);
+
         const { opDays, dailyVelocity } = useMemo(() => {
             if (targetRecords.length < 2) return { opDays: 1, dailyVelocity: 0 };
             const firstData = targetRecords[0];
@@ -3235,6 +3248,44 @@ Build the wall first. Attack second.`)}
                                                     <div className="text-xs font-normal opacity-60 mt-0.5 leading-snug">⚠️ 切到過去年份時，顯示的是那年最後一筆，不是今天的資產；只有選 ALL_TIME 時才等於現在</div>
                                                 </div>
                                                 <div className="text-xs font-normal opacity-60 leading-snug">以上三者都跟隨上方 TIME_SYNC 年份選單連動</div>
+                                            </div>
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card" onMouseMove={handleMouseMove}>
+                                <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
+                                    <span className="text-slate-500 dark:text-sky-500/80 text-sm md:text-base font-mono uppercase tracking-wider font-extrabold shrink-0 vibe-hover-text">區間定位 RANGE POSITION</span>
+                                    <span className="text-slate-400 dark:text-cyan-400/80 text-xs md:text-sm font-mono tracking-widest font-bold vibe-hover-text">[{timeShiftYear}]</span>
+                                </div>
+                                <div className="group relative flex-grow cursor-crosshair">
+                                    <div className="absolute inset-0 px-5 pb-4 flex flex-col justify-center border-l-[6px] border-teal-500 dark:border-sky-500 transition-all duration-300 group-hover:opacity-0 group-hover:scale-95 bg-slate-50/50 dark:bg-slate-900/50">
+                                        <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-0.5">距低點漲幅</span>
+                                        <span className="text-3xl md:text-4xl font-mono font-extrabold text-teal-600 dark:text-sky-400 whitespace-nowrap mb-1 vibe-hover-text">
+                                            {rangePositionCalc.hasData && rangePositionCalc.gainFromLowPct !== null ? (rangePositionCalc.gainFromLowPct >= 0 ? '+' : '') + rangePositionCalc.gainFromLowPct.toFixed(1) + '%' : 'N/A'}
+                                        </span>
+                                        <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400 font-bold mb-2">⚠️ 低點含本金移出，實際投資漲幅低於此</span>
+                                        <div className="w-full bg-slate-200 dark:bg-slate-800/80 h-2 rounded overflow-hidden shadow-inner mb-1">
+                                            <div className="bg-teal-500 dark:bg-sky-400 h-full transition-all duration-1000" style={{ width: (rangePositionCalc.hasData && rangePositionCalc.positionPct !== null ? Math.min(100, Math.max(0, rangePositionCalc.positionPct)) : 0) + "%" }}></div>
+                                        </div>
+                                        <div className="flex justify-between text-[10px] font-mono font-bold text-slate-500 dark:text-slate-400">
+                                            <span>位置: {rangePositionCalc.hasData && rangePositionCalc.positionPct !== null ? rangePositionCalc.positionPct.toFixed(1) + '%' : 'N/A'}</span>
+                                            <span>區間: {rangePositionCalc.hasData ? rangePositionCalc.spanAmt.toLocaleString() : 'N/A'}</span>
+                                        </div>
+                                        <div className="text-[10px] font-mono font-bold text-slate-400 dark:text-slate-500 mt-0.5">高低相隔: {rangePositionCalc.hasData ? (rangePositionCalc.spanDays >= 30 ? "約 " + Math.round(rangePositionCalc.spanDays / 30.44) + " 個月" : rangePositionCalc.spanDays + " 天") : 'N/A'}</div>
+                                    </div>
+                                    <div className="absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 border-teal-500 dark:border-sky-500/30 flex flex-col justify-start opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl overflow-y-auto">
+                                        <span className="text-teal-600 dark:text-sky-400 text-lg font-bold tracking-widest mb-1">[RANGE_SCAN]</span>
+                                        <span className="text-slate-600 dark:text-sky-200/80 text-sm md:text-base font-semibold leading-tight">
+                                            <div className="space-y-2">
+                                                <div>距低點漲幅：<span className="font-normal opacity-70">現值相對歷史最低點漲了多少%</span>
+                                                    <div className="text-xs font-normal opacity-60 mt-0.5 leading-snug">⚠️ 低點（{extLowDate}）含本金移出，谷底被壓低，此漲幅偏高，不等於純投資報酬</div>
+                                                </div>
+                                                <div>波動區間：<span className="font-normal opacity-70">歷史最高點 － 最低點，資產晃動的絕對幅度</span></div>
+                                                <div>目前位置：<span className="font-normal opacity-70">現值落在最低～最高區間的哪個位置（0%=谷底，100%=高點）</span></div>
+                                                <div>高低相隔：<span className="font-normal opacity-70">最低點到最高點之間經過多久</span></div>
+                                                <div className="text-xs font-normal opacity-60 leading-snug">以上皆隨上方 TIME_SYNC 年份選單連動</div>
                                             </div>
                                         </span>
                                     </div>
