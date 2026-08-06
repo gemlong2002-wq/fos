@@ -274,7 +274,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/05 11:04';
+    const APP_VERSION = '2026/08/06 12:22';
 
     /* ===================================================================
        共用工具
@@ -1180,8 +1180,8 @@
 
       const handleCopyReport = () => {
         const report = t(
-          `【A】\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} | P1: ${p1Ratio}%\n【美股固定比例分流 v12.4】\nTSLA ${(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}% | SPCX ${(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}% | QLD ${(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%\n燈號: ${mrZoneInfo.label} ${splitResult.frozen ? '→ 注資凍結' : '→ 放行'}\n【加密三態】\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n【現金護城河】CASH: ${formatNumber(cmCash)} | TARGET: ${cmHasTarget ? formatNumber(cmTarget) : '未設定月付'} | 進度: ${cmHasTarget ? cmProgressPct + '%' : '—'} | 狀態: ${cmStatus}`,
-          `[A]\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} | P1: ${p1Ratio}%\n[US EQUITY SPLIT v12.4]\nTSLA ${(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}% | SPCX ${(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}% | QLD ${(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%\nSignal: ${mrZoneInfo.label} ${splitResult.frozen ? '→ INJECTION FROZEN' : '→ RELEASED'}\n[CRYPTO 3-STATE]\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n[CASH MOAT] CASH: ${formatNumber(cmCash)} | TARGET: ${cmHasTarget ? formatNumber(cmTarget) : 'NOT SET'} | Progress: ${cmHasTarget ? cmProgressPct + '%' : '—'} | Status: ${cmStatus}`
+          `【A】\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)}（0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}） | P1: ${p1Ratio}%\n【美股固定比例分流 v12.4】\nTSLA ${(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}% | SPCX ${(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}% | QLD ${(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%\n燈號: ${mrZoneInfo.label} ${splitResult.frozen ? '→ 注資凍結' : '→ 放行'}\n【加密三態】\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n【現金護城河】CASH: ${formatNumber(cmCash)} | TARGET: ${cmHasTarget ? formatNumber(cmTarget) : '未設定月付'} | 進度: ${cmHasTarget ? cmProgressPct + '%' : '—'} | 狀態: ${cmStatus}`,
+          `[A]\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} (0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}) | P1: ${p1Ratio}%\n[US EQUITY SPLIT v12.4]\nTSLA ${(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}% | SPCX ${(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}% | QLD ${(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%\nSignal: ${mrZoneInfo.label} ${splitResult.frozen ? '→ INJECTION FROZEN' : '→ RELEASED'}\n[CRYPTO 3-STATE]\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n[CASH MOAT] CASH: ${formatNumber(cmCash)} | TARGET: ${cmHasTarget ? formatNumber(cmTarget) : 'NOT SET'} | Progress: ${cmHasTarget ? cmProgressPct + '%' : '—'} | Status: ${cmStatus}`
         );
         navigator.clipboard.writeText(report).then(() => setTerminalMsg('>> REPORT COPIED.')).catch(() => setTerminalMsg('>> COPY FAILED.'));
       };
