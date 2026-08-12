@@ -274,7 +274,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/06 13:12';
+    const APP_VERSION = '2026/08/12 09:57';
 
     /* ===================================================================
        共用工具
@@ -445,7 +445,7 @@
     =================================================================== */
     const DEFAULT_LEFT_ORDER = ['input', 'liquidity', 'passthrough', 'stress'];
     const DEFAULT_TOP_ORDER = ['mr', 'crash'];
-    const DEFAULT_BOTTOM_ORDER = ['balance', 'usEngine', 'crypto', 'radar', 'history', 'cashMoat'];
+    const DEFAULT_BOTTOM_ORDER = ['balance', 'usEngine', 'crypto', 'radar', 'history', 'cashMoat', 'allocationOrder'];
 
     const CARD_ORDER_KEYS = { left: 'fos:cardOrder:left', top: 'fos:cardOrder:top', bottom: 'fos:cardOrder:bottom' };
 
@@ -1164,7 +1164,8 @@
         crypto: t('加密三態', 'CRYPTO 3-STATE'),
         radar: t(`雷達(${radarRange === 'ALL' ? '全部' : `近${radarRange}筆`})`, `RADAR (${radarRange === 'ALL' ? 'ALL' : `LAST ${radarRange}`})`),
         history: t('歷史矩陣', 'HISTORY MATRIX'),
-        cashMoat: t('現金護城河', 'CASH MOAT')
+        cashMoat: t('現金護城河', 'CASH MOAT'),
+        allocationOrder: t('資金分配指令 ALLOCATION ORDER', 'ALLOCATION ORDER')
       };
       const cardIndexList = [...leftOrder, ...topOrder, ...bottomOrder].map(id => ({ id, title: cardTitles[id] }));
       const scrollToCard = (cardId) => {
@@ -1991,7 +1992,46 @@ Build the wall first. Attack second.`)}
                 </div>
               );
 
-              const bottomCards = { balance: cardBalance, usEngine: cardUsEngine, crypto: cardCrypto, radar: cardRadar, history: cardHistory, cashMoat: cardCashMoat };
+              // v12.10 — 資金分配指令(階段一)：以既有 p1Ratio 為觸發器，不新增計算來源
+              const p1RatioNum = parseFloat(p1Ratio) || 0;
+              const allocZoneKey = p1RatioNum < 24 ? 'low' : (p1RatioNum <= 30 ? 'mid' : 'high');
+              const allocZones = [
+                { key: 'low', range: '< 24%', label: t('100% 買 P1', '100% BUY P1'), colorBox: 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400' },
+                { key: 'mid', range: '24% ~ 30%', label: t('50% P1 / 50% 現金', '50% P1 / 50% CASH'), colorBox: 'bg-yellow-50 dark:bg-yellow-950/30 border-yellow-200 dark:border-yellow-800 text-yellow-600 dark:text-yellow-400' },
+                { key: 'high', range: '> 30%', label: t('100% 存現金', '100% CASH'), colorBox: 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400' }
+              ];
+              const allocCurrent = allocZones.find(z => z.key === allocZoneKey);
+
+              const cardAllocationOrder = (
+                <div className="tech-panel p-8">
+                  <h2 className="text-lg font-black uppercase text-slate-400 mb-4">{cardTitles.allocationOrder}</h2>
+                  <div className={`rounded-2xl p-6 text-center mb-4 border ${allocCurrent.colorBox}`}>
+                    <span className="text-3xl md:text-4xl font-black data-text inline-block break-words">{allocCurrent.label}</span>
+                    <div className="text-sm font-bold mt-2 opacity-80">P1 = {p1Ratio}% · {allocCurrent.range}</div>
+                  </div>
+                  <div className="space-y-2 mb-6">
+                    {allocZones.map(z => (
+                      <div key={z.key} className={`flex justify-between items-center px-4 py-2.5 rounded-xl border text-sm font-bold ${z.key === allocZoneKey ? 'bg-sky-50 dark:bg-sky-950/30 border-sky-300 dark:border-sky-700 text-sky-700 dark:text-sky-300' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-700 text-slate-400 dark:text-slate-500'}`}>
+                        <span className="font-mono">{z.range}</span>
+                        <span>{z.label}</span>
+                        {z.key === allocZoneKey ? <span className="text-xs">◀ {t('目前', 'NOW')}</span> : <span className="text-xs opacity-0">◀</span>}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed space-y-2 border-t border-slate-100 dark:border-slate-800 pt-4">
+                    <div className="font-bold text-slate-600 dark:text-slate-300">{t('這張卡回答：薪水結餘該投入 P1 還是存現金？', 'This card answers: should leftover salary go into P1 or into cash?')}</div>
+                    <div>{t('以 P1 佔比（P1/L）為觸發器，不看市場漲跌方向：', 'Triggered by the P1 ratio (P1/L), not by reading market direction:')}</div>
+                    <div>・{t('P1 < 24%：P1 被市場侵蝕，且價位處相對低位 → 全部買 P1', 'P1 < 24%: P1 is being eroded by the market and price is relatively low → buy 100% P1')}</div>
+                    <div>・{t('P1 24~30%：兩者皆不急 → 一半買 P1、一半存現金', 'P1 24–30%: neither is urgent → split 50% P1 / 50% cash')}</div>
+                    <div>・{t('P1 > 30%：市場會自行推升 P1 至 1/3，現金是市場永不代勞的 → 全部存現金', 'P1 > 30%: the market will keep pushing P1 toward 1/3 on its own — cash is the one thing the market never builds for you → 100% cash')}</div>
+                    <div className="font-bold text-slate-600 dark:text-slate-300 mt-2">{t('為什麼用 P1% 而不是判斷市場方向：', 'Why P1% instead of reading market direction:')}</div>
+                    <div>{t('P1% 已內含市場資訊（被侵蝕=下跌段、自行升高=上升段），這是對已發生數字的回應，不是對未來的預測，避免落入擇時。', "P1% already encodes market info (erosion = downtrend, self-rising = uptrend). This reacts to numbers that already happened, not a prediction of what's next — it avoids market timing.")}</div>
+                    <div className="opacity-70">{t('註：本指令只管「新資金往哪去」，不改變 P1 的 1/3 目標水位、6.06% 死線、350/330/310 燈號等既有條文。', 'Note: this directive only governs where new money goes — it does not change the 1/3 target for P1, the 6.06% death line, or the existing 350/330/310 signal rules.')}</div>
+                  </div>
+                </div>
+              );
+
+              const bottomCards = { balance: cardBalance, usEngine: cardUsEngine, crypto: cardCrypto, radar: cardRadar, history: cardHistory, cashMoat: cardCashMoat, allocationOrder: cardAllocationOrder };
 
               const expandedCardContent = expandedCard === 'passthrough' ? cardPassthrough : expandedCard === 'stress' ? cardStress : null;
 
