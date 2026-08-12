@@ -274,7 +274,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/12 09:57';
+    const APP_VERSION = '2026/08/12 10:23';
 
     /* ===================================================================
        共用工具
@@ -445,7 +445,7 @@
     =================================================================== */
     const DEFAULT_LEFT_ORDER = ['input', 'liquidity', 'passthrough', 'stress'];
     const DEFAULT_TOP_ORDER = ['mr', 'crash'];
-    const DEFAULT_BOTTOM_ORDER = ['balance', 'usEngine', 'crypto', 'radar', 'history', 'cashMoat', 'allocationOrder'];
+    const DEFAULT_BOTTOM_ORDER = ['balance', 'usEngine', 'crypto', 'radar', 'history', 'cashMoat', 'lcm', 'allocationOrder'];
 
     const CARD_ORDER_KEYS = { left: 'fos:cardOrder:left', top: 'fos:cardOrder:top', bottom: 'fos:cardOrder:bottom' };
 
@@ -1165,6 +1165,7 @@
         radar: t(`雷達(${radarRange === 'ALL' ? '全部' : `近${radarRange}筆`})`, `RADAR (${radarRange === 'ALL' ? 'ALL' : `LAST ${radarRange}`})`),
         history: t('歷史矩陣', 'HISTORY MATRIX'),
         cashMoat: t('現金護城河', 'CASH MOAT'),
+        lcm: t('流動性覆蓋 LCM', 'LIQUIDITY COVERAGE'),
         allocationOrder: t('資金分配指令 ALLOCATION ORDER', 'ALLOCATION ORDER')
       };
       const cardIndexList = [...leftOrder, ...topOrder, ...bottomOrder].map(id => ({ id, title: cardTitles[id] }));
@@ -1992,6 +1993,59 @@ Build the wall first. Attack second.`)}
                 </div>
               );
 
+              // v12.11 — 流動性覆蓋 LCM(階段二)：P1可用(扣死線)+現金 除以月付，沿用既有 P1/L/現金護城河欄位，不新增計算來源
+              const lcmDeathLine = L * 0.0606;
+              const lcmP1Available = Math.max(0, P1 - lcmDeathLine);
+              const lcmTotalLiquid = lcmP1Available + cmCash;
+              const lcmHasDebt = cmMonthlyDebt > 0;
+              const lcmMonths = lcmHasDebt ? (lcmTotalLiquid / cmMonthlyDebt) : null;
+              const lcmZoneKey = !lcmHasDebt ? 'na' : (lcmMonths >= 9 ? 'green' : (lcmMonths >= 6 ? 'yellow' : 'red'));
+              const lcmZoneStyles = {
+                green: { box: 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400', label: t('🟢 充足', '🟢 SUFFICIENT') },
+                yellow: { box: 'bg-yellow-50 dark:bg-yellow-950/30 border-yellow-200 dark:border-yellow-800 text-yellow-600 dark:text-yellow-400', label: t('🟡 留意', '🟡 WATCH') },
+                red: { box: 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400', label: t('🔴 啟動現金優先補充，暫停 P1 投入', '🔴 PRIORITIZE CASH, PAUSE P1 BUYS') },
+                na: { box: 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500', label: t('N/A（未設定月付）', 'N/A (MONTHLY_DEBT NOT SET)') }
+              };
+              const lcmStyle = lcmZoneStyles[lcmZoneKey];
+
+              const cardLcm = (
+                <div className="tech-panel p-8">
+                  <h2 className="text-lg font-black uppercase text-slate-400 mb-4">{cardTitles.lcm}</h2>
+                  <div className={`rounded-2xl p-6 text-center mb-4 border ${lcmStyle.box}`}>
+                    <span className="text-3xl md:text-4xl font-black data-text inline-block break-words">{lcmHasDebt ? lcmMonths.toFixed(2) : 'N/A'} {lcmHasDebt ? t('個月', 'MONTHS') : ''}</span>
+                    <div className="text-sm font-bold mt-2 opacity-80">{lcmStyle.label}</div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+                    <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                      <span className="text-sm font-bold text-slate-600 dark:text-slate-300">{t('P1 可用', 'P1 AVAILABLE')}</span>
+                      <span className="text-lg font-black font-mono text-slate-700 dark:text-slate-200">{formatNumber(lcmP1Available)}</span>
+                    </div>
+                    <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                      <span className="text-sm font-bold text-slate-600 dark:text-slate-300">{t('銀行現金', 'BANK CASH')}</span>
+                      <span className="text-lg font-black font-mono text-slate-700 dark:text-slate-200">{formatNumber(cmCash)}</span>
+                    </div>
+                    <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                      <span className="text-sm font-bold text-slate-600 dark:text-slate-300">{t('合計可變現', 'TOTAL LIQUID')}</span>
+                      <span className="text-lg font-black font-mono text-slate-700 dark:text-slate-200">{formatNumber(lcmTotalLiquid)}</span>
+                    </div>
+                    <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                      <span className="text-sm font-bold text-slate-600 dark:text-slate-300">{t('月付總額', 'MONTHLY DEBT')}</span>
+                      <span className="text-lg font-black font-mono text-slate-700 dark:text-slate-200">{lcmHasDebt ? formatNumber(cmMonthlyDebt) : t('未設定', 'NOT SET')}</span>
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-400 dark:text-slate-500 font-mono mb-4">{t(`P1 ${formatNumber(P1)} − 死線 ${formatNumber(lcmDeathLine)}（= L ${formatNumber(L)} × 6.06%）`, `P1 ${formatNumber(P1)} − Death Line ${formatNumber(lcmDeathLine)} (= L ${formatNumber(L)} × 6.06%)`)}</div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed space-y-2 border-t border-slate-100 dark:border-slate-800 pt-4">
+                    <div className="font-bold text-slate-600 dark:text-slate-300">{t('LCM = (P1可用 + 現金) ÷ 月付，回答「我的流動性能撐幾個月」', 'LCM = (P1 Available + Cash) ÷ Monthly Debt — answers "how many months can my liquidity cover?"')}</div>
+                    <div>{t('P1可用 = P1市值 − 死線（L × 6.06%）', 'P1 Available = P1 Market Value − Death Line (L × 6.06%)')}</div>
+                    <div>{t('死線以下的 P1 專用於防禦 MR 斷頭，不可當生活費，故不計入', 'The portion of P1 below the death line is reserved to defend against an MR margin call — it cannot be spent as living expenses, so it is excluded')}</div>
+                    <div className="font-bold text-slate-600 dark:text-slate-300 mt-2">{t('為何用 LCM 取代「現金絕對金額」判定：', 'Why LCM replaces a raw "cash amount" judgment:')}</div>
+                    <div>{t('P1 是不質押的可變現儲備（白皮書 Part 5.1），只看銀行現金會低估真實流動性', 'P1 is an unpledged, liquidatable reserve (Whitepaper Part 5.1) — looking only at bank cash understates true liquidity')}</div>
+                    <div className="opacity-90">⚠️ {t('與 WCI 卡的差異：WCI 的淨值只扣質押借款(L)；本卡的月付含全部債務(信貸/房貸/車貸等)。兩者對「債務」定義不同，並排看時請注意。', 'Difference from the WCI card: WCI\'s NAV only subtracts the pledged loan (L); this card\'s monthly debt includes ALL debt (credit loans/mortgage/car loan/etc). The two use different definitions of "debt" — be careful when viewing them side by side.')}</div>
+                    <div className="opacity-70">⚠️ {t('月付總額為手動輸入（沿用現金護城河 MONTHLY_DEBT 欄位），需隨負債變動更新。已知未來變動：房貸寬限期屆滿（推估約 2027/04）後月付將由 12,000 升至 27,000，屆時月付總額須上調，LCM 會相應下降。', 'Monthly debt total is manually entered (reuses the Cash Moat MONTHLY_DEBT field) and must be updated as debt changes. Known future change: after the mortgage grace period ends (estimated ~2027/04), the monthly payment will rise from 12,000 to 27,000 — the monthly debt total will need to be raised accordingly, and LCM will drop.')}</div>
+                  </div>
+                </div>
+              );
+
               // v12.10 — 資金分配指令(階段一)：以既有 p1Ratio 為觸發器，不新增計算來源
               const p1RatioNum = parseFloat(p1Ratio) || 0;
               const allocZoneKey = p1RatioNum < 24 ? 'low' : (p1RatioNum <= 30 ? 'mid' : 'high');
@@ -2031,7 +2085,7 @@ Build the wall first. Attack second.`)}
                 </div>
               );
 
-              const bottomCards = { balance: cardBalance, usEngine: cardUsEngine, crypto: cardCrypto, radar: cardRadar, history: cardHistory, cashMoat: cardCashMoat, allocationOrder: cardAllocationOrder };
+              const bottomCards = { balance: cardBalance, usEngine: cardUsEngine, crypto: cardCrypto, radar: cardRadar, history: cardHistory, cashMoat: cardCashMoat, lcm: cardLcm, allocationOrder: cardAllocationOrder };
 
               const expandedCardContent = expandedCard === 'passthrough' ? cardPassthrough : expandedCard === 'stress' ? cardStress : null;
 
