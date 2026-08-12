@@ -274,7 +274,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/12 15:07';
+    const APP_VERSION = '2026/08/12 15:22';
 
     /* ===================================================================
        共用工具
@@ -445,9 +445,10 @@
     =================================================================== */
     const DEFAULT_LEFT_ORDER = ['input', 'liquidity'];
     const DEFAULT_TOP_ORDER = ['crash'];
-    const DEFAULT_BOTTOM_ORDER = ['usEngine', 'crypto', 'radar', 'history', 'cashMoat'];
-    // v12.12 — mini zone：純顯示型卡片改AMBER小卡版型(h-44 grid)，收納自left/top/bottom搬遷的6張卡
-    const DEFAULT_MINI_ORDER = ['mr', 'balance', 'lcm', 'allocationOrder', 'passthrough', 'stress'];
+    const DEFAULT_BOTTOM_ORDER = ['usEngine', 'crypto', 'radar', 'history'];
+    // v12.12 — mini zone：純顯示型卡片改AMBER小卡版型(h-44 grid)，收納自left/top/bottom搬遷的卡片
+    // v12.13 — 現金護城河改「小卡摘要+彈窗輸入」比照passthrough/stress模式，一併搬進mini zone(與LCM同主題相鄰)
+    const DEFAULT_MINI_ORDER = ['mr', 'balance', 'lcm', 'allocationOrder', 'cashMoat', 'passthrough', 'stress'];
 
     const CARD_ORDER_KEYS = { left: 'fos:cardOrder:left', top: 'fos:cardOrder:top', bottom: 'fos:cardOrder:bottom', mini: 'fos:cardOrder:mini' };
 
@@ -1935,6 +1936,27 @@ Ask this box before you withdraw.`
               const cmProgressBarPct = cmHasTarget ? Math.min(100, Math.max(0, cmProgress * 100)) : 0;
               const cmMonthsLabel = `${cmMonths} ${t('個月', 'months')}`;
 
+              // v12.13 — mini zone小卡摘要：點擊開modal輸入(比照passthrough/stress)，計算/state/輸入邏輯完全不動
+              const cardCashMoatCollapsed = (
+                <div
+                  onClick={() => setExpandedCard('cashMoat')}
+                  className="relative rounded-xl overflow-hidden glass-card h-44 flex flex-col cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors"
+                >
+                  <div className="px-5 pt-4 pb-2 flex items-center gap-1.5 relative z-30">
+                    <span className={`w-2 h-2 rounded-full ${cmStyle.dot}`}></span>
+                    <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-extrabold shrink-0">{cardTitles.cashMoat}</span>
+                  </div>
+                  <div className="flex-grow px-5 pb-4 flex flex-col justify-center">
+                    <span className={`text-3xl font-black font-mono data-text ${cmStyle.text}`}>{cmHasTarget ? `${cmProgressPct}%` : '—'}</span>
+                    <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden mt-2">
+                      <div className={`h-full transition-all duration-300 ${cmStyle.bar}`} style={{ width: `${cmProgressBarPct}%` }}></div>
+                    </div>
+                    <span className={`text-xs font-black mt-2 px-2 py-0.5 rounded self-start ${cmStyle.badge}`}>{cmStatus}</span>
+                  </div>
+                </div>
+              );
+
+              // v12.13 — 以下為彈窗內容(modal)，與搬遷前的卡片內容byte-identical，只是改由expandedCardContent顯示於modal殼層，不再直接嵌在zone裡
               const cardCashMoat = (
                 <div className="tech-panel p-8">
                   <div className="flex justify-between items-center mb-6">
@@ -2096,10 +2118,10 @@ Build the wall first. Attack second.`)}
                 </div>
               );
 
-              const bottomCards = { usEngine: cardUsEngine, crypto: cardCrypto, radar: cardRadar, history: cardHistory, cashMoat: cardCashMoat };
-              const miniCards = { mr: cardMr, balance: cardBalance, lcm: cardLcm, allocationOrder: cardAllocationOrder, passthrough: cardPassthroughCollapsed, stress: cardStressCollapsed };
+              const bottomCards = { usEngine: cardUsEngine, crypto: cardCrypto, radar: cardRadar, history: cardHistory };
+              const miniCards = { mr: cardMr, balance: cardBalance, lcm: cardLcm, allocationOrder: cardAllocationOrder, cashMoat: cardCashMoatCollapsed, passthrough: cardPassthroughCollapsed, stress: cardStressCollapsed };
 
-              const expandedCardContent = expandedCard === 'passthrough' ? cardPassthrough : expandedCard === 'stress' ? cardStress : null;
+              const expandedCardContent = expandedCard === 'passthrough' ? cardPassthrough : expandedCard === 'stress' ? cardStress : expandedCard === 'cashMoat' ? cardCashMoat : null;
 
               return (
                 <Fragment>
