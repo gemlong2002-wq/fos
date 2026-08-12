@@ -274,7 +274,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/12 10:23';
+    const APP_VERSION = '2026/08/12 15:07';
 
     /* ===================================================================
        共用工具
@@ -443,11 +443,13 @@
        同一 zone 內互換順序；zone 間不互通（保留原本的欄位/寬度結構）
        v12.5 — 順序存 localStorage（這台機器的顯示偏好，刻意不跨裝置同步）
     =================================================================== */
-    const DEFAULT_LEFT_ORDER = ['input', 'liquidity', 'passthrough', 'stress'];
-    const DEFAULT_TOP_ORDER = ['mr', 'crash'];
-    const DEFAULT_BOTTOM_ORDER = ['balance', 'usEngine', 'crypto', 'radar', 'history', 'cashMoat', 'lcm', 'allocationOrder'];
+    const DEFAULT_LEFT_ORDER = ['input', 'liquidity'];
+    const DEFAULT_TOP_ORDER = ['crash'];
+    const DEFAULT_BOTTOM_ORDER = ['usEngine', 'crypto', 'radar', 'history', 'cashMoat'];
+    // v12.12 — mini zone：純顯示型卡片改AMBER小卡版型(h-44 grid)，收納自left/top/bottom搬遷的6張卡
+    const DEFAULT_MINI_ORDER = ['mr', 'balance', 'lcm', 'allocationOrder', 'passthrough', 'stress'];
 
-    const CARD_ORDER_KEYS = { left: 'fos:cardOrder:left', top: 'fos:cardOrder:top', bottom: 'fos:cardOrder:bottom' };
+    const CARD_ORDER_KEYS = { left: 'fos:cardOrder:left', top: 'fos:cardOrder:top', bottom: 'fos:cardOrder:bottom', mini: 'fos:cardOrder:mini' };
 
     /* 以程式碼的預設卡片清單為準做校驗：
        - localStorage 有、程式碼沒有的 id → 忽略（未來刪卡片時自動清掉）
@@ -778,6 +780,7 @@
       const [leftOrder, setLeftOrder] = useState(() => loadCardOrder('left', DEFAULT_LEFT_ORDER));
       const [topOrder, setTopOrder] = useState(() => loadCardOrder('top', DEFAULT_TOP_ORDER));
       const [bottomOrder, setBottomOrder] = useState(() => loadCardOrder('bottom', DEFAULT_BOTTOM_ORDER));
+      const [miniOrder, setMiniOrder] = useState(() => loadCardOrder('mini', DEFAULT_MINI_ORDER));
       const [dragInfo, setDragInfo] = useState({ zone: null, id: null, overId: null });
       const [sortMode, setSortMode] = useState(false);
 
@@ -795,6 +798,7 @@
         setLeftOrder([...DEFAULT_LEFT_ORDER]);
         setTopOrder([...DEFAULT_TOP_ORDER]);
         setBottomOrder([...DEFAULT_BOTTOM_ORDER]);
+        setMiniOrder([...DEFAULT_MINI_ORDER]);
       };
 
       // v12.4 — 崩盤指數：手動輸入當前大盤指數，不持久化（比照 betaConfig pattern）
@@ -1168,7 +1172,7 @@
         lcm: t('流動性覆蓋 LCM', 'LIQUIDITY COVERAGE'),
         allocationOrder: t('資金分配指令 ALLOCATION ORDER', 'ALLOCATION ORDER')
       };
-      const cardIndexList = [...leftOrder, ...topOrder, ...bottomOrder].map(id => ({ id, title: cardTitles[id] }));
+      const cardIndexList = [...leftOrder, ...topOrder, ...miniOrder, ...bottomOrder].map(id => ({ id, title: cardTitles[id] }));
       const scrollToCard = (cardId) => {
         const el = document.getElementById(cardId);
         if (!el) return;
@@ -1451,18 +1455,20 @@ Ask this box before you withdraw.`
               const stressNdxVerdict = t('極重，配置無法防禦', 'Severe — allocation cannot defend');
 
               // 收合狀態摘要列 — 點擊任何時候都能立刻開 modal，無任何解鎖門檻／if 條件包住開啟動作
+              // v12.12 — mini卡版型：改h-44固定高度、摘要內容不變，僅重排版；點擊開modal的行為與模態內容(cardPassthrough/cardStress)完全不動
               const cardPassthroughCollapsed = (
                 <div
                   onClick={() => setExpandedCard('passthrough')}
-                  className="tech-panel p-5 cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors"
+                  className="relative rounded-xl overflow-hidden glass-card h-44 flex flex-col cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors"
                 >
-                  <div className="text-sm font-black uppercase tracking-widest text-slate-600 dark:text-slate-300 flex items-center gap-2">
-                    <span>▶</span> {cardTitles.passthrough}
+                  <div className="px-5 pt-4 pb-2 flex items-center gap-2 relative z-30">
+                    <span className="text-slate-400">▶</span>
+                    <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-extrabold shrink-0">{cardTitles.passthrough}</span>
                   </div>
-                  <div className="mt-2 text-xs font-bold text-slate-500 dark:text-slate-400 flex items-center gap-2 flex-wrap">
-                    <span>{t('總曝險', 'TOTAL')} <span className={`font-mono text-sm ${overCap ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{(totalExposure * 100).toFixed(1)}%</span> {overCap ? '🔴' : ''}</span>
-                    <span className="text-slate-300 dark:text-slate-600">|</span>
-                    <span>{t('上限', 'CAP')} {(MUSK_EXPOSURE_CAP * 100).toFixed(0)}%</span>
+                  <div className="flex-grow px-5 pb-4 flex flex-col justify-center">
+                    <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-0.5">{t('總曝險', 'TOTAL EXPOSURE')}</span>
+                    <span className={`text-3xl font-mono font-extrabold ${overCap ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{(totalExposure * 100).toFixed(1)}% {overCap ? '🔴' : ''}</span>
+                    <span className="text-xs font-mono font-bold text-slate-400 mt-1">{t('上限', 'CAP')} {(MUSK_EXPOSURE_CAP * 100).toFixed(0)}%</span>
                   </div>
                 </div>
               );
@@ -1470,38 +1476,47 @@ Ask this box before you withdraw.`
               const cardStressCollapsed = (
                 <div
                   onClick={() => setExpandedCard('stress')}
-                  className="tech-panel p-5 cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors"
+                  className="relative rounded-xl overflow-hidden glass-card h-44 flex flex-col cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors"
                 >
-                  <div className="text-sm font-black uppercase tracking-widest text-slate-600 dark:text-slate-300 flex items-center gap-2">
-                    <span>▶</span> {cardTitles.stress}
+                  <div className="px-5 pt-4 pb-2 flex items-center gap-2 relative z-30">
+                    <span className="text-slate-400">▶</span>
+                    <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-extrabold shrink-0">{cardTitles.stress}</span>
                   </div>
-                  <div className="mt-2 text-xs font-bold text-slate-500 dark:text-slate-400">
-                    {t(`馬斯克 ${stressMuskDrop} / NDX −30% ${stressNdxVerdict}`, `Musk ${stressMuskDrop} / NDX −30% ${stressNdxVerdict}`)}
+                  <div className="flex-grow px-5 pb-4 flex flex-col justify-center gap-1">
+                    <span className="text-xs font-bold text-slate-500 dark:text-slate-400 leading-snug">{t(`馬斯克 ${stressMuskDrop}`, `Musk ${stressMuskDrop}`)}</span>
+                    <span className="text-xs font-bold text-slate-500 dark:text-slate-400 leading-snug">{t(`NDX −30%：${stressNdxVerdict}`, `NDX −30%: ${stressNdxVerdict}`)}</span>
                   </div>
                 </div>
               );
 
-              const leftCards = { input: cardInput, liquidity: cardLiquidity, passthrough: cardPassthroughCollapsed, stress: cardStressCollapsed };
+              const leftCards = { input: cardInput, liquidity: cardLiquidity };
 
+              // v12.12 — mini卡版型(比照AMBER h-44 glass-card + hover翻面)：計算邏輯不動，只改外層容器與排版
               const cardMr = (
-                  <div className={`tech-panel p-8 flex flex-col justify-between scale-card cursor-default overflow-hidden relative`}>
-                    <div className={`absolute top-0 right-0 w-32 h-32 blur-3xl opacity-20 -mr-10 -mt-10 rounded-full transition-colors ${mrZoneInfo.dot.split(' ')[0]}`}></div>
-                    <div className="flex justify-between items-start mb-4">
-                      <h2 className="text-lg font-black uppercase text-slate-400">{cardTitles.mr}</h2>
-                      <span className={`w-3 h-3 rounded-full ${mrZoneInfo.dot}`}></span>
+                <div className="relative rounded-xl overflow-hidden glass-card h-44 flex flex-col">
+                  <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
+                    <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-extrabold shrink-0">{cardTitles.mr}</span>
+                    <span className={`w-3 h-3 rounded-full ${mrZoneInfo.dot}`}></span>
+                  </div>
+                  <div className="group relative flex-grow cursor-crosshair">
+                    <div className="absolute inset-0 px-5 pb-4 flex flex-col justify-center bg-slate-50/50 dark:bg-slate-900/50 transition-all duration-300 group-hover:opacity-0 group-hover:scale-95">
+                      <span className={`text-3xl md:text-4xl font-black font-mono tracking-tight data-text break-words ${mrZoneInfo.text}`}>{nominalMR}%</span>
+                      <span className={`text-sm font-black uppercase mt-1 ${mrZoneInfo.text}`}>{mrZoneInfo.label}</span>
                     </div>
-
-                    <div className="flex-1 flex items-center justify-center py-6">
-                       <div className={`text-4xl sm:text-6xl md:text-7xl lg:text-8xl xl:text-9xl font-black font-mono tracking-tighter data-text data-text-massive break-words px-2 ${mrZoneInfo.text}`}>
-                         {nominalMR}%
-                       </div>
-                    </div>
-
-                    <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
-                      <div className="text-xs font-bold uppercase text-slate-400 tracking-widest">STATUS</div>
-                      <div className={`text-xl font-black uppercase mt-1 ${mrZoneInfo.text}`}>{mrZoneInfo.label}</div>
+                    <div className="absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 border-sky-500 dark:border-amber-500/30 flex flex-col justify-start opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl overflow-y-auto">
+                      <span className="text-sky-600 dark:text-amber-400 text-lg font-bold tracking-widest mb-1">[MR_ZONES]</span>
+                      <span className="text-slate-600 dark:text-slate-300 text-sm font-semibold leading-tight">
+                        <div className="space-y-1">
+                          <div>{t('≥ 350：ZONE 1（安全）', '≥ 350: ZONE 1 (safe)')}</div>
+                          <div>{t('330 ~ 349：ZONE 2（注資僅限股息）', '330–349: ZONE 2 (injection dividends-only)')}</div>
+                          <div>{t('310 ~ 329：ZONE 3（注資凍結）', '310–329: ZONE 3 (injection frozen)')}</div>
+                          <div>{t('< 310：DANGER（強制去槓桿）', '< 310: DANGER (forced deleverage)')}</div>
+                          <div className="text-xs font-normal opacity-60 mt-1">{t('目前狀態：', 'Current: ')}{mrZoneInfo.label}</div>
+                        </div>
+                      </span>
                     </div>
                   </div>
+                </div>
               );
 
               const currentIndexVal = parseFloat(crashIndexInput) || 0;
@@ -1557,31 +1572,28 @@ Ask this box before you withdraw.`
                   </div>
               );
 
-              const topCards = { mr: cardMr, crash: cardCrash };
+              const topCards = { crash: cardCrash };
 
+              // v12.12 — mini卡版型：DIFF/TARGET留在正面(主要行動指令)，P1 TACTICAL POOL明細移到背面，計算邏輯不動
               const cardBalance = (
-                <div className="tech-panel p-8">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div className="scale-card cursor-default">
-                      <h2 className="text-lg font-black uppercase text-slate-400 mb-4">{cardTitles.balance}</h2>
-                      <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4 flex justify-between items-center mb-3 border border-slate-100 dark:border-slate-700">
-                        <span className="text-sm font-bold text-slate-400 uppercase tracking-wider">DIFF</span>
-                        <span className="text-xl font-black font-mono text-slate-700 dark:text-slate-300 data-text">{formatNumber(diffValue)}</span>
-                      </div>
-                      <div className="bg-sky-50 dark:bg-sky-950/30 rounded-2xl p-5 flex justify-between items-center border border-sky-100 dark:border-sky-900/50">
-                        <span className="text-sm font-bold text-sky-500 dark:text-sky-400 uppercase tracking-wider">TARGET</span>
-                        <span className="text-3xl font-black text-sky-600 dark:text-sky-400 data-text">{targetInjection}</span>
-                      </div>
+                <div className="relative rounded-xl overflow-hidden glass-card h-44 flex flex-col">
+                  <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
+                    <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-extrabold shrink-0">{cardTitles.balance}</span>
+                  </div>
+                  <div className="group relative flex-grow cursor-crosshair">
+                    <div className="absolute inset-0 px-5 pb-4 flex flex-col justify-center bg-slate-50/50 dark:bg-slate-900/50 transition-all duration-300 group-hover:opacity-0 group-hover:scale-95">
+                      <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-0.5">TARGET</span>
+                      <span className="text-3xl font-black font-mono text-sky-600 dark:text-sky-400 data-text">{targetInjection}</span>
+                      <span className="text-sm font-bold font-mono text-slate-400 mt-1">DIFF {formatNumber(diffValue)}</span>
                     </div>
-                    <div className="scale-card cursor-default">
-                      <h2 className="text-lg font-black uppercase text-slate-400 mb-4">P1 TACTICAL POOL</h2>
-                      <div className={`rounded-2xl p-6 text-center mb-3 border ${parseFloat(p1Ratio) < 33.3 ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-100 dark:border-rose-900/50 text-rose-500' : 'bg-violet-50 dark:bg-violet-950/30 border-violet-100 dark:border-violet-900/50 text-violet-600 dark:text-violet-400'}`}>
-                        <span className="text-5xl font-black font-mono data-text inline-block break-words">{p1Ratio}%</span>
-                      </div>
-                      <div className="flex justify-between font-bold text-sm px-2 text-slate-400 font-mono">
-                         <span><span className="text-rose-400">DEATH:</span> {formatNumber(L*0.0606)}</span>
-                         <span><span className="text-emerald-400">1/3:</span> {formatNumber(L/3)}</span>
-                      </div>
+                    <div className="absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 border-sky-500 dark:border-amber-500/30 flex flex-col justify-start opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl overflow-y-auto">
+                      <span className="text-sky-600 dark:text-amber-400 text-lg font-bold tracking-widest mb-1">[P1_TACTICAL_POOL]</span>
+                      <span className="text-slate-600 dark:text-slate-300 text-sm font-semibold leading-tight">
+                        <div className="space-y-1">
+                          <div className={`text-2xl font-black font-mono ${parseFloat(p1Ratio) < 33.3 ? 'text-rose-500' : 'text-violet-600 dark:text-violet-400'}`}>{p1Ratio}%</div>
+                          <div className="text-xs font-normal opacity-70"><span className="text-rose-400 font-bold">DEATH:</span> {formatNumber(L*0.0606)}　<span className="text-emerald-400 font-bold">1/3:</span> {formatNumber(L/3)}</div>
+                        </div>
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -2008,40 +2020,35 @@ Build the wall first. Attack second.`)}
               };
               const lcmStyle = lcmZoneStyles[lcmZoneKey];
 
+              // v12.12 — mini卡版型：主數字+燈號留正面，明細+說明移到背面(hover展開)，計算邏輯完全不動
               const cardLcm = (
-                <div className="tech-panel p-8">
-                  <h2 className="text-lg font-black uppercase text-slate-400 mb-4">{cardTitles.lcm}</h2>
-                  <div className={`rounded-2xl p-6 text-center mb-4 border ${lcmStyle.box}`}>
-                    <span className="text-3xl md:text-4xl font-black data-text inline-block break-words">{lcmHasDebt ? lcmMonths.toFixed(2) : 'N/A'} {lcmHasDebt ? t('個月', 'MONTHS') : ''}</span>
-                    <div className="text-sm font-bold mt-2 opacity-80">{lcmStyle.label}</div>
+                <div className="relative rounded-xl overflow-hidden glass-card h-44 flex flex-col">
+                  <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
+                    <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-extrabold shrink-0">{cardTitles.lcm}</span>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
-                    <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
-                      <span className="text-sm font-bold text-slate-600 dark:text-slate-300">{t('P1 可用', 'P1 AVAILABLE')}</span>
-                      <span className="text-lg font-black font-mono text-slate-700 dark:text-slate-200">{formatNumber(lcmP1Available)}</span>
+                  <div className="group relative flex-grow cursor-crosshair">
+                    <div className="absolute inset-0 px-5 pb-4 flex flex-col justify-center bg-slate-50/50 dark:bg-slate-900/50 transition-all duration-300 group-hover:opacity-0 group-hover:scale-95">
+                      <span className="text-2xl md:text-3xl font-black data-text break-words">{lcmHasDebt ? lcmMonths.toFixed(2) : 'N/A'} {lcmHasDebt ? t('個月', 'MONTHS') : ''}</span>
+                      <span className={`text-sm font-bold mt-1 ${lcmZoneKey === 'green' ? 'text-emerald-600 dark:text-emerald-400' : lcmZoneKey === 'yellow' ? 'text-yellow-600 dark:text-yellow-400' : lcmZoneKey === 'red' ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'}`}>{lcmStyle.label}</span>
                     </div>
-                    <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
-                      <span className="text-sm font-bold text-slate-600 dark:text-slate-300">{t('銀行現金', 'BANK CASH')}</span>
-                      <span className="text-lg font-black font-mono text-slate-700 dark:text-slate-200">{formatNumber(cmCash)}</span>
+                    <div className="absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 border-sky-500 dark:border-amber-500/30 flex flex-col justify-start opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl overflow-y-auto">
+                      <span className="text-sky-600 dark:text-amber-400 text-lg font-bold tracking-widest mb-1">[LIQUIDITY_COVERAGE]</span>
+                      <span className="text-slate-600 dark:text-slate-300 text-sm font-semibold leading-tight">
+                        <div className="space-y-2">
+                          <div className="grid grid-cols-2 gap-1.5 text-xs font-mono">
+                            <div className="flex justify-between p-2 rounded bg-slate-50 dark:bg-slate-800/50"><span className="opacity-60">{t('P1可用', 'P1 AVAIL')}</span><span className="font-bold">{formatNumber(lcmP1Available)}</span></div>
+                            <div className="flex justify-between p-2 rounded bg-slate-50 dark:bg-slate-800/50"><span className="opacity-60">{t('現金', 'CASH')}</span><span className="font-bold">{formatNumber(cmCash)}</span></div>
+                            <div className="flex justify-between p-2 rounded bg-slate-50 dark:bg-slate-800/50"><span className="opacity-60">{t('合計', 'TOTAL')}</span><span className="font-bold">{formatNumber(lcmTotalLiquid)}</span></div>
+                            <div className="flex justify-between p-2 rounded bg-slate-50 dark:bg-slate-800/50"><span className="opacity-60">{t('月付', 'DEBT')}</span><span className="font-bold">{lcmHasDebt ? formatNumber(cmMonthlyDebt) : t('未設定', 'N/A')}</span></div>
+                          </div>
+                          <div className="font-bold text-slate-700 dark:text-slate-200">{t('LCM = (P1可用 + 現金) ÷ 月付', 'LCM = (P1 Available + Cash) ÷ Monthly Debt')}</div>
+                          <div>{t('P1可用 = P1市值 − 死線（L × 6.06%），死線以下的P1專防禦MR斷頭，不可當生活費故不計入', 'P1 Available = P1 Value − Death Line (L × 6.06%). The portion below the death line defends against an MR margin call and is excluded.')}</div>
+                          <div>{t('P1是不質押的可變現儲備（白皮書Part 5.1），只看銀行現金會低估真實流動性', 'P1 is an unpledged, liquidatable reserve (Whitepaper Part 5.1) — bank cash alone understates true liquidity.')}</div>
+                          <div className="text-xs opacity-70">⚠️ {t('與WCI差異：WCI只扣質押借款(L)；本卡月付含全部債務。', 'Differs from WCI: WCI only subtracts the pledged loan (L); this card\'s debt includes ALL debt.')}</div>
+                          <div className="text-xs opacity-60">⚠️ {t('月付為手動輸入，需隨負債變動更新（已知：房貸寬限期屆滿約2027/04後月付12,000→27,000）', 'Monthly debt is manual and must be updated (known: mortgage grace period ends ~2027/04, payment rises 12,000→27,000)')}</div>
+                        </div>
+                      </span>
                     </div>
-                    <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
-                      <span className="text-sm font-bold text-slate-600 dark:text-slate-300">{t('合計可變現', 'TOTAL LIQUID')}</span>
-                      <span className="text-lg font-black font-mono text-slate-700 dark:text-slate-200">{formatNumber(lcmTotalLiquid)}</span>
-                    </div>
-                    <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
-                      <span className="text-sm font-bold text-slate-600 dark:text-slate-300">{t('月付總額', 'MONTHLY DEBT')}</span>
-                      <span className="text-lg font-black font-mono text-slate-700 dark:text-slate-200">{lcmHasDebt ? formatNumber(cmMonthlyDebt) : t('未設定', 'NOT SET')}</span>
-                    </div>
-                  </div>
-                  <div className="text-xs text-slate-400 dark:text-slate-500 font-mono mb-4">{t(`P1 ${formatNumber(P1)} − 死線 ${formatNumber(lcmDeathLine)}（= L ${formatNumber(L)} × 6.06%）`, `P1 ${formatNumber(P1)} − Death Line ${formatNumber(lcmDeathLine)} (= L ${formatNumber(L)} × 6.06%)`)}</div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed space-y-2 border-t border-slate-100 dark:border-slate-800 pt-4">
-                    <div className="font-bold text-slate-600 dark:text-slate-300">{t('LCM = (P1可用 + 現金) ÷ 月付，回答「我的流動性能撐幾個月」', 'LCM = (P1 Available + Cash) ÷ Monthly Debt — answers "how many months can my liquidity cover?"')}</div>
-                    <div>{t('P1可用 = P1市值 − 死線（L × 6.06%）', 'P1 Available = P1 Market Value − Death Line (L × 6.06%)')}</div>
-                    <div>{t('死線以下的 P1 專用於防禦 MR 斷頭，不可當生活費，故不計入', 'The portion of P1 below the death line is reserved to defend against an MR margin call — it cannot be spent as living expenses, so it is excluded')}</div>
-                    <div className="font-bold text-slate-600 dark:text-slate-300 mt-2">{t('為何用 LCM 取代「現金絕對金額」判定：', 'Why LCM replaces a raw "cash amount" judgment:')}</div>
-                    <div>{t('P1 是不質押的可變現儲備（白皮書 Part 5.1），只看銀行現金會低估真實流動性', 'P1 is an unpledged, liquidatable reserve (Whitepaper Part 5.1) — looking only at bank cash understates true liquidity')}</div>
-                    <div className="opacity-90">⚠️ {t('與 WCI 卡的差異：WCI 的淨值只扣質押借款(L)；本卡的月付含全部債務(信貸/房貸/車貸等)。兩者對「債務」定義不同，並排看時請注意。', 'Difference from the WCI card: WCI\'s NAV only subtracts the pledged loan (L); this card\'s monthly debt includes ALL debt (credit loans/mortgage/car loan/etc). The two use different definitions of "debt" — be careful when viewing them side by side.')}</div>
-                    <div className="opacity-70">⚠️ {t('月付總額為手動輸入（沿用現金護城河 MONTHLY_DEBT 欄位），需隨負債變動更新。已知未來變動：房貸寬限期屆滿（推估約 2027/04）後月付將由 12,000 升至 27,000，屆時月付總額須上調，LCM 會相應下降。', 'Monthly debt total is manually entered (reuses the Cash Moat MONTHLY_DEBT field) and must be updated as debt changes. Known future change: after the mortgage grace period ends (estimated ~2027/04), the monthly payment will rise from 12,000 to 27,000 — the monthly debt total will need to be raised accordingly, and LCM will drop.')}</div>
                   </div>
                 </div>
               );
@@ -2056,36 +2063,41 @@ Build the wall first. Attack second.`)}
               ];
               const allocCurrent = allocZones.find(z => z.key === allocZoneKey);
 
+              // v12.12 — mini卡版型：指令留正面，3區間對照表+完整說明移到背面(hover展開)，判定邏輯完全不動
               const cardAllocationOrder = (
-                <div className="tech-panel p-8">
-                  <h2 className="text-lg font-black uppercase text-slate-400 mb-4">{cardTitles.allocationOrder}</h2>
-                  <div className={`rounded-2xl p-6 text-center mb-4 border ${allocCurrent.colorBox}`}>
-                    <span className="text-3xl md:text-4xl font-black data-text inline-block break-words">{allocCurrent.label}</span>
-                    <div className="text-sm font-bold mt-2 opacity-80">P1 = {p1Ratio}% · {allocCurrent.range}</div>
+                <div className="relative rounded-xl overflow-hidden glass-card h-44 flex flex-col">
+                  <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
+                    <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-extrabold shrink-0">{cardTitles.allocationOrder}</span>
                   </div>
-                  <div className="space-y-2 mb-6">
-                    {allocZones.map(z => (
-                      <div key={z.key} className={`flex justify-between items-center px-4 py-2.5 rounded-xl border text-sm font-bold ${z.key === allocZoneKey ? 'bg-sky-50 dark:bg-sky-950/30 border-sky-300 dark:border-sky-700 text-sky-700 dark:text-sky-300' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-700 text-slate-400 dark:text-slate-500'}`}>
-                        <span className="font-mono">{z.range}</span>
-                        <span>{z.label}</span>
-                        {z.key === allocZoneKey ? <span className="text-xs">◀ {t('目前', 'NOW')}</span> : <span className="text-xs opacity-0">◀</span>}
-                      </div>
-                    ))}
-                  </div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed space-y-2 border-t border-slate-100 dark:border-slate-800 pt-4">
-                    <div className="font-bold text-slate-600 dark:text-slate-300">{t('這張卡回答：薪水結餘該投入 P1 還是存現金？', 'This card answers: should leftover salary go into P1 or into cash?')}</div>
-                    <div>{t('以 P1 佔比（P1/L）為觸發器，不看市場漲跌方向：', 'Triggered by the P1 ratio (P1/L), not by reading market direction:')}</div>
-                    <div>・{t('P1 < 24%：P1 被市場侵蝕，且價位處相對低位 → 全部買 P1', 'P1 < 24%: P1 is being eroded by the market and price is relatively low → buy 100% P1')}</div>
-                    <div>・{t('P1 24~30%：兩者皆不急 → 一半買 P1、一半存現金', 'P1 24–30%: neither is urgent → split 50% P1 / 50% cash')}</div>
-                    <div>・{t('P1 > 30%：市場會自行推升 P1 至 1/3，現金是市場永不代勞的 → 全部存現金', 'P1 > 30%: the market will keep pushing P1 toward 1/3 on its own — cash is the one thing the market never builds for you → 100% cash')}</div>
-                    <div className="font-bold text-slate-600 dark:text-slate-300 mt-2">{t('為什麼用 P1% 而不是判斷市場方向：', 'Why P1% instead of reading market direction:')}</div>
-                    <div>{t('P1% 已內含市場資訊（被侵蝕=下跌段、自行升高=上升段），這是對已發生數字的回應，不是對未來的預測，避免落入擇時。', "P1% already encodes market info (erosion = downtrend, self-rising = uptrend). This reacts to numbers that already happened, not a prediction of what's next — it avoids market timing.")}</div>
-                    <div className="opacity-70">{t('註：本指令只管「新資金往哪去」，不改變 P1 的 1/3 目標水位、6.06% 死線、350/330/310 燈號等既有條文。', 'Note: this directive only governs where new money goes — it does not change the 1/3 target for P1, the 6.06% death line, or the existing 350/330/310 signal rules.')}</div>
+                  <div className="group relative flex-grow cursor-crosshair">
+                    <div className="absolute inset-0 px-5 pb-4 flex flex-col justify-center bg-slate-50/50 dark:bg-slate-900/50 transition-all duration-300 group-hover:opacity-0 group-hover:scale-95">
+                      <span className="text-xl md:text-2xl font-black data-text break-words">{allocCurrent.label}</span>
+                      <span className="text-xs font-bold mt-1 opacity-70">P1 = {p1Ratio}% · {allocCurrent.range}</span>
+                    </div>
+                    <div className="absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 border-sky-500 dark:border-amber-500/30 flex flex-col justify-start opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl overflow-y-auto">
+                      <span className="text-sky-600 dark:text-amber-400 text-lg font-bold tracking-widest mb-1">[ALLOCATION_ORDER]</span>
+                      <span className="text-slate-600 dark:text-slate-300 text-sm font-semibold leading-tight">
+                        <div className="space-y-2">
+                          <div className="space-y-1">
+                            {allocZones.map(z => (
+                              <div key={z.key} className={`flex justify-between items-center px-2 py-1 rounded text-xs font-bold ${z.key === allocZoneKey ? 'bg-sky-50 dark:bg-sky-950/30 text-sky-700 dark:text-sky-300' : 'text-slate-400 dark:text-slate-500'}`}>
+                                <span className="font-mono">{z.range}</span>
+                                <span>{z.label}</span>
+                                {z.key === allocZoneKey && <span>◀{t('目前', 'NOW')}</span>}
+                              </div>
+                            ))}
+                          </div>
+                          <div>{t('以 P1 佔比（P1/L）為觸發器，不看市場漲跌方向，已內含市場資訊（被侵蝕=下跌段、自行升高=上升段），避免落入擇時', 'Triggered by the P1 ratio (P1/L), not market direction — it already encodes market info (erosion=downtrend, self-rising=uptrend), avoiding market timing')}</div>
+                          <div className="text-xs opacity-70">{t('註：本指令只管新資金往哪去，不改變 P1 的 1/3 目標水位、6.06% 死線、350/330/310 燈號等既有條文', 'Note: this only governs where new money goes — it does not change the 1/3 P1 target, the 6.06% death line, or the 350/330/310 signal rules')}</div>
+                        </div>
+                      </span>
+                    </div>
                   </div>
                 </div>
               );
 
-              const bottomCards = { balance: cardBalance, usEngine: cardUsEngine, crypto: cardCrypto, radar: cardRadar, history: cardHistory, cashMoat: cardCashMoat, lcm: cardLcm, allocationOrder: cardAllocationOrder };
+              const bottomCards = { usEngine: cardUsEngine, crypto: cardCrypto, radar: cardRadar, history: cardHistory, cashMoat: cardCashMoat };
+              const miniCards = { mr: cardMr, balance: cardBalance, lcm: cardLcm, allocationOrder: cardAllocationOrder, passthrough: cardPassthroughCollapsed, stress: cardStressCollapsed };
 
               const expandedCardContent = expandedCard === 'passthrough' ? cardPassthrough : expandedCard === 'stress' ? cardStress : null;
 
@@ -2101,10 +2113,18 @@ Build the wall first. Attack second.`)}
                   </div>
 
                   <div className="xl:col-span-8 space-y-8">
-                    <div className={sortMode ? 'space-y-3' : 'grid grid-cols-1 md:grid-cols-2 gap-8'}>
+                    <div className={sortMode ? 'space-y-3' : (topOrder.length > 1 ? 'grid grid-cols-1 md:grid-cols-2 gap-8' : 'space-y-8')}>
                       {topOrder.map(id => (
                         <DraggableCard key={id} id={id} zone="top" order={topOrder} setOrder={setTopOrder} dragInfo={dragInfo} setDragInfo={setDragInfo} collapsed={sortMode} title={cardTitles[id]}>
                           {topCards[id]}
+                        </DraggableCard>
+                      ))}
+                    </div>
+
+                    <div className={sortMode ? 'space-y-3' : 'grid grid-cols-2 md:grid-cols-3 gap-4'}>
+                      {miniOrder.map(id => (
+                        <DraggableCard key={id} id={id} zone="mini" order={miniOrder} setOrder={setMiniOrder} dragInfo={dragInfo} setDragInfo={setDragInfo} collapsed={sortMode} title={cardTitles[id]}>
+                          {miniCards[id]}
                         </DraggableCard>
                       ))}
                     </div>
