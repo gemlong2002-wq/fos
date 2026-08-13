@@ -274,7 +274,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/12 15:39';
+    const APP_VERSION = '2026/08/13 10:58';
 
     /* ===================================================================
        共用工具
@@ -1454,6 +1454,9 @@ Ask this box before you withdraw.`
               // 壓力測試情境結果 — 沿用卡片內既有的固定文案數值，收合摘要列與完整卡片共用同一組常數
               const stressMuskDrop = t('約 −25%', 'approx. −25%');
               const stressNdxVerdict = t('極重，配置無法防禦', 'Severe — allocation cannot defend');
+              // v12.15 — mini卡正面主數字拆「數字」與修飾詞兩部分顯示用，與stressMuskDrop同一組固定情境值，modal(cardStress)仍用完整的stressMuskDrop不變
+              const stressMuskQualifier = t('約', 'approx.');
+              const stressMuskValue = t('−25%', '−25%');
 
               // 收合狀態摘要列 — 點擊任何時候都能立刻開 modal，無任何解鎖門檻／if 條件包住開啟動作
               // v12.12 — mini卡版型：改h-44固定高度、摘要內容不變，僅重排版；點擊開modal的行為與模態內容(cardPassthrough/cardStress)完全不動
@@ -1469,7 +1472,7 @@ Ask this box before you withdraw.`
                   <div className="flex-grow px-5 pb-4 flex flex-col justify-center">
                     <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-0.5">{t('總曝險', 'TOTAL EXPOSURE')}</span>
                     <span className={`text-3xl sm:text-4xl font-mono font-extrabold vibe-hover-text ${overCap ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{(totalExposure * 100).toFixed(1)}% {overCap ? '🔴' : ''}</span>
-                    <span className="text-base font-mono font-bold text-slate-400 mt-1">{t('上限', 'CAP')} {(MUSK_EXPOSURE_CAP * 100).toFixed(0)}%</span>
+                    <span className="text-xs font-mono font-bold text-slate-400 mt-1">{t('上限', 'CAP')} {(MUSK_EXPOSURE_CAP * 100).toFixed(0)}%</span>
                   </div>
                 </div>
               );
@@ -1486,8 +1489,11 @@ Ask this box before you withdraw.`
                   </div>
                   <div className="flex-grow px-5 pb-4 flex flex-col justify-center">
                     <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-0.5">{t('馬斯克跌幅', 'MUSK DROP')}</span>
-                    <span className="text-3xl sm:text-4xl font-mono font-black text-rose-600 dark:text-rose-400 break-words vibe-hover-text">{stressMuskDrop}</span>
-                    <span className="text-base font-bold text-slate-400 mt-1 leading-snug">{t(`NDX −30%：${stressNdxVerdict}`, `NDX −30%: ${stressNdxVerdict}`)}</span>
+                    <span className="font-mono font-black text-rose-600 dark:text-rose-400 whitespace-nowrap vibe-hover-text">
+                      <span className="text-lg align-baseline mr-1">{stressMuskQualifier}</span>
+                      <span className="text-3xl sm:text-4xl align-baseline">{stressMuskValue}</span>
+                    </span>
+                    <span className="text-xs font-bold text-slate-400 mt-1 leading-snug">{t(`NDX −30%：${stressNdxVerdict}`, `NDX −30%: ${stressNdxVerdict}`)}</span>
                   </div>
                 </div>
               );
@@ -1504,7 +1510,7 @@ Ask this box before you withdraw.`
                   <div className="group relative flex-grow cursor-crosshair">
                     <div className="absolute inset-0 px-5 pb-4 flex flex-col justify-center bg-slate-50/50 dark:bg-slate-900/50 transition-all duration-300 group-hover:opacity-0 group-hover:scale-95">
                       <span className={`text-3xl sm:text-4xl md:text-5xl font-black font-mono tracking-tight data-text break-words vibe-hover-text ${mrZoneInfo.text}`}>{nominalMR}%</span>
-                      <span className={`text-lg font-black uppercase mt-1 ${mrZoneInfo.text}`}>{mrZoneInfo.label}</span>
+                      <span className={`text-sm font-black uppercase mt-1 ${mrZoneInfo.text}`}>{mrZoneInfo.label}</span>
                     </div>
                     <div className="absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 border-sky-500 dark:border-amber-500/30 flex flex-col justify-start opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl overflow-y-auto">
                       <span className="text-sky-600 dark:text-amber-400 text-lg font-bold tracking-widest mb-1">[MR_ZONES]</span>
@@ -1587,7 +1593,7 @@ Ask this box before you withdraw.`
                     <div className="absolute inset-0 px-5 pb-4 flex flex-col justify-center bg-slate-50/50 dark:bg-slate-900/50 transition-all duration-300 group-hover:opacity-0 group-hover:scale-95">
                       <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-0.5">TARGET</span>
                       <span className="text-3xl sm:text-4xl md:text-5xl font-black font-mono text-sky-600 dark:text-sky-400 data-text break-words vibe-hover-text">{targetInjection}</span>
-                      <span className="text-base font-bold font-mono text-slate-400 mt-1">DIFF {formatNumber(diffValue)}</span>
+                      <span className="text-sm font-bold font-mono text-slate-400 mt-1">DIFF {formatNumber(diffValue)}</span>
                     </div>
                     <div className="absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 border-sky-500 dark:border-amber-500/30 flex flex-col justify-start opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl overflow-y-auto">
                       <span className="text-sky-600 dark:text-amber-400 text-lg font-bold tracking-widest mb-1">[P1_TACTICAL_POOL]</span>
@@ -1953,7 +1959,7 @@ Ask this box before you withdraw.`
                     <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden mt-2">
                       <div className={`h-full transition-all duration-300 ${cmStyle.bar}`} style={{ width: `${cmProgressBarPct}%` }}></div>
                     </div>
-                    <span className={`text-sm font-black mt-2 px-2 py-0.5 rounded self-start ${cmStyle.badge}`}>{cmStatus}</span>
+                    <span className={`text-xs font-black mt-2 px-2 py-0.5 rounded self-start ${cmStyle.badge}`}>{cmStatus}</span>
                   </div>
                 </div>
               );
@@ -2052,8 +2058,11 @@ Build the wall first. Attack second.`)}
                   </div>
                   <div className="group relative flex-grow cursor-crosshair">
                     <div className="absolute inset-0 px-5 pb-4 flex flex-col justify-center bg-slate-50/50 dark:bg-slate-900/50 transition-all duration-300 group-hover:opacity-0 group-hover:scale-95">
-                      <span className={`text-2xl sm:text-3xl md:text-4xl font-black font-mono data-text break-words vibe-hover-text ${lcmZoneKey === 'green' ? 'text-emerald-600 dark:text-emerald-400' : lcmZoneKey === 'yellow' ? 'text-yellow-600 dark:text-yellow-400' : lcmZoneKey === 'red' ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'}`}>{lcmHasDebt ? lcmMonths.toFixed(2) : 'N/A'} {lcmHasDebt ? t('個月', 'MONTHS') : ''}</span>
-                      <span className={`text-lg font-bold mt-1 ${lcmZoneKey === 'green' ? 'text-emerald-600 dark:text-emerald-400' : lcmZoneKey === 'yellow' ? 'text-yellow-600 dark:text-yellow-400' : lcmZoneKey === 'red' ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'}`}>{lcmStyle.label}</span>
+                      <span className={`font-black font-mono data-text whitespace-nowrap vibe-hover-text ${lcmZoneKey === 'green' ? 'text-emerald-600 dark:text-emerald-400' : lcmZoneKey === 'yellow' ? 'text-yellow-600 dark:text-yellow-400' : lcmZoneKey === 'red' ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'}`}>
+                        <span className="text-2xl sm:text-3xl md:text-4xl align-baseline">{lcmHasDebt ? lcmMonths.toFixed(2) : 'N/A'}</span>
+                        {lcmHasDebt && <span className="text-lg align-baseline ml-1">{t('個月', 'MONTHS')}</span>}
+                      </span>
+                      <span className={`text-sm font-bold mt-1 ${lcmZoneKey === 'green' ? 'text-emerald-600 dark:text-emerald-400' : lcmZoneKey === 'yellow' ? 'text-yellow-600 dark:text-yellow-400' : lcmZoneKey === 'red' ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'}`}>{lcmStyle.label}</span>
                     </div>
                     <div className="absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 border-sky-500 dark:border-amber-500/30 flex flex-col justify-start opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl overflow-y-auto">
                       <span className="text-sky-600 dark:text-amber-400 text-lg font-bold tracking-widest mb-1">[LIQUIDITY_COVERAGE]</span>
@@ -2095,8 +2104,8 @@ Build the wall first. Attack second.`)}
                   </div>
                   <div className="group relative flex-grow cursor-crosshair">
                     <div className="absolute inset-0 px-5 pb-4 flex flex-col justify-center bg-slate-50/50 dark:bg-slate-900/50 transition-all duration-300 group-hover:opacity-0 group-hover:scale-95">
-                      <span className={`text-2xl sm:text-3xl md:text-4xl font-black font-mono data-text break-words vibe-hover-text ${allocZoneKey === 'low' ? 'text-rose-600 dark:text-rose-400' : allocZoneKey === 'mid' ? 'text-yellow-600 dark:text-yellow-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{allocCurrent.label}</span>
-                      <span className="text-base font-bold mt-1 opacity-70">P1 = {p1Ratio}% · {allocCurrent.range}</span>
+                      <span className={`text-lg sm:text-xl md:text-2xl font-black font-mono data-text whitespace-nowrap vibe-hover-text ${allocZoneKey === 'low' ? 'text-rose-600 dark:text-rose-400' : allocZoneKey === 'mid' ? 'text-yellow-600 dark:text-yellow-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{allocCurrent.label}</span>
+                      <span className="text-xs font-bold mt-1 opacity-70">P1 = {p1Ratio}% · {allocCurrent.range}</span>
                     </div>
                     <div className="absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 border-sky-500 dark:border-amber-500/30 flex flex-col justify-start opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl overflow-y-auto">
                       <span className="text-sky-600 dark:text-amber-400 text-lg font-bold tracking-widest mb-1">[ALLOCATION_ORDER]</span>
