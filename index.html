@@ -265,6 +265,16 @@
       100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
     }
     .card-highlight-flash { animation: cardHighlightFlash 10s ease-out 1; border-radius: 1rem; }
+    @keyframes closedCardFlashGreen {
+      0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+      8% { box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.9), 0 0 22px 5px rgba(16, 185, 129, 0.5); }
+      16% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+      24% { box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.8), 0 0 22px 5px rgba(16, 185, 129, 0.45); }
+      32% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+      40% { box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.6), 0 0 22px 5px rgba(16, 185, 129, 0.3); }
+      100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+    }
+    .closed-card-flash { animation: closedCardFlashGreen 5s ease-out 1; border-radius: 2.5rem; }
   </style>
 </head>
 <body>
@@ -274,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/14 20:30';
+    const APP_VERSION = '2026/08/14 21:15';
 
     /* ===================================================================
        共用工具
@@ -3941,6 +3951,20 @@ Build the wall first. Attack second.`)}
         });
       };
 
+      // v1.4 — 按類型分組收合，疊加在逐筆展開之上。key 是 category（固定集合，不像逐筆是持續增加的 id），
+      // 預設全展開：缺 key 一律視為展開（true），只有明確存過 false 才是收合，比逐筆手風琴的「預設全收合」相反。
+      const [expandedCategories, setExpandedCategories] = useState(() => {
+        try { return JSON.parse(safeGetStorage('debt_expandedCategories', '{}')) || {}; } catch (e) { return {}; }
+      });
+      const isCategoryExpanded = (cat) => expandedCategories[cat] !== false;
+      const toggleCategory = (cat) => {
+        setExpandedCategories(prev => {
+          const next = { ...prev, [cat]: !(prev[cat] !== false) };
+          safeSetStorage('debt_expandedCategories', JSON.stringify(next));
+          return next;
+        });
+      };
+
       const loadRecords = () => {
         setLoading(true);
         setLoadError('');
@@ -3956,7 +3980,24 @@ Build the wall first. Attack second.`)}
       useEffect(() => { loadRecords(); }, []);
 
       const activeRecords = records.filter(r => r.status !== DEBT_STATUS_CLOSED);
-      const closedRecords = records.filter(r => r.status === DEBT_STATUS_CLOSED);
+
+      // v1.4 — 按類型分組（比照 HISTORY MATRIX 分組模式簡化：不分年份、分 category），
+      // 已結清不再獨立分區，併入所屬類型；組內執行中排前、已結清排後，方便閱讀。
+      // 固定顯示 DEBT_CATEGORIES 四組（即使 0 筆），未知/舊資料的 category 值另外附加在後面，不讓資料憑空消失。
+      const recordsByCategory = useMemo(() => {
+        const groups = {};
+        DEBT_CATEGORIES.forEach(cat => { groups[cat] = []; });
+        records.forEach(r => {
+          const cat = r.category || DEBT_CATEGORY_DEFAULT;
+          if (!groups[cat]) groups[cat] = [];
+          groups[cat].push(r);
+        });
+        Object.keys(groups).forEach(cat => {
+          groups[cat] = [...groups[cat]].sort((a, b) => (a.status === DEBT_STATUS_CLOSED ? 1 : 0) - (b.status === DEBT_STATUS_CLOSED ? 1 : 0));
+        });
+        return groups;
+      }, [records]);
+      const categoryOrder = [...DEBT_CATEGORIES, ...Object.keys(recordsByCategory).filter(c => !DEBT_CATEGORIES.includes(c))];
 
       const monthlyTotal = useMemo(() => {
         return activeRecords.reduce((sum, r) => sum + toMonthlyEquivalent(r.monthlyPay, getPayFrequency(r.note)), 0);
@@ -4032,8 +4073,12 @@ Build the wall first. Attack second.`)}
         // 「優先消滅」只在類型為貸款時判定，信用卡/訂閱/保險即使利率填了>2.5%也不顯示
         const highRate = category === DEBT_CATEGORY_DEFAULT && (parseFloat(r.rate) || 0) > 2.5;
         const isExpanded = !!expandedLoanRows[r.id];
+        const isClosed = r.status === DEBT_STATUS_CLOSED;
+        const closedClass = isClosed
+          ? " bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-950/20 dark:to-slate-900 border-emerald-200 dark:border-emerald-800/50 closed-card-flash"
+          : "";
         return (
-          <div key={r.id} className="tech-panel p-5 flex flex-col gap-3">
+          <div key={r.id} className={"tech-panel p-5 flex flex-col gap-3" + closedClass}>
           <button onClick={() => toggleLoanRow(r.id)} className="w-full flex items-center justify-between gap-3 text-left outline-none">
             <div className="flex items-center gap-2 flex-wrap min-w-0">
               <span className="text-lg font-black text-slate-700 dark:text-slate-200 truncate">{r.name}</span>
@@ -4122,14 +4167,24 @@ Build the wall first. Attack second.`)}
 
             {!loading && !loadError && (
               <Fragment>
-                <div className="space-y-3">
-                  <div className="text-sm font-bold uppercase tracking-widest text-slate-400">{t('執行中', 'ACTIVE')}</div>
-                  {activeRecords.length === 0 ? <div className="tech-panel p-5 text-center text-slate-400">{t('目前沒有執行中的貸款', 'No active loans')}</div> : activeRecords.map(renderLoanRow)}
-                </div>
-                <div className="space-y-3">
-                  <div className="text-sm font-bold uppercase tracking-widest text-slate-400">{t('已結清', 'CLOSED')}</div>
-                  {closedRecords.length === 0 ? <div className="tech-panel p-5 text-center text-slate-400 opacity-60">{t('目前沒有已結清的貸款', 'No closed loans')}</div> : closedRecords.map(renderLoanRow)}
-                </div>
+                {categoryOrder.map(cat => {
+                  const catRecords = recordsByCategory[cat] || [];
+                  const catOpen = isCategoryExpanded(cat);
+                  const catLabel = t(cat, CATEGORY_LABEL_EN[cat] || cat);
+                  return (
+                    <div key={cat} className="space-y-3">
+                      <button onClick={() => toggleCategory(cat)} className="w-full flex items-center justify-between px-1 outline-none">
+                        <span className="text-sm font-bold uppercase tracking-widest text-slate-400">{catLabel} ({catRecords.length})</span>
+                        <span className="text-slate-400 dark:text-slate-500 text-xs font-bold">{catOpen ? '▲' : '▼'}</span>
+                      </button>
+                      {catOpen && (
+                        catRecords.length === 0
+                          ? <div className="tech-panel p-5 text-center text-slate-400 opacity-60">{t(`目前沒有${catLabel}記錄`, `No ${catLabel} records`)}</div>
+                          : catRecords.map(renderLoanRow)
+                      )}
+                    </div>
+                  );
+                })}
               </Fragment>
             )}
 
