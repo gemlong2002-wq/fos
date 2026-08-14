@@ -274,7 +274,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/14 17:12';
+    const APP_VERSION = '2026/08/14 20:30';
 
     /* ===================================================================
        共用工具
@@ -3927,6 +3927,20 @@ Build the wall first. Attack second.`)}
       const [deleteTarget, setDeleteTarget] = useState(null);
       const [msg, setMsg] = useState('');
 
+      // v1.3 — 貸款列表逐筆手風琴收合（比照 HISTORY MATRIX 的「以key索引展開state」模式簡化：
+      // key 是記錄 id 而非年份，預設全收合(不用挑一筆展開)，不做 LOAD_MORE 節流。
+      // 展開狀態存 localStorage，重整後維持；記錄被刪除後 state 裡殘留的孤兒 key 不影響功能，不特別清理。
+      const [expandedLoanRows, setExpandedLoanRows] = useState(() => {
+        try { return JSON.parse(safeGetStorage('debt_expandedRows', '{}')) || {}; } catch (e) { return {}; }
+      });
+      const toggleLoanRow = (id) => {
+        setExpandedLoanRows(prev => {
+          const next = { ...prev, [id]: !prev[id] };
+          safeSetStorage('debt_expandedRows', JSON.stringify(next));
+          return next;
+        });
+      };
+
       const loadRecords = () => {
         setLoading(true);
         setLoadError('');
@@ -4017,8 +4031,23 @@ Build the wall first. Attack second.`)}
         const category = r.category || DEBT_CATEGORY_DEFAULT;
         // 「優先消滅」只在類型為貸款時判定，信用卡/訂閱/保險即使利率填了>2.5%也不顯示
         const highRate = category === DEBT_CATEGORY_DEFAULT && (parseFloat(r.rate) || 0) > 2.5;
+        const isExpanded = !!expandedLoanRows[r.id];
         return (
           <div key={r.id} className="tech-panel p-5 flex flex-col gap-3">
+          <button onClick={() => toggleLoanRow(r.id)} className="w-full flex items-center justify-between gap-3 text-left outline-none">
+            <div className="flex items-center gap-2 flex-wrap min-w-0">
+              <span className="text-lg font-black text-slate-700 dark:text-slate-200 truncate">{r.name}</span>
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 shrink-0">{category}</span>
+              {highRate && <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800 shrink-0">{t('優先消滅', 'PRIORITY')}</span>}
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <span className="text-lg font-black font-mono text-sky-600 dark:text-sky-400">{formatNumber(toMonthlyEquivalent(r.monthlyPay, freq))}</span>
+              <span className="text-slate-400 dark:text-slate-500 text-sm font-bold">{isExpanded ? '▲' : '▼'}</span>
+            </div>
+          </button>
+          <div className={"grid transition-all duration-300 ease-in-out " + (isExpanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0")}>
+            <div className="overflow-hidden">
+          <div className="flex flex-col gap-3 pt-1">
           <div className="flex flex-col md:flex-row md:items-center gap-4">
             <div className="flex-grow grid grid-cols-2 md:grid-cols-4 gap-3">
               <div>
@@ -4060,6 +4089,9 @@ Build the wall first. Attack second.`)}
               <span className="text-sm font-bold text-amber-700 dark:text-amber-300">{stripFreqTag(r.note)}</span>
             </div>
           )}
+          </div>
+          </div>
+          </div>
           </div>
         );
       };
