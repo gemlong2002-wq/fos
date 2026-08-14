@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/14 22:05';
+    const APP_VERSION = '2026/08/14 22:40';
 
     /* ===================================================================
        共用工具
@@ -740,13 +740,6 @@
         return groups;
       }, [history]);
       const sortedHistoryYears = Object.keys(groupedHistory).sort((a, b) => b - a);
-
-      useEffect(() => {
-        if (sortedHistoryYears.length > 0 && Object.keys(expandedYears).length === 0) {
-          setExpandedYears({ [sortedHistoryYears[0]]: true });
-          setVisibleRows({ [sortedHistoryYears[0]]: 30 });
-        }
-      }, [sortedHistoryYears, expandedYears]);
 
       const toggleHistoryYear = (year) => {
         setExpandedYears(prev => ({ ...prev, [year]: !prev[year] }));
@@ -2606,13 +2599,6 @@ Build the wall first. Attack second.`)}
         const sortedYears = Object.keys(groupedRecords).sort((a, b) => b - a);
         const timeShiftOptions = ['ALL_TIME', ...sortedYears];
 
-        useEffect(() => {
-            if (sortedYears.length > 0 && Object.keys(expandedYears).length === 0) {
-                setExpandedYears({ [sortedYears[0]]: true });
-                setVisibleRows({ [sortedYears[0]]: 30 });
-            }
-        }, [sortedYears, expandedYears]);
-
         const toggleYear = (year) => {
             setExpandedYears(prev => ({ ...prev, [year]: !prev[year] }));
             if (!visibleRows[year]) setVisibleRows(prev => ({ ...prev, [year]: 30 }));
@@ -3937,15 +3923,15 @@ Build the wall first. Attack second.`)}
       const [deleteTarget, setDeleteTarget] = useState(null);
       const [msg, setMsg] = useState('');
 
-      // v1.4 — 按類型分組收合。key 是 category（固定集合），預設全展開：缺 key 一律視為展開（true），
-      // 只有明確存過 false 才是收合。
+      // v1.6 — 按類型分組收合。key 是 category（固定集合），預設全收合：缺 key 一律視為收合（false），
+      // 只有明確存過 true 才是展開。
       const [expandedCategories, setExpandedCategories] = useState(() => {
         try { return JSON.parse(safeGetStorage('debt_expandedCategories', '{}')) || {}; } catch (e) { return {}; }
       });
-      const isCategoryExpanded = (cat) => expandedCategories[cat] !== false;
+      const isCategoryExpanded = (cat) => expandedCategories[cat] === true;
       const toggleCategory = (cat) => {
         setExpandedCategories(prev => {
-          const next = { ...prev, [cat]: !(prev[cat] !== false) };
+          const next = { ...prev, [cat]: !(prev[cat] === true) };
           safeSetStorage('debt_expandedCategories', JSON.stringify(next));
           return next;
         });
