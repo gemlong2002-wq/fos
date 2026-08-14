@@ -274,7 +274,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/14 11:37';
+    const APP_VERSION = '2026/08/14 16:36';
 
     /* ===================================================================
        共用工具
@@ -3895,7 +3895,9 @@ Build the wall first. Attack second.`)}
       }
       const DEBT_STATUS_CLOSED = '已結清';
       const DEBT_STATUS_ACTIVE = '執行中';
-      const emptyForm = { id: '', name: '', partnerBank: '', deductBank: '', rate: '', fee: '', totalAmount: '', monthlyPay: '', endDate: '', status: DEBT_STATUS_ACTIVE, note: '' };
+      const DEBT_CATEGORIES = ['貸款', '信用卡', '訂閱', '保險'];
+      const DEBT_CATEGORY_DEFAULT = '貸款';
+      const emptyForm = { id: '', name: '', category: DEBT_CATEGORY_DEFAULT, partnerBank: '', deductBank: '', rate: '', fee: '', totalAmount: '', monthlyPay: '', endDate: '', status: DEBT_STATUS_ACTIVE, note: '' };
 
       const [records, setRecords] = useState([]);
       const [loading, setLoading] = useState(true);
@@ -3945,7 +3947,7 @@ Build the wall first. Attack second.`)}
       };
 
       const openNewModal = () => setEditingRecord({ ...emptyForm });
-      const openEditModal = (r) => setEditingRecord({ ...r });
+      const openEditModal = (r) => setEditingRecord({ ...r, category: r.category || DEBT_CATEGORY_DEFAULT });
       const closeModal = () => { setEditingRecord(null); setMsg(''); };
 
       const handleFormChange = (e) => {
@@ -3960,6 +3962,7 @@ Build the wall first. Attack second.`)}
         const payload = {
           id: editingRecord.id || '',
           name: editingRecord.name,
+          category: editingRecord.category || DEBT_CATEGORY_DEFAULT,
           partnerBank: editingRecord.partnerBank,
           deductBank: editingRecord.deductBank,
           rate: parseFloat(editingRecord.rate) || 0,
@@ -3988,14 +3991,17 @@ Build the wall first. Attack second.`)}
 
       const renderLoanRow = (r) => {
         const { months, remainAmount } = getRemainingInfo(r.endDate, r.monthlyPay);
-        const highRate = (parseFloat(r.rate) || 0) > 2.5;
+        const category = r.category || DEBT_CATEGORY_DEFAULT;
+        // 「優先消滅」只在類型為貸款時判定，信用卡/訂閱/保險即使利率填了>2.5%也不顯示
+        const highRate = category === DEBT_CATEGORY_DEFAULT && (parseFloat(r.rate) || 0) > 2.5;
         return (
           <div key={r.id} className="tech-panel p-5 flex flex-col md:flex-row md:items-center gap-4">
             <div className="flex-grow grid grid-cols-2 md:grid-cols-4 gap-3">
               <div>
                 <div className="text-xs font-bold uppercase tracking-widest text-slate-400">{t('名稱', 'NAME')}</div>
-                <div className="text-lg font-black text-slate-700 dark:text-slate-200 flex items-center gap-2">
+                <div className="text-lg font-black text-slate-700 dark:text-slate-200 flex items-center gap-2 flex-wrap">
                   {r.name}
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700">{category}</span>
                   {highRate && <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800">{t('優先消滅', 'PRIORITY')}</span>}
                 </div>
                 <div className="text-xs text-slate-400 mt-0.5">{r.partnerBank}{r.deductBank ? ` · ${t('扣款', 'Debit')}: ${r.deductBank}` : ''}</div>
@@ -4069,6 +4075,12 @@ Build the wall first. Attack second.`)}
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('名稱', 'NAME')}</label><input name="name" value={editingRecord.name} onChange={handleFormChange} className="w-full tech-input" /></div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('類型', 'CATEGORY')}</label>
+                      <select name="category" value={editingRecord.category || DEBT_CATEGORY_DEFAULT} onChange={handleFormChange} className="w-full tech-input">
+                        {DEBT_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
                     <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('往來銀行', 'PARTNER BANK')}</label><input name="partnerBank" value={editingRecord.partnerBank} onChange={handleFormChange} className="w-full tech-input" /></div>
                     <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('扣款銀行', 'DEDUCT BANK')}</label><input name="deductBank" value={editingRecord.deductBank} onChange={handleFormChange} className="w-full tech-input" /></div>
                     <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('利率 %', 'RATE %')}</label><input type="number" step="0.01" name="rate" value={editingRecord.rate} onChange={handleFormChange} className="w-full tech-input" /></div>
