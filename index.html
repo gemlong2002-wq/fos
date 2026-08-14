@@ -274,7 +274,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/14 16:36';
+    const APP_VERSION = '2026/08/14 16:53';
 
     /* ===================================================================
        共用工具
@@ -3897,7 +3897,27 @@ Build the wall first. Attack second.`)}
       const DEBT_STATUS_ACTIVE = '執行中';
       const DEBT_CATEGORIES = ['貸款', '信用卡', '訂閱', '保險'];
       const DEBT_CATEGORY_DEFAULT = '貸款';
-      const emptyForm = { id: '', name: '', category: DEBT_CATEGORY_DEFAULT, partnerBank: '', deductBank: '', rate: '', fee: '', totalAmount: '', monthlyPay: '', endDate: '', status: DEBT_STATUS_ACTIVE, note: '' };
+      const CATEGORY_LABEL_EN = { '貸款': 'LOAN', '信用卡': 'CREDIT CARD', '訂閱': 'SUBSCRIPTION', '保險': 'INSURANCE' };
+
+      // v1.2 — 繳費頻率(月繳/年繳)：不動後端、不新增資料庫欄位，用note欄位尾端一段
+      // 可辨識、可還原的隱藏標記([FREQ:YEARLY])存頻率，對Boss完全透明(表單/列表都顯示乾淨的note文字，
+      // 標記只在存檔/讀檔時被加上/剝除)。舊資料沒有這個標記時一律視為月繳，向後相容不出錯。
+      const PAY_FREQ_MONTHLY = 'monthly';
+      const PAY_FREQ_YEARLY = 'yearly';
+      const FREQ_TAG_REGEX = /\s*\[FREQ:YEARLY\]\s*$/;
+      const getPayFrequency = (note) => FREQ_TAG_REGEX.test(String(note || '')) ? PAY_FREQ_YEARLY : PAY_FREQ_MONTHLY;
+      const stripFreqTag = (note) => String(note || '').replace(FREQ_TAG_REGEX, '');
+      const encodeNoteWithFreq = (note, freq) => {
+        const clean = stripFreqTag(note);
+        if (freq !== PAY_FREQ_YEARLY) return clean;
+        return clean ? clean + ' [FREQ:YEARLY]' : '[FREQ:YEARLY]';
+      };
+      // 年繳金額換算月付：四捨五入到整數(與LCM其餘金額顯示的無條件捨去小數慣例不同，
+      // 這裡刻意用Math.round四捨五入，因為12,357/12=1,029.75，捨去會少算緊繃的0.75元，
+      // 四捨五入較貼近真實月流出)
+      const toMonthlyEquivalent = (amount, freq) => freq === PAY_FREQ_YEARLY ? Math.round((parseFloat(amount) || 0) / 12) : (parseFloat(amount) || 0);
+
+      const emptyForm = { id: '', name: '', category: DEBT_CATEGORY_DEFAULT, partnerBank: '', deductBank: '', rate: '', fee: '', totalAmount: '', monthlyPay: '', endDate: '', status: DEBT_STATUS_ACTIVE, note: '', payFrequency: PAY_FREQ_MONTHLY };
 
       const [records, setRecords] = useState([]);
       const [loading, setLoading] = useState(true);
@@ -3925,7 +3945,7 @@ Build the wall first. Attack second.`)}
       const closedRecords = records.filter(r => r.status === DEBT_STATUS_CLOSED);
 
       const monthlyTotal = useMemo(() => {
-        return activeRecords.reduce((sum, r) => sum + (parseFloat(r.monthlyPay) || 0), 0);
+        return activeRecords.reduce((sum, r) => sum + toMonthlyEquivalent(r.monthlyPay, getPayFrequency(r.note)), 0);
       }, [records]);
 
       // 未載入完成或載入失敗時回傳 null，讓 FOS 端的 LCM fallback 回手動輸入值，
@@ -3935,19 +3955,21 @@ Build the wall first. Attack second.`)}
         onDebtTotalChange((loading || loadError) ? null : monthlyTotal);
       }, [monthlyTotal, loading, loadError]);
 
-      const getRemainingInfo = (endDate, monthlyPay) => {
+      // v1.2 — 年繳記錄的「剩餘應繳(估)」比照LCM同一套換算邏輯(年繳÷12當月付基準)，
+      // 避免直接拿整筆年繳金額乘以剩餘月數，估出離譜膨脹的數字
+      const getRemainingInfo = (endDate, monthlyPay, freq) => {
         const match = /^(\d{4})-(\d{2})$/.exec(String(endDate || '').trim());
         if (!match) return { months: null, remainAmount: null };
         const y = parseInt(match[1], 10), m = parseInt(match[2], 10);
         const now = new Date();
         let months = (y - now.getFullYear()) * 12 + (m - (now.getMonth() + 1));
         if (months < 0) months = 0;
-        const pay = parseFloat(monthlyPay) || 0;
+        const pay = toMonthlyEquivalent(monthlyPay, freq);
         return { months, remainAmount: months * pay };
       };
 
       const openNewModal = () => setEditingRecord({ ...emptyForm });
-      const openEditModal = (r) => setEditingRecord({ ...r, category: r.category || DEBT_CATEGORY_DEFAULT });
+      const openEditModal = (r) => setEditingRecord({ ...r, category: r.category || DEBT_CATEGORY_DEFAULT, payFrequency: getPayFrequency(r.note), note: stripFreqTag(r.note) });
       const closeModal = () => { setEditingRecord(null); setMsg(''); };
 
       const handleFormChange = (e) => {
@@ -3971,7 +3993,7 @@ Build the wall first. Attack second.`)}
           monthlyPay: parseFloat(editingRecord.monthlyPay) || 0,
           endDate: editingRecord.endDate,
           status: editingRecord.status,
-          note: editingRecord.note
+          note: encodeNoteWithFreq(editingRecord.note, editingRecord.payFrequency)
         };
         gasDebtAPI('saveLoanRecord', payload).then(res => {
           setSaving(false);
@@ -3990,7 +4012,8 @@ Build the wall first. Attack second.`)}
       };
 
       const renderLoanRow = (r) => {
-        const { months, remainAmount } = getRemainingInfo(r.endDate, r.monthlyPay);
+        const freq = getPayFrequency(r.note);
+        const { months, remainAmount } = getRemainingInfo(r.endDate, r.monthlyPay, freq);
         const category = r.category || DEBT_CATEGORY_DEFAULT;
         // 「優先消滅」只在類型為貸款時判定，信用卡/訂閱/保險即使利率填了>2.5%也不顯示
         const highRate = category === DEBT_CATEGORY_DEFAULT && (parseFloat(r.rate) || 0) > 2.5;
@@ -4008,7 +4031,10 @@ Build the wall first. Attack second.`)}
               </div>
               <div>
                 <div className="text-xs font-bold uppercase tracking-widest text-slate-400">{t('月付', 'MONTHLY')}</div>
-                <div className="text-lg font-black font-mono text-sky-600 dark:text-sky-400">{formatNumber(r.monthlyPay)}</div>
+                <div className="text-lg font-black font-mono text-sky-600 dark:text-sky-400 flex items-center gap-1.5 flex-wrap">
+                  {formatNumber(r.monthlyPay)}
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 normal-case">{freq === PAY_FREQ_YEARLY ? t('年繳', 'YEARLY') : t('月繳', 'MONTHLY')}</span>
+                </div>
                 <div className="text-xs text-slate-400 mt-0.5">{t('利率', 'RATE')} {r.rate}%</div>
               </div>
               <div>
@@ -4070,7 +4096,13 @@ Build the wall first. Attack second.`)}
               <div className="fixed inset-0 z-[999] bg-black/40 flex items-start justify-center overflow-y-auto p-4 md:p-10" onClick={closeModal}>
                 <div className="w-full max-w-2xl my-8 tech-panel p-8" onClick={e => e.stopPropagation()}>
                   <div className="flex items-center justify-between mb-6">
-                    <h3 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200">{editingRecord.id ? t('編輯貸款', 'EDIT LOAN') : t('新增貸款', 'ADD LOAN')}</h3>
+                    <h3 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200">
+                      {(() => {
+                        const cat = editingRecord.category || DEBT_CATEGORY_DEFAULT;
+                        const catEn = CATEGORY_LABEL_EN[cat] || cat;
+                        return editingRecord.id ? t(`編輯${cat}`, `EDIT ${catEn}`) : t(`新增${cat}`, `ADD ${catEn}`);
+                      })()}
+                    </h3>
                     <button onClick={closeModal} className="text-slate-400 hover:text-rose-500 text-2xl font-black">&times;</button>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -4086,7 +4118,14 @@ Build the wall first. Attack second.`)}
                     <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('利率 %', 'RATE %')}</label><input type="number" step="0.01" name="rate" value={editingRecord.rate} onChange={handleFormChange} className="w-full tech-input" /></div>
                     <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('手續費', 'FEE')}</label><input type="number" name="fee" value={editingRecord.fee} onChange={handleFormChange} className="w-full tech-input" /></div>
                     <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('初始總額', 'TOTAL AMOUNT')}</label><input type="number" name="totalAmount" value={editingRecord.totalAmount} onChange={handleFormChange} className="w-full tech-input" /></div>
-                    <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('月付金額', 'MONTHLY PAY')}</label><input type="number" name="monthlyPay" value={editingRecord.monthlyPay} onChange={handleFormChange} className="w-full tech-input" /></div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('繳費頻率', 'PAY FREQUENCY')}</label>
+                      <select name="payFrequency" value={editingRecord.payFrequency || PAY_FREQ_MONTHLY} onChange={handleFormChange} className="w-full tech-input">
+                        <option value={PAY_FREQ_MONTHLY}>{t('月繳', 'MONTHLY')}</option>
+                        <option value={PAY_FREQ_YEARLY}>{t('年繳', 'YEARLY')}</option>
+                      </select>
+                    </div>
+                    <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{editingRecord.payFrequency === PAY_FREQ_YEARLY ? t('年繳金額', 'YEARLY AMOUNT') : t('月付金額', 'MONTHLY PAY')}</label><input type="number" name="monthlyPay" value={editingRecord.monthlyPay} onChange={handleFormChange} className="w-full tech-input" /></div>
                     <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('到期年月 (YYYY-MM)', 'END DATE (YYYY-MM)')}</label><input name="endDate" value={editingRecord.endDate} onChange={handleFormChange} placeholder="2030-01" className="w-full tech-input" /></div>
                     <div>
                       <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('狀態', 'STATUS')}</label>
