@@ -274,7 +274,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/13 10:58';
+    const APP_VERSION = '2026/08/14 11:37';
 
     /* ===================================================================
        共用工具
@@ -395,6 +395,28 @@
             if (data.error) { reject(new Error(data.message)); } else { resetAuthFailCount(); resolve(data); }
           }).catch(err => reject(err));
         }
+      });
+    };
+
+    /* ===================================================================
+       債務追蹤 (Debt) 後端路由 — 獨立 GAS 專案，doPost + WRITE_SECRET，
+       與 FOS/AMBER 共用同一組 ACCESS_TOKEN_KEY（getAccessToken()）
+    =================================================================== */
+    const GAS_URL_DEBT = 'https://script.google.com/macros/s/AKfycbwqH8ovq8_PgjN20IiAGMq3Y0Hwf_qhAyU2VI594c_RhJlU6A-RZT9z-2GQTsnaF36z/exec';
+    const gasDebtAPI = (serverFunction, ...args) => {
+      return new Promise((resolve, reject) => {
+        fetch(GAS_URL_DEBT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          redirect: 'follow',
+          body: JSON.stringify({ action: serverFunction, args: args, token: getAccessToken() })
+        }).then(res => res.json()).then(data => {
+          if (data && (data.status === 'unauthorized' || data.status === 'locked')) {
+            reject(handleAuthStatus(data.status));
+            return;
+          }
+          if (data && data.success === false) { reject(new Error(data.message || 'Debt API error')); } else { resetAuthFailCount(); resolve(data); }
+        }).catch(err => reject(err));
       });
     };
 
@@ -627,7 +649,7 @@
     /* ===================================================================
        FOS 子元件 (Boss Terminal v12.2)  — isDarkMode / isEng 由 AppShell 注入
     =================================================================== */
-    function FosTerminal({ isDarkMode, isEng, onInjectPrefill, onLAmountChange }) {
+    function FosTerminal({ isDarkMode, isEng, onInjectPrefill, onLAmountChange, debtMonthlyTotal }) {
       function getMRZone(mr) {
         const val = parseFloat(mr);
         if (val === 0) return { dot: 'bg-slate-300 dark:bg-slate-600', text: 'text-slate-400', label: 'STANDBY', zone: 'STANDBY' };
@@ -2036,11 +2058,15 @@ Build the wall first. Attack second.`)}
               );
 
               // v12.11 — 流動性覆蓋 LCM(階段二)：P1可用(扣死線)+現金 除以月付，沿用既有 P1/L/現金護城河欄位，不新增計算來源
+              // v12.16 — 月付來源改為優先讀債務分頁自動加總(debtMonthlyTotal)，null(債務分頁未就緒)時fallback回現金護城河手動輸入值(cmMonthlyDebt)。
+              //          只改LCM讀哪個來源，現金護城河卡自己的cmMonthlyDebt/cmTarget/cmGap等既有計算與顯示完全不動。
+              const lcmMonthlyDebtSource = (debtMonthlyTotal != null) ? 'debt' : 'manual';
+              const lcmMonthlyDebtEffective = (debtMonthlyTotal != null) ? debtMonthlyTotal : cmMonthlyDebt;
               const lcmDeathLine = L * 0.0606;
               const lcmP1Available = Math.max(0, P1 - lcmDeathLine);
               const lcmTotalLiquid = lcmP1Available + cmCash;
-              const lcmHasDebt = cmMonthlyDebt > 0;
-              const lcmMonths = lcmHasDebt ? (lcmTotalLiquid / cmMonthlyDebt) : null;
+              const lcmHasDebt = lcmMonthlyDebtEffective > 0;
+              const lcmMonths = lcmHasDebt ? (lcmTotalLiquid / lcmMonthlyDebtEffective) : null;
               const lcmZoneKey = !lcmHasDebt ? 'na' : (lcmMonths >= 9 ? 'green' : (lcmMonths >= 6 ? 'yellow' : 'red'));
               const lcmZoneStyles = {
                 green: { box: 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400', label: t('🟢 充足', '🟢 SUFFICIENT') },
@@ -2072,7 +2098,7 @@ Build the wall first. Attack second.`)}
                             <div className="flex justify-between p-2 rounded bg-slate-50 dark:bg-slate-800/50"><span className="opacity-60">{t('P1可用', 'P1 AVAIL')}</span><span className="font-bold">{formatNumber(lcmP1Available)}</span></div>
                             <div className="flex justify-between p-2 rounded bg-slate-50 dark:bg-slate-800/50"><span className="opacity-60">{t('現金', 'CASH')}</span><span className="font-bold">{formatNumber(cmCash)}</span></div>
                             <div className="flex justify-between p-2 rounded bg-slate-50 dark:bg-slate-800/50"><span className="opacity-60">{t('合計', 'TOTAL')}</span><span className="font-bold">{formatNumber(lcmTotalLiquid)}</span></div>
-                            <div className="flex justify-between p-2 rounded bg-slate-50 dark:bg-slate-800/50"><span className="opacity-60">{t('月付', 'DEBT')}</span><span className="font-bold">{lcmHasDebt ? formatNumber(cmMonthlyDebt) : t('未設定', 'N/A')}</span></div>
+                            <div className="flex justify-between p-2 rounded bg-slate-50 dark:bg-slate-800/50"><span className="opacity-60">{t('月付', 'DEBT')} {lcmMonthlyDebtSource === 'debt' ? t('(自動)', '(AUTO)') : t('(手動)', '(MANUAL)')}</span><span className="font-bold">{lcmHasDebt ? formatNumber(lcmMonthlyDebtEffective) : t('未設定', 'N/A')}</span></div>
                           </div>
                           <div className="font-bold text-slate-700 dark:text-slate-200">{t('LCM = (P1可用 + 現金) ÷ 月付', 'LCM = (P1 Available + Cash) ÷ Monthly Debt')}</div>
                           <div>{t('P1可用 = P1市值 − 死線（L × 6.06%），死線以下的P1專防禦MR斷頭，不可當生活費故不計入', 'P1 Available = P1 Value − Death Line (L × 6.06%). The portion below the death line defends against an MR margin call and is excluded.')}</div>
@@ -3854,6 +3880,239 @@ Build the wall first. Attack second.`)}
     }
 
     /* ===================================================================
+       DebtTerminal — 債務 DEBT (v1.0)
+       獨立元件，資料源為獨立的債務追蹤 GAS 後端(doPost + WRITE_SECRET，
+       與 FOS/AMBER 共用同一組 ACCESS_TOKEN_KEY，登入態共用不需另外登入)。
+       月付總和透過 onDebtTotalChange 往上交給 AppShell，供 LCM 卡連動讀取。
+       ⚠️ 狀態欄位假設沿用「執行中」/「已結清」兩種字串值(比照本次任務描述)，
+       若舊資料實際用詞不同，非「已結清」的一律歸類到「執行中」清單，
+       不會讓資料在畫面上憑空消失，但分類可能需要 Boss 之後核對舊資料調整。
+    =================================================================== */
+    function DebtTerminal({ isDarkMode, isEng, onDebtTotalChange }) {
+      const t = (zh, en) => isEng ? en : zh;
+      function formatNumber(num) {
+        return isNaN(parseFloat(num)) ? '0' : parseFloat(num).toLocaleString('en-US', { maximumFractionDigits: 0 });
+      }
+      const DEBT_STATUS_CLOSED = '已結清';
+      const DEBT_STATUS_ACTIVE = '執行中';
+      const emptyForm = { id: '', name: '', partnerBank: '', deductBank: '', rate: '', fee: '', totalAmount: '', monthlyPay: '', endDate: '', status: DEBT_STATUS_ACTIVE, note: '' };
+
+      const [records, setRecords] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [loadError, setLoadError] = useState('');
+      const [saving, setSaving] = useState(false);
+      const [editingRecord, setEditingRecord] = useState(null); // null=關閉；物件=開啟(有id為編輯，無id為新增)
+      const [deleteTarget, setDeleteTarget] = useState(null);
+      const [msg, setMsg] = useState('');
+
+      const loadRecords = () => {
+        setLoading(true);
+        setLoadError('');
+        gasDebtAPI('getLoanRecords').then(res => {
+          setRecords(Array.isArray(res.data) ? res.data : []);
+          setLoading(false);
+        }).catch(err => {
+          setLoadError(err && err.message ? err.message : String(err));
+          setLoading(false);
+        });
+      };
+
+      useEffect(() => { loadRecords(); }, []);
+
+      const activeRecords = records.filter(r => r.status !== DEBT_STATUS_CLOSED);
+      const closedRecords = records.filter(r => r.status === DEBT_STATUS_CLOSED);
+
+      const monthlyTotal = useMemo(() => {
+        return activeRecords.reduce((sum, r) => sum + (parseFloat(r.monthlyPay) || 0), 0);
+      }, [records]);
+
+      // 未載入完成或載入失敗時回傳 null，讓 FOS 端的 LCM fallback 回手動輸入值，
+      // 不會把「還沒抓到資料」誤當成「月付總和=0」往上傳
+      useEffect(() => {
+        if (!onDebtTotalChange) return;
+        onDebtTotalChange((loading || loadError) ? null : monthlyTotal);
+      }, [monthlyTotal, loading, loadError]);
+
+      const getRemainingInfo = (endDate, monthlyPay) => {
+        const match = /^(\d{4})-(\d{2})$/.exec(String(endDate || '').trim());
+        if (!match) return { months: null, remainAmount: null };
+        const y = parseInt(match[1], 10), m = parseInt(match[2], 10);
+        const now = new Date();
+        let months = (y - now.getFullYear()) * 12 + (m - (now.getMonth() + 1));
+        if (months < 0) months = 0;
+        const pay = parseFloat(monthlyPay) || 0;
+        return { months, remainAmount: months * pay };
+      };
+
+      const openNewModal = () => setEditingRecord({ ...emptyForm });
+      const openEditModal = (r) => setEditingRecord({ ...r });
+      const closeModal = () => { setEditingRecord(null); setMsg(''); };
+
+      const handleFormChange = (e) => {
+        const { name, value } = e.target;
+        setEditingRecord(prev => ({ ...prev, [name]: value }));
+      };
+
+      const handleSave = () => {
+        if (!editingRecord.name) { setMsg(t('請輸入貸款名稱', 'Loan name is required')); return; }
+        setSaving(true);
+        setMsg('');
+        const payload = {
+          id: editingRecord.id || '',
+          name: editingRecord.name,
+          partnerBank: editingRecord.partnerBank,
+          deductBank: editingRecord.deductBank,
+          rate: parseFloat(editingRecord.rate) || 0,
+          fee: parseFloat(editingRecord.fee) || 0,
+          totalAmount: parseFloat(editingRecord.totalAmount) || 0,
+          monthlyPay: parseFloat(editingRecord.monthlyPay) || 0,
+          endDate: editingRecord.endDate,
+          status: editingRecord.status,
+          note: editingRecord.note
+        };
+        gasDebtAPI('saveLoanRecord', payload).then(res => {
+          setSaving(false);
+          if (res.success) { setEditingRecord(null); loadRecords(); }
+          else { setMsg(res.message || t('儲存失敗', 'Save failed')); }
+        }).catch(err => { setSaving(false); setMsg(err && err.message ? err.message : String(err)); });
+      };
+
+      const handleDelete = () => {
+        if (!deleteTarget) return;
+        gasDebtAPI('deleteLoanRecord', deleteTarget).then(res => {
+          setDeleteTarget(null);
+          if (res.success) { loadRecords(); }
+          else { setMsg(res.message || t('刪除失敗', 'Delete failed')); }
+        }).catch(err => { setDeleteTarget(null); setMsg(err && err.message ? err.message : String(err)); });
+      };
+
+      const renderLoanRow = (r) => {
+        const { months, remainAmount } = getRemainingInfo(r.endDate, r.monthlyPay);
+        const highRate = (parseFloat(r.rate) || 0) > 2.5;
+        return (
+          <div key={r.id} className="tech-panel p-5 flex flex-col md:flex-row md:items-center gap-4">
+            <div className="flex-grow grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div>
+                <div className="text-xs font-bold uppercase tracking-widest text-slate-400">{t('名稱', 'NAME')}</div>
+                <div className="text-lg font-black text-slate-700 dark:text-slate-200 flex items-center gap-2">
+                  {r.name}
+                  {highRate && <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800">{t('優先消滅', 'PRIORITY')}</span>}
+                </div>
+                <div className="text-xs text-slate-400 mt-0.5">{r.partnerBank}{r.deductBank ? ` · ${t('扣款', 'Debit')}: ${r.deductBank}` : ''}</div>
+              </div>
+              <div>
+                <div className="text-xs font-bold uppercase tracking-widest text-slate-400">{t('月付', 'MONTHLY')}</div>
+                <div className="text-lg font-black font-mono text-sky-600 dark:text-sky-400">{formatNumber(r.monthlyPay)}</div>
+                <div className="text-xs text-slate-400 mt-0.5">{t('利率', 'RATE')} {r.rate}%</div>
+              </div>
+              <div>
+                <div className="text-xs font-bold uppercase tracking-widest text-slate-400">{t('初始總額', 'TOTAL')}</div>
+                <div className="text-base font-bold font-mono text-slate-600 dark:text-slate-300">{formatNumber(r.totalAmount)}</div>
+              </div>
+              <div>
+                <div className="text-xs font-bold uppercase tracking-widest text-slate-400">{t('剩餘應繳(估)', 'REMAINING (EST.)')}</div>
+                <div className="text-base font-bold font-mono text-slate-600 dark:text-slate-300">{remainAmount !== null ? formatNumber(remainAmount) : 'N/A'}</div>
+                <div className="text-xs text-slate-400 mt-0.5">{months !== null ? t(`剩 ${months} 期`, `${months} left`) : t('無到期資料', 'no end date')}</div>
+              </div>
+            </div>
+            <div className="flex md:flex-col gap-2 shrink-0">
+              <button onClick={() => openEditModal(r)} className="tech-btn px-4 py-2 text-sm font-bold bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800">{t('編輯', 'EDIT')}</button>
+              <button onClick={() => setDeleteTarget(r.id)} className="tech-btn px-4 py-2 text-sm font-bold bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800">{t('刪除', 'DELETE')}</button>
+            </div>
+          </div>
+        );
+      };
+
+      return (
+        <div className="clean-grid-bg min-h-screen text-slate-800 dark:text-slate-200 text-lg md:text-xl pt-8 pb-20 selection:bg-sky-200 dark:selection:bg-sky-900">
+          <div className="max-w-[1600px] mx-auto px-4 md:px-10 space-y-8 pb-24 relative tracking-wide">
+
+            <div className="tech-panel p-8">
+              <h2 className="text-lg font-black uppercase text-slate-400 mb-4">{t('每月基礎失血量', 'MONTHLY BASE BURN')}</h2>
+              {loading ? (
+                <div className="text-2xl font-black text-slate-300 dark:text-slate-600">{t('讀取中...', 'Loading...')}</div>
+              ) : loadError ? (
+                <div className="text-rose-500 font-bold">{t('讀取失敗：', 'Load failed: ')}{loadError}</div>
+              ) : (
+                <div className="flex items-baseline gap-3 flex-wrap">
+                  <span className="text-4xl md:text-5xl font-black font-mono text-rose-600 dark:text-rose-400 data-text">{formatNumber(monthlyTotal)}</span>
+                  <span className="text-sm font-bold text-slate-400 uppercase tracking-widest">{t(`${activeRecords.length} 筆執行中貸款`, `${activeRecords.length} active loans`)}</span>
+                </div>
+              )}
+              <div className="text-xs text-slate-400 mt-3">{t('此數字會自動同步到 FOS 頁 LCM 卡的月付總額（優先於手動輸入值）', 'This number auto-syncs to the FOS page LCM card\'s monthly debt (takes priority over manual input)')}</div>
+            </div>
+
+            <div className="flex justify-between items-center">
+              <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200">{t('貸款列表', 'LOAN LIST')}</h2>
+              <button onClick={openNewModal} className="tech-btn px-5 py-2.5 font-bold bg-sky-500 text-white">+ {t('新增貸款', 'ADD LOAN')}</button>
+            </div>
+
+            {!loading && !loadError && (
+              <Fragment>
+                <div className="space-y-3">
+                  <div className="text-sm font-bold uppercase tracking-widest text-slate-400">{t('執行中', 'ACTIVE')}</div>
+                  {activeRecords.length === 0 ? <div className="tech-panel p-5 text-center text-slate-400">{t('目前沒有執行中的貸款', 'No active loans')}</div> : activeRecords.map(renderLoanRow)}
+                </div>
+                <div className="space-y-3">
+                  <div className="text-sm font-bold uppercase tracking-widest text-slate-400">{t('已結清', 'CLOSED')}</div>
+                  {closedRecords.length === 0 ? <div className="tech-panel p-5 text-center text-slate-400 opacity-60">{t('目前沒有已結清的貸款', 'No closed loans')}</div> : closedRecords.map(renderLoanRow)}
+                </div>
+              </Fragment>
+            )}
+
+            {editingRecord && (
+              <div className="fixed inset-0 z-[999] bg-black/40 flex items-start justify-center overflow-y-auto p-4 md:p-10" onClick={closeModal}>
+                <div className="w-full max-w-2xl my-8 tech-panel p-8" onClick={e => e.stopPropagation()}>
+                  <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200">{editingRecord.id ? t('編輯貸款', 'EDIT LOAN') : t('新增貸款', 'ADD LOAN')}</h3>
+                    <button onClick={closeModal} className="text-slate-400 hover:text-rose-500 text-2xl font-black">&times;</button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('名稱', 'NAME')}</label><input name="name" value={editingRecord.name} onChange={handleFormChange} className="w-full tech-input" /></div>
+                    <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('往來銀行', 'PARTNER BANK')}</label><input name="partnerBank" value={editingRecord.partnerBank} onChange={handleFormChange} className="w-full tech-input" /></div>
+                    <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('扣款銀行', 'DEDUCT BANK')}</label><input name="deductBank" value={editingRecord.deductBank} onChange={handleFormChange} className="w-full tech-input" /></div>
+                    <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('利率 %', 'RATE %')}</label><input type="number" step="0.01" name="rate" value={editingRecord.rate} onChange={handleFormChange} className="w-full tech-input" /></div>
+                    <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('手續費', 'FEE')}</label><input type="number" name="fee" value={editingRecord.fee} onChange={handleFormChange} className="w-full tech-input" /></div>
+                    <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('初始總額', 'TOTAL AMOUNT')}</label><input type="number" name="totalAmount" value={editingRecord.totalAmount} onChange={handleFormChange} className="w-full tech-input" /></div>
+                    <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('月付金額', 'MONTHLY PAY')}</label><input type="number" name="monthlyPay" value={editingRecord.monthlyPay} onChange={handleFormChange} className="w-full tech-input" /></div>
+                    <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('到期年月 (YYYY-MM)', 'END DATE (YYYY-MM)')}</label><input name="endDate" value={editingRecord.endDate} onChange={handleFormChange} placeholder="2030-01" className="w-full tech-input" /></div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('狀態', 'STATUS')}</label>
+                      <select name="status" value={editingRecord.status} onChange={handleFormChange} className="w-full tech-input">
+                        <option value={DEBT_STATUS_ACTIVE}>{t('執行中', 'ACTIVE')}</option>
+                        <option value={DEBT_STATUS_CLOSED}>{t('已結清', 'CLOSED')}</option>
+                      </select>
+                    </div>
+                    <div className="md:col-span-2"><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('備註', 'NOTE')}</label><input name="note" value={editingRecord.note} onChange={handleFormChange} className="w-full tech-input" /></div>
+                  </div>
+                  {msg && <div className="text-rose-500 font-bold text-sm mt-4">{msg}</div>}
+                  <div className="flex justify-end gap-3 mt-6">
+                    <button onClick={closeModal} className="tech-btn px-5 py-2.5 font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">{t('取消', 'CANCEL')}</button>
+                    <button onClick={handleSave} disabled={saving} className={`tech-btn px-5 py-2.5 font-bold text-white ${saving ? 'bg-slate-400' : 'bg-sky-500'}`}>{saving ? t('儲存中...', 'SAVING...') : t('儲存', 'SAVE')}</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {deleteTarget && (
+              <div className="fixed inset-0 z-[999] bg-black/40 flex items-center justify-center p-4" onClick={() => setDeleteTarget(null)}>
+                <div className="w-full max-w-sm tech-panel p-6" onClick={e => e.stopPropagation()}>
+                  <div className="text-lg font-black text-slate-700 dark:text-slate-200 mb-2">{t('確認刪除？', 'Confirm delete?')}</div>
+                  <div className="text-sm text-slate-400 mb-6">{t('此操作無法復原。', 'This cannot be undone.')}</div>
+                  <div className="flex justify-end gap-3">
+                    <button onClick={() => setDeleteTarget(null)} className="tech-btn px-5 py-2.5 font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">{t('取消', 'CANCEL')}</button>
+                    <button onClick={handleDelete} className="tech-btn px-5 py-2.5 font-bold bg-rose-500 text-white">{t('確認刪除', 'DELETE')}</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+          </div>
+        </div>
+      );
+    }
+
+    /* ===================================================================
        AppShell — 統一 theme / lang / Tab
     =================================================================== */
     function AppShell() {
@@ -3873,6 +4132,9 @@ Build the wall first. Attack second.`)}
       // v12.9 — 借款L：比照 onInjectPrefill 模式，FosTerminal 即時回傳給 AppShell 再轉給 AssetTerminal（WCI卡用）
       // 初始值同樣讀 fos_lAmount，避免頁面剛載入、使用者還沒打字時 AMBER 拿不到值
       const [lAmount, setLAmount] = useState(safeGetStorage('fos_lAmount', ''));
+      // v12.16 — 債務分頁月付總和：比照 onLAmountChange 模式，DebtTerminal 算好後回傳，
+      // null 代表尚未就緒(讀取中/失敗)，FosTerminal 的 LCM 卡遇到 null 會 fallback 回手動輸入值
+      const [debtMonthlyTotal, setDebtMonthlyTotal] = useState(null);
       const [unlocked, setUnlocked] = useState(!!getAccessToken());
       const [showPwGuide, setShowPwGuide] = useState(false);
       const [showRefreshHelp, setShowRefreshHelp] = useState(false);
@@ -3933,6 +4195,7 @@ Build the wall first. Attack second.`)}
               <span className="text-sm sm:text-xl md:text-2xl font-black tracking-tighter text-slate-800 dark:text-amber-400 font-mono select-none mr-1 sm:mr-2 hidden sm:inline">⌘ UNIFIED</span><span className="text-sm font-black text-slate-800 dark:text-amber-400 font-mono select-none mr-1 sm:hidden">⌘</span>
               <button onClick={() => setActiveTab('asset')} className={`${tabBase} ${activeTab === 'asset' ? tabActive : tabIdle}`}>{t('總資產 ASSET', 'ASSET')}</button>
               <button onClick={() => setActiveTab('fos')} className={`${tabBase} ${activeTab === 'fos' ? tabActive : tabIdle}`}>FOS BOSS</button>
+              <button onClick={() => setActiveTab('debt')} className={`${tabBase} ${activeTab === 'debt' ? tabActive : tabIdle}`}>{t('債務 DEBT', 'DEBT')}</button>
             </div>
             <div className="flex items-center gap-2 sm:gap-3">
               <div className="relative inline-block">
@@ -4032,7 +4295,10 @@ Build the wall first. Attack second.`)}
             <AssetTerminal theme={theme} assetPrefill={assetPrefill} clearPrefill={() => setAssetPrefill(null)} lAmount={lAmount} />
           </div>
           <div style={{ display: activeTab === 'fos' ? 'block' : 'none' }}>
-            <FosTerminal isDarkMode={isDark} isEng={isEng} onInjectPrefill={(vals) => { setAssetPrefill(vals); setActiveTab('asset'); }} onLAmountChange={setLAmount} />
+            <FosTerminal isDarkMode={isDark} isEng={isEng} onInjectPrefill={(vals) => { setAssetPrefill(vals); setActiveTab('asset'); }} onLAmountChange={setLAmount} debtMonthlyTotal={debtMonthlyTotal} />
+          </div>
+          <div style={{ display: activeTab === 'debt' ? 'block' : 'none' }}>
+            <DebtTerminal isDarkMode={isDark} isEng={isEng} onDebtTotalChange={setDebtMonthlyTotal} />
           </div>
         </div>
       );
