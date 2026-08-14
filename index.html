@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/14 21:15';
+    const APP_VERSION = '2026/08/14 22:05';
 
     /* ===================================================================
        共用工具
@@ -3937,22 +3937,8 @@ Build the wall first. Attack second.`)}
       const [deleteTarget, setDeleteTarget] = useState(null);
       const [msg, setMsg] = useState('');
 
-      // v1.3 — 貸款列表逐筆手風琴收合（比照 HISTORY MATRIX 的「以key索引展開state」模式簡化：
-      // key 是記錄 id 而非年份，預設全收合(不用挑一筆展開)，不做 LOAD_MORE 節流。
-      // 展開狀態存 localStorage，重整後維持；記錄被刪除後 state 裡殘留的孤兒 key 不影響功能，不特別清理。
-      const [expandedLoanRows, setExpandedLoanRows] = useState(() => {
-        try { return JSON.parse(safeGetStorage('debt_expandedRows', '{}')) || {}; } catch (e) { return {}; }
-      });
-      const toggleLoanRow = (id) => {
-        setExpandedLoanRows(prev => {
-          const next = { ...prev, [id]: !prev[id] };
-          safeSetStorage('debt_expandedRows', JSON.stringify(next));
-          return next;
-        });
-      };
-
-      // v1.4 — 按類型分組收合，疊加在逐筆展開之上。key 是 category（固定集合，不像逐筆是持續增加的 id），
-      // 預設全展開：缺 key 一律視為展開（true），只有明確存過 false 才是收合，比逐筆手風琴的「預設全收合」相反。
+      // v1.4 — 按類型分組收合。key 是 category（固定集合），預設全展開：缺 key 一律視為展開（true），
+      // 只有明確存過 false 才是收合。
       const [expandedCategories, setExpandedCategories] = useState(() => {
         try { return JSON.parse(safeGetStorage('debt_expandedCategories', '{}')) || {}; } catch (e) { return {}; }
       });
@@ -3961,6 +3947,20 @@ Build the wall first. Attack second.`)}
         setExpandedCategories(prev => {
           const next = { ...prev, [cat]: !(prev[cat] !== false) };
           safeSetStorage('debt_expandedCategories', JSON.stringify(next));
+          return next;
+        });
+      };
+
+      // v1.5 — 已結清改為分組內的次級收合（不再逐筆收合，改組內二階收合），key 同樣是 category，
+      // 預設全收合（缺 key 視為 false）：已結清通常不常開，預設收起比較乾淨，跟分組展開方向刻意相反。
+      const [expandedClosedGroups, setExpandedClosedGroups] = useState(() => {
+        try { return JSON.parse(safeGetStorage('debt_expandedClosedGroups', '{}')) || {}; } catch (e) { return {}; }
+      });
+      const isClosedGroupExpanded = (cat) => !!expandedClosedGroups[cat];
+      const toggleClosedGroup = (cat) => {
+        setExpandedClosedGroups(prev => {
+          const next = { ...prev, [cat]: !prev[cat] };
+          safeSetStorage('debt_expandedClosedGroups', JSON.stringify(next));
           return next;
         });
       };
@@ -3981,19 +3981,21 @@ Build the wall first. Attack second.`)}
 
       const activeRecords = records.filter(r => r.status !== DEBT_STATUS_CLOSED);
 
-      // v1.4 — 按類型分組（比照 HISTORY MATRIX 分組模式簡化：不分年份、分 category），
-      // 已結清不再獨立分區，併入所屬類型；組內執行中排前、已結清排後，方便閱讀。
+      // v1.5 — 按類型分組，組內拆成「執行中」/「已結清」兩個子陣列（已結清改為次級收合，不再混在同一份列表裡）。
       // 固定顯示 DEBT_CATEGORIES 四組（即使 0 筆），未知/舊資料的 category 值另外附加在後面，不讓資料憑空消失。
+      // 每組同時算好 activeMonthlyTotal（僅執行中的月付總和，換算後），供表頭大字顯示用。
       const recordsByCategory = useMemo(() => {
         const groups = {};
-        DEBT_CATEGORIES.forEach(cat => { groups[cat] = []; });
+        DEBT_CATEGORIES.forEach(cat => { groups[cat] = { active: [], closed: [], activeMonthlyTotal: 0 }; });
         records.forEach(r => {
           const cat = r.category || DEBT_CATEGORY_DEFAULT;
-          if (!groups[cat]) groups[cat] = [];
-          groups[cat].push(r);
-        });
-        Object.keys(groups).forEach(cat => {
-          groups[cat] = [...groups[cat]].sort((a, b) => (a.status === DEBT_STATUS_CLOSED ? 1 : 0) - (b.status === DEBT_STATUS_CLOSED ? 1 : 0));
+          if (!groups[cat]) groups[cat] = { active: [], closed: [], activeMonthlyTotal: 0 };
+          if (r.status === DEBT_STATUS_CLOSED) {
+            groups[cat].closed.push(r);
+          } else {
+            groups[cat].active.push(r);
+            groups[cat].activeMonthlyTotal += toMonthlyEquivalent(r.monthlyPay, getPayFrequency(r.note));
+          }
         });
         return groups;
       }, [records]);
@@ -4072,27 +4074,12 @@ Build the wall first. Attack second.`)}
         const category = r.category || DEBT_CATEGORY_DEFAULT;
         // 「優先消滅」只在類型為貸款時判定，信用卡/訂閱/保險即使利率填了>2.5%也不顯示
         const highRate = category === DEBT_CATEGORY_DEFAULT && (parseFloat(r.rate) || 0) > 2.5;
-        const isExpanded = !!expandedLoanRows[r.id];
         const isClosed = r.status === DEBT_STATUS_CLOSED;
         const closedClass = isClosed
           ? " bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-950/20 dark:to-slate-900 border-emerald-200 dark:border-emerald-800/50 closed-card-flash"
           : "";
         return (
           <div key={r.id} className={"tech-panel p-5 flex flex-col gap-3" + closedClass}>
-          <button onClick={() => toggleLoanRow(r.id)} className="w-full flex items-center justify-between gap-3 text-left outline-none">
-            <div className="flex items-center gap-2 flex-wrap min-w-0">
-              <span className="text-lg font-black text-slate-700 dark:text-slate-200 truncate">{r.name}</span>
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 shrink-0">{category}</span>
-              {highRate && <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800 shrink-0">{t('優先消滅', 'PRIORITY')}</span>}
-            </div>
-            <div className="flex items-center gap-3 shrink-0">
-              <span className="text-lg font-black font-mono text-sky-600 dark:text-sky-400">{formatNumber(toMonthlyEquivalent(r.monthlyPay, freq))}</span>
-              <span className="text-slate-400 dark:text-slate-500 text-sm font-bold">{isExpanded ? '▲' : '▼'}</span>
-            </div>
-          </button>
-          <div className={"grid transition-all duration-300 ease-in-out " + (isExpanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0")}>
-            <div className="overflow-hidden">
-          <div className="flex flex-col gap-3 pt-1">
           <div className="flex flex-col md:flex-row md:items-center gap-4">
             <div className="flex-grow grid grid-cols-2 md:grid-cols-4 gap-3">
               <div>
@@ -4135,9 +4122,6 @@ Build the wall first. Attack second.`)}
             </div>
           )}
           </div>
-          </div>
-          </div>
-          </div>
         );
       };
 
@@ -4168,19 +4152,52 @@ Build the wall first. Attack second.`)}
             {!loading && !loadError && (
               <Fragment>
                 {categoryOrder.map(cat => {
-                  const catRecords = recordsByCategory[cat] || [];
+                  const group = recordsByCategory[cat] || { active: [], closed: [], activeMonthlyTotal: 0 };
                   const catOpen = isCategoryExpanded(cat);
                   const catLabel = t(cat, CATEGORY_LABEL_EN[cat] || cat);
+                  const closedOpen = isClosedGroupExpanded(cat);
+                  const barPct = monthlyTotal > 0 ? Math.min(100, (group.activeMonthlyTotal / monthlyTotal) * 100) : 0;
                   return (
-                    <div key={cat} className="space-y-3">
-                      <button onClick={() => toggleCategory(cat)} className="w-full flex items-center justify-between px-1 outline-none">
-                        <span className="text-sm font-bold uppercase tracking-widest text-slate-400">{catLabel} ({catRecords.length})</span>
-                        <span className="text-slate-400 dark:text-slate-500 text-xs font-bold">{catOpen ? '▲' : '▼'}</span>
+                    <div key={cat} className="tech-panel overflow-hidden">
+                      <button onClick={() => toggleCategory(cat)} className="w-full flex flex-col p-6 md:p-8 text-left outline-none hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                        <div className="flex flex-wrap justify-between items-start gap-2 w-full">
+                          <div className="flex items-center gap-3">
+                            <span className="font-extrabold text-slate-800 dark:text-slate-100 font-mono text-3xl md:text-4xl uppercase tracking-wide">{catLabel}</span>
+                            <span className="text-slate-400 dark:text-slate-500 text-lg font-bold">{catOpen ? '▲' : '▼'}</span>
+                          </div>
+                          <div className="flex flex-col items-end gap-1">
+                            <span className="text-[10px] sm:text-xs text-slate-500 dark:text-slate-400 font-mono tracking-wider uppercase">{t('月付總額(執行中)', 'MONTHLY (ACTIVE)')}</span>
+                            <span className="text-2xl sm:text-3xl md:text-4xl font-extrabold font-mono text-rose-600 dark:text-rose-400">{formatNumber(group.activeMonthlyTotal)}</span>
+                          </div>
+                        </div>
+                        <div className="w-full mt-4">
+                          <div className="relative w-full h-3 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                            <div className="absolute inset-y-0 left-0 bg-sky-500 dark:bg-sky-400 rounded-full transition-all duration-500" style={{ width: barPct + '%' }} />
+                          </div>
+                          <div className="flex flex-wrap justify-between items-center mt-2 gap-1">
+                            <span className="text-sm font-mono font-bold text-slate-500 dark:text-slate-400">
+                              {t(`${group.active.length} 筆執行中`, `${group.active.length} active`)}
+                              {group.closed.length > 0 && t(` · ${group.closed.length} 筆已結清`, ` · ${group.closed.length} closed`)}
+                            </span>
+                            <span className="text-[10px] font-mono text-slate-400 dark:text-slate-600">{monthlyTotal > 0 ? barPct.toFixed(1) + '%' : '—'} {t('佔月付總額', 'of total burn')}</span>
+                          </div>
+                        </div>
                       </button>
                       {catOpen && (
-                        catRecords.length === 0
-                          ? <div className="tech-panel p-5 text-center text-slate-400 opacity-60">{t(`目前沒有${catLabel}記錄`, `No ${catLabel} records`)}</div>
-                          : catRecords.map(renderLoanRow)
+                        <div className="p-5 md:p-6 space-y-3 border-t border-slate-200 dark:border-slate-800">
+                          {group.active.length === 0
+                            ? <div className="tech-panel p-5 text-center text-slate-400 opacity-60">{t(`目前沒有執行中的${catLabel}記錄`, `No active ${catLabel} records`)}</div>
+                            : group.active.map(renderLoanRow)}
+                          {group.closed.length > 0 && (
+                            <div className="space-y-3">
+                              <button onClick={() => toggleClosedGroup(cat)} className="w-full flex items-center gap-2 px-1 outline-none text-emerald-600 dark:text-emerald-400">
+                                <span className="text-xs font-bold">{closedOpen ? '▼' : '▶'}</span>
+                                <span className="text-sm font-bold uppercase tracking-widest">{t('已結清', 'CLOSED')} ({group.closed.length})</span>
+                              </button>
+                              {closedOpen && group.closed.map(renderLoanRow)}
+                            </div>
+                          )}
+                        </div>
                       )}
                     </div>
                   );
