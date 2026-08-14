@@ -274,7 +274,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/14 16:53';
+    const APP_VERSION = '2026/08/14 17:12';
 
     /* ===================================================================
        共用工具
@@ -4018,7 +4018,8 @@ Build the wall first. Attack second.`)}
         // 「優先消滅」只在類型為貸款時判定，信用卡/訂閱/保險即使利率填了>2.5%也不顯示
         const highRate = category === DEBT_CATEGORY_DEFAULT && (parseFloat(r.rate) || 0) > 2.5;
         return (
-          <div key={r.id} className="tech-panel p-5 flex flex-col md:flex-row md:items-center gap-4">
+          <div key={r.id} className="tech-panel p-5 flex flex-col gap-3">
+          <div className="flex flex-col md:flex-row md:items-center gap-4">
             <div className="flex-grow grid grid-cols-2 md:grid-cols-4 gap-3">
               <div>
                 <div className="text-xs font-bold uppercase tracking-widest text-slate-400">{t('名稱', 'NAME')}</div>
@@ -4032,9 +4033,10 @@ Build the wall first. Attack second.`)}
               <div>
                 <div className="text-xs font-bold uppercase tracking-widest text-slate-400">{t('月付', 'MONTHLY')}</div>
                 <div className="text-lg font-black font-mono text-sky-600 dark:text-sky-400 flex items-center gap-1.5 flex-wrap">
-                  {formatNumber(r.monthlyPay)}
+                  {formatNumber(toMonthlyEquivalent(r.monthlyPay, freq))}
                   <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 normal-case">{freq === PAY_FREQ_YEARLY ? t('年繳', 'YEARLY') : t('月繳', 'MONTHLY')}</span>
                 </div>
+                {freq === PAY_FREQ_YEARLY && <div className="text-xs text-slate-400 mt-0.5">{t(`(年繳 ${formatNumber(r.monthlyPay)})`, `(yearly ${formatNumber(r.monthlyPay)})`)}</div>}
                 <div className="text-xs text-slate-400 mt-0.5">{t('利率', 'RATE')} {r.rate}%</div>
               </div>
               <div>
@@ -4051,6 +4053,13 @@ Build the wall first. Attack second.`)}
               <button onClick={() => openEditModal(r)} className="tech-btn px-4 py-2 text-sm font-bold bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800">{t('編輯', 'EDIT')}</button>
               <button onClick={() => setDeleteTarget(r.id)} className="tech-btn px-4 py-2 text-sm font-bold bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800">{t('刪除', 'DELETE')}</button>
             </div>
+          </div>
+          {stripFreqTag(r.note) && (
+            <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50">
+              <span className="text-amber-500 dark:text-amber-400 animate-pulse shrink-0">📌</span>
+              <span className="text-sm font-bold text-amber-700 dark:text-amber-300">{stripFreqTag(r.note)}</span>
+            </div>
+          )}
           </div>
         );
       };
@@ -4115,9 +4124,15 @@ Build the wall first. Attack second.`)}
                     </div>
                     <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('往來銀行', 'PARTNER BANK')}</label><input name="partnerBank" value={editingRecord.partnerBank} onChange={handleFormChange} className="w-full tech-input" /></div>
                     <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('扣款銀行', 'DEDUCT BANK')}</label><input name="deductBank" value={editingRecord.deductBank} onChange={handleFormChange} className="w-full tech-input" /></div>
-                    <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('利率 %', 'RATE %')}</label><input type="number" step="0.01" name="rate" value={editingRecord.rate} onChange={handleFormChange} className="w-full tech-input" /></div>
-                    <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('手續費', 'FEE')}</label><input type="number" name="fee" value={editingRecord.fee} onChange={handleFormChange} className="w-full tech-input" /></div>
-                    <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('初始總額', 'TOTAL AMOUNT')}</label><input type="number" name="totalAmount" value={editingRecord.totalAmount} onChange={handleFormChange} className="w-full tech-input" /></div>
+                    {/* v1.3 — 利率/手續費/初始總額/到期年月 只對「貸款」類型顯示；切換類型時欄位值不清空，
+                        只是隱藏不顯示，避免使用者切換類型測試時意外遺失既有資料 */}
+                    {(editingRecord.category || DEBT_CATEGORY_DEFAULT) === DEBT_CATEGORY_DEFAULT && (
+                      <Fragment>
+                        <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('利率 %', 'RATE %')}</label><input type="number" step="0.01" name="rate" value={editingRecord.rate} onChange={handleFormChange} className="w-full tech-input" /></div>
+                        <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('手續費', 'FEE')}</label><input type="number" name="fee" value={editingRecord.fee} onChange={handleFormChange} className="w-full tech-input" /></div>
+                        <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('初始總額', 'TOTAL AMOUNT')}</label><input type="number" name="totalAmount" value={editingRecord.totalAmount} onChange={handleFormChange} className="w-full tech-input" /></div>
+                      </Fragment>
+                    )}
                     <div>
                       <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('繳費頻率', 'PAY FREQUENCY')}</label>
                       <select name="payFrequency" value={editingRecord.payFrequency || PAY_FREQ_MONTHLY} onChange={handleFormChange} className="w-full tech-input">
@@ -4126,7 +4141,9 @@ Build the wall first. Attack second.`)}
                       </select>
                     </div>
                     <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{editingRecord.payFrequency === PAY_FREQ_YEARLY ? t('年繳金額', 'YEARLY AMOUNT') : t('月付金額', 'MONTHLY PAY')}</label><input type="number" name="monthlyPay" value={editingRecord.monthlyPay} onChange={handleFormChange} className="w-full tech-input" /></div>
-                    <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('到期年月 (YYYY-MM)', 'END DATE (YYYY-MM)')}</label><input name="endDate" value={editingRecord.endDate} onChange={handleFormChange} placeholder="2030-01" className="w-full tech-input" /></div>
+                    {(editingRecord.category || DEBT_CATEGORY_DEFAULT) === DEBT_CATEGORY_DEFAULT && (
+                      <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('到期年月 (YYYY-MM)', 'END DATE (YYYY-MM)')}</label><input name="endDate" value={editingRecord.endDate} onChange={handleFormChange} placeholder="2030-01" className="w-full tech-input" /></div>
+                    )}
                     <div>
                       <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('狀態', 'STATUS')}</label>
                       <select name="status" value={editingRecord.status} onChange={handleFormChange} className="w-full tech-input">
