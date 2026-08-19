@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/19 10:00';
+    const APP_VERSION = '2026/08/19 15:30';
 
     /* ===================================================================
        共用工具
@@ -797,6 +797,10 @@
       const [showUsDetail, setShowUsDetail] = useState(false);
       const [showCryptoDetail, setShowCryptoDetail] = useState(false);
       const [escapeAmount, setEscapeAmount] = useState('');
+      // v12.18 — FIAT注入功能搬進獨立浮動視窗（原本掛在PART9開關下面），觸發按鈕永遠顯示、不受isPart9控制
+      const [showFiatModal, setShowFiatModal] = useState(false);
+      const fiatHeaderRef = useRef(null);
+      const fiatDragOffset = useDraggableOffset(fiatHeaderRef, showFiatModal);
 
       const [liveCrypto, setLiveCrypto] = useState({ BTC: 0, ETH: 0 });
       const [betaConfig, setBetaConfig] = useState({ b0050: '1.0', b00733: '1.35', mrLimit: '130' });
@@ -1211,6 +1215,62 @@
       const cmSurplus = cmCash - cmTarget;
       const cmStatus = !cmHasTarget ? 'EXPOSED' : (cmProgress >= 1 ? 'FORTIFIED' : (cmProgress >= 0.5 ? 'BUILDING' : 'EXPOSED'));
 
+      // ERG離職放行閘門 — 檢查表骨架（本輪只接閘門2真實數字，閘門1/3/4先佔位）
+      // 閘門2「緩衝存糧」呼叫共用函式 calcAvailableBuffer，月付來源比照LCM卡既有邏輯
+      // （debtMonthlyTotal優先，null時fallback回cmMonthlyDebt手動輸入值），不新增計算來源
+      // v12.18 — 計算區塊搬到 header 之前宣告（純粹移動宣告順序，不改任何邏輯），供 header 的 ERG 精簡摘要使用
+      const ergMonthlyDebtEffective = (debtMonthlyTotal != null) ? debtMonthlyTotal : cmMonthlyDebt;
+      const ergHasDebt = ergMonthlyDebtEffective > 0;
+      const { totalLiquid: ergBufferLiquid } = calcAvailableBuffer(P1, L, cmCash);
+      const ergBufferMonths = ergHasDebt ? (ergBufferLiquid / ergMonthlyDebtEffective) : null;
+      const ERG_GATE2_THRESHOLD_MONTHS = 24; // 達標門檻，先寫死，之後可改參數化
+      const ergGate2Pass = ergHasDebt && ergBufferMonths >= ERG_GATE2_THRESHOLD_MONTHS;
+
+      // status: 'pass'(✅達標) / 'fail'(⬜未達標，已建置但未過門檻) / 'pending'(🔲尚未建置，或已建置但缺資料無法判定)
+      const ergGates = [
+        {
+          id: 1,
+          name: t('斷頭壓力測試', 'MARGIN CALL STRESS TEST'),
+          status: 'pending',
+          display: t('尚未建置', 'NOT BUILT')
+        },
+        {
+          id: 2,
+          name: t('緩衝存糧', 'BUFFER RESERVE'),
+          status: !ergHasDebt ? 'pending' : (ergGate2Pass ? 'pass' : 'fail'),
+          display: !ergHasDebt
+            ? t('資料未就緒（月付未設定）', 'DATA NOT READY (monthly debt unset)')
+            : t(`可動用緩衝 ${ergBufferMonths.toFixed(2)} 個月（門檻 ≥ ${ERG_GATE2_THRESHOLD_MONTHS} 個月）`, `Buffer ${ergBufferMonths.toFixed(2)} months (threshold ≥ ${ERG_GATE2_THRESHOLD_MONTHS})`)
+        },
+        {
+          id: 3,
+          name: t('配息覆蓋', 'DIVIDEND COVERAGE'),
+          status: 'pending',
+          display: t('尚未建置', 'NOT BUILT')
+        },
+        {
+          id: 4,
+          name: t('月付無未爆彈', 'NO HIDDEN PAYMENT SPIKES'),
+          status: 'pending',
+          display: t('尚未建置', 'NOT BUILT')
+        }
+      ];
+      const ergIcon = (status) => status === 'pass' ? '✅' : status === 'fail' ? '⬜' : '🔲';
+      const ergRowColor = (status) => status === 'pass'
+        ? 'text-emerald-600 dark:text-emerald-400'
+        : status === 'fail'
+        ? 'text-rose-600 dark:text-rose-400'
+        : 'text-slate-400 dark:text-slate-500';
+      const ergPassCount = ergGates.filter(g => g.status === 'pass').length;
+      const ergAnyPending = ergGates.some(g => g.status === 'pending');
+      const ergAllPass = ergGates.every(g => g.status === 'pass');
+      // 任何一項尚未建置/資料未就緒 → 一律「未完整，無法判定」，不因單一閘門達標就誤放行
+      const ergVerdict = ergAnyPending
+        ? { text: t('⚠️ 未完整，無法判定', '⚠️ INCOMPLETE — CANNOT DETERMINE'), color: 'text-slate-400 dark:text-slate-500' }
+        : ergAllPass
+        ? { text: t('✅ 可全職操盤', '✅ CLEARED FOR FULL-TIME TRADING'), color: 'text-emerald-600 dark:text-emerald-400' }
+        : { text: t('❌ 尚未達標', '❌ NOT CLEARED'), color: 'text-rose-600 dark:text-rose-400' };
+
       const cardTitles = {
         input: t(`${inputTab} 注入`, `${inputTab} INPUT`),
         liquidity: t('流動性防禦', 'LIQUIDITY DEFENSE'),
@@ -1276,13 +1336,51 @@
                       <span className="tech-slider"></span>
                     </label>
                   </div>
+                  {/* v12.18 — FIAT注入觸發鈕：永遠顯示，不受isPart9控制，點擊開啟浮動視窗 */}
+                  <button type="button" onClick={() => setShowFiatModal(true)} className="tech-btn px-5 py-2.5 font-bold bg-violet-500 text-white flex items-center gap-2">
+                    💉 <span className="hidden sm:inline">{t('FIAT 注入', 'FIAT INJECT')}</span>
+                  </button>
                 </div>
 
+                {/* v12.18 — PART9開啟時，原本FIAT AMOUNT位置改顯示ERG精簡摘要（4燈號+總結），
+                    點擊捲動到bottom zone完整卡片；FIAT注入功能本身搬進獨立浮動視窗（見下方modal） */}
                 {isPart9 && (
-                  <div className="w-full xl:w-[500px] bg-slate-50 dark:bg-slate-900/50 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 mt-2">
-                    <label className="text-xl font-black uppercase mb-4 block text-slate-700 dark:text-slate-300 flex items-center gap-3">
-                      <span className="w-2 h-2 rounded-full bg-violet-500"></span> 80/20 INJECTION MATRIX
-                    </label>
+                  <button
+                    type="button"
+                    onClick={() => scrollToCard('erg')}
+                    className="w-full xl:w-[500px] bg-slate-50 dark:bg-slate-900/50 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 mt-2 text-left hover:border-sky-300 dark:hover:border-sky-700 transition-colors"
+                  >
+                    <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+                      <span className="text-sm font-black uppercase text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-violet-500"></span> {cardTitles.erg}
+                      </span>
+                      <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">{t(`${ergPassCount}/4 達標`, `${ergPassCount}/4 PASSED`)}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      {ergGates.map(g => (
+                        <span key={g.id} className={`text-xs font-bold px-2 py-1 rounded-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 ${ergRowColor(g.status)}`}>
+                          {ergIcon(g.status)} {t(`閘門${g.id}`, `G${g.id}`)}
+                        </span>
+                      ))}
+                    </div>
+                    <div className={`text-sm font-black ${ergVerdict.color}`}>{ergVerdict.text}</div>
+                  </button>
+                )}
+              </div>
+
+              {showFiatModal && ReactDOM.createPortal(
+                <React.Fragment>
+                  <div className="fixed inset-0 z-[999] bg-black/40" onClick={() => setShowFiatModal(false)} />
+                  <div
+                    className="fixed top-1/2 left-1/2 z-[1000] w-[90vw] max-w-sm sm:max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-violet-500/30 p-6 sm:p-8 max-h-[85vh] overflow-y-auto"
+                    style={{ transform: `translate(calc(-50% + ${fiatDragOffset.dx}px), calc(-50% + ${fiatDragOffset.dy}px))` }}
+                  >
+                    <div ref={fiatHeaderRef} className="flex items-center justify-between mb-4 cursor-grab active:cursor-grabbing select-none">
+                      <span className="text-xl font-black uppercase text-slate-700 dark:text-slate-300 flex items-center gap-3">
+                        <span className="w-2 h-2 rounded-full bg-violet-500"></span> 80/20 INJECTION MATRIX
+                      </span>
+                      <button onClick={() => setShowFiatModal(false)} className="text-slate-400 hover:text-rose-500 text-xl leading-none">✕</button>
+                    </div>
                     <input type="number" value={escapeAmount} onChange={e => setEscapeAmount(e.target.value)} className="w-full tech-input mb-6 text-center text-2xl text-violet-600 dark:text-violet-400 font-mono focus:border-violet-400 focus:shadow-[0_0_0_4px_rgba(139,92,246,0.15)] dark:focus:shadow-[0_0_0_4px_rgba(139,92,246,0.25)]" placeholder="FIAT AMOUNT" />
 
                     {escapeVal > 0 && (
@@ -1321,8 +1419,9 @@
                       </div>
                     )}
                   </div>
-                )}
-              </div>
+                </React.Fragment>,
+                document.body
+              )}
 
               <div className="basis-full w-full relative z-10 mt-2 pt-6 border-t border-sky-100 dark:border-sky-900/40 flex flex-wrap gap-2">
                 {cardIndexList.map(card => (
@@ -2191,61 +2290,8 @@ Build the wall first. Attack second.`)}
                 </div>
               );
 
-              // ERG離職放行閘門 — 檢查表骨架（本輪只接閘門2真實數字，閘門1/3/4先佔位）
-              // 閘門2「緩衝存糧」呼叫共用函式 calcAvailableBuffer，月付來源比照LCM卡既有邏輯
-              // （debtMonthlyTotal優先，null時fallback回cmMonthlyDebt手動輸入值），不新增計算來源
-              const ergMonthlyDebtEffective = (debtMonthlyTotal != null) ? debtMonthlyTotal : cmMonthlyDebt;
-              const ergHasDebt = ergMonthlyDebtEffective > 0;
-              const { totalLiquid: ergBufferLiquid } = calcAvailableBuffer(P1, L, cmCash);
-              const ergBufferMonths = ergHasDebt ? (ergBufferLiquid / ergMonthlyDebtEffective) : null;
-              const ERG_GATE2_THRESHOLD_MONTHS = 24; // 達標門檻，先寫死，之後可改參數化
-              const ergGate2Pass = ergHasDebt && ergBufferMonths >= ERG_GATE2_THRESHOLD_MONTHS;
-
-              // status: 'pass'(✅達標) / 'fail'(⬜未達標，已建置但未過門檻) / 'pending'(🔲尚未建置，或已建置但缺資料無法判定)
-              const ergGates = [
-                {
-                  id: 1,
-                  name: t('斷頭壓力測試', 'MARGIN CALL STRESS TEST'),
-                  status: 'pending',
-                  display: t('尚未建置', 'NOT BUILT')
-                },
-                {
-                  id: 2,
-                  name: t('緩衝存糧', 'BUFFER RESERVE'),
-                  status: !ergHasDebt ? 'pending' : (ergGate2Pass ? 'pass' : 'fail'),
-                  display: !ergHasDebt
-                    ? t('資料未就緒（月付未設定）', 'DATA NOT READY (monthly debt unset)')
-                    : t(`可動用緩衝 ${ergBufferMonths.toFixed(2)} 個月（門檻 ≥ ${ERG_GATE2_THRESHOLD_MONTHS} 個月）`, `Buffer ${ergBufferMonths.toFixed(2)} months (threshold ≥ ${ERG_GATE2_THRESHOLD_MONTHS})`)
-                },
-                {
-                  id: 3,
-                  name: t('配息覆蓋', 'DIVIDEND COVERAGE'),
-                  status: 'pending',
-                  display: t('尚未建置', 'NOT BUILT')
-                },
-                {
-                  id: 4,
-                  name: t('月付無未爆彈', 'NO HIDDEN PAYMENT SPIKES'),
-                  status: 'pending',
-                  display: t('尚未建置', 'NOT BUILT')
-                }
-              ];
-              const ergIcon = (status) => status === 'pass' ? '✅' : status === 'fail' ? '⬜' : '🔲';
-              const ergRowColor = (status) => status === 'pass'
-                ? 'text-emerald-600 dark:text-emerald-400'
-                : status === 'fail'
-                ? 'text-rose-600 dark:text-rose-400'
-                : 'text-slate-400 dark:text-slate-500';
-              const ergPassCount = ergGates.filter(g => g.status === 'pass').length;
-              const ergAnyPending = ergGates.some(g => g.status === 'pending');
-              const ergAllPass = ergGates.every(g => g.status === 'pass');
-              // 任何一項尚未建置/資料未就緒 → 一律「未完整，無法判定」，不因單一閘門達標就誤放行
-              const ergVerdict = ergAnyPending
-                ? { text: t('⚠️ 未完整，無法判定', '⚠️ INCOMPLETE — CANNOT DETERMINE'), color: 'text-slate-400 dark:text-slate-500' }
-                : ergAllPass
-                ? { text: t('✅ 可全職操盤', '✅ CLEARED FOR FULL-TIME TRADING'), color: 'text-emerald-600 dark:text-emerald-400' }
-                : { text: t('❌ 尚未達標', '❌ NOT CLEARED'), color: 'text-rose-600 dark:text-rose-400' };
-
+              // ERG離職放行閘門計算區塊已搬到本函式開頭（cmStatus 之後、cardTitles 之前），
+              // 這裡直接沿用 ergGates/ergPassCount/ergVerdict 等變數，純粹是宣告位置搬移，邏輯不變
               const cardErg = (
                 <div className="tech-panel p-8">
                   <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200 flex items-center gap-2 mb-6">
