@@ -284,13 +284,34 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/15 00:40';
+    const APP_VERSION = '2026/08/18 14:00';
 
     /* ===================================================================
        共用工具
     =================================================================== */
     const safeGetStorage = (key, defVal) => { try { return localStorage.getItem(key) || defVal; } catch(e) { return defVal; } };
     const safeSetStorage = (key, val) => { try { localStorage.setItem(key, val); } catch(e) {} };
+
+    /* ===================================================================
+       共用變數層（ERG 準備工作一）——供 LCM/WCI/ERG 等多個模組共用的純函式，
+       不寫在任何元件內部，逐字對應原本各卡片內的算式，禁止「順便優化」運算順序。
+    =================================================================== */
+    // 可動用緩衝：逐字搬自 LCM 卡原本 index.html:2068-2070 的三行算式，僅供跨模組共用，
+    // 運算邏輯與搬移前完全一致（死線 = L×6.06%，P1可用 = max(0, P1-死線)，合計再加現金）。
+    function calcAvailableBuffer(P1, L, cash) {
+      const deathLine = L * 0.0606;
+      const p1Available = Math.max(0, P1 - deathLine);
+      const totalLiquid = p1Available + cash;
+      return { deathLine, p1Available, totalLiquid };
+    }
+
+    // 質押利息月額 = L × 質押年利率 ÷ 12。pledgeRatePercent 是「百分比數字」（4 代表 4%，
+    // 不是小數 0.04），跟畫面顯示與 formData.pledgeRate 的儲存格式一致，這裡先除以100轉小數再算。
+    // 這次先不接任何顯示畫面，只供之後 ERG/共用變數層使用。
+    function calcPledgeMonthlyInterest(L, pledgeRatePercent) {
+      const rateDecimal = (parseFloat(pledgeRatePercent) || 0) / 100;
+      return (L * rateDecimal) / 12;
+    }
 
     /* ===================================================================
        現金護城河 CASH MOAT — 資料持久化（v2: GAS 優先 + localStorage 雙寫/fallback）
@@ -659,7 +680,7 @@
     /* ===================================================================
        FOS 子元件 (Boss Terminal v12.2)  — isDarkMode / isEng 由 AppShell 注入
     =================================================================== */
-    function FosTerminal({ isDarkMode, isEng, onInjectPrefill, onLAmountChange, debtMonthlyTotal }) {
+    function FosTerminal({ isDarkMode, isEng, onInjectPrefill, onLAmountChange, onPledgeRateChange, debtMonthlyTotal }) {
       function getMRZone(mr) {
         const val = parseFloat(mr);
         if (val === 0) return { dot: 'bg-slate-300 dark:bg-slate-600', text: 'text-slate-400', label: 'STANDBY', zone: 'STANDBY' };
@@ -713,6 +734,9 @@
 
       const [formData, setFormData] = useState({
         lAmount: safeGetStorage('fos_lAmount', ''),
+        // ERG準備工作一 — 質押年利率：儲存的是「百分比數字」（4 代表 4%，不是小數 0.04），
+        // 跟畫面顯示格式一致；運算時（calcPledgeMonthlyInterest）才轉成小數
+        pledgeRate: safeGetStorage('fos_pledgeRate', '4'),
         c0050: safeGetStorage('fos_c0050', ''),
         c00733: safeGetStorage('fos_c00733', ''),
         p1_00675L: safeGetStorage('fos_p1_675', ''),
@@ -990,6 +1014,7 @@
         const { name, value } = e.target;
         setFormData(p => ({ ...p, [name]: value }));
         if (name === 'lAmount') { safeSetStorage('fos_lAmount', value); onLAmountChange?.(value); }
+        if (name === 'pledgeRate') { safeSetStorage('fos_pledgeRate', value); onPledgeRateChange?.(value); }
         if (name === 'c0050') safeSetStorage('fos_c0050', value);
         if (name === 'c00733') safeSetStorage('fos_c00733', value);
         if (name === 'p1_00675L') safeSetStorage('fos_p1_675', value);
@@ -1064,6 +1089,8 @@
       };
 
       const L = parseFloat(formData.lAmount) || 0;
+      // ERG準備工作一 — 質押利息月額，先不接任何顯示畫面，只供之後 ERG/共用變數層使用
+      const pledgeMonthlyInterest = calcPledgeMonthlyInterest(L, formData.pledgeRate);
       const c0050 = parseFloat(formData.c0050) || 0;
       const c00733 = parseFloat(formData.c00733) || 0;
       const C = c0050 + c00733;
@@ -1343,6 +1370,9 @@
                   {inputTab === 'A' ? (
                     <div className="space-y-5">
                       <div><label className="block text-sm font-bold mb-1.5 text-slate-500 uppercase tracking-wider">L AMOUNT</label><input type="number" inputMode="decimal" name="lAmount" value={formData.lAmount} onChange={handleInputChange} onKeyDown={handleEnterJump(aInputRefs, 0)} ref={el => aInputRefs.current[0] = el} className="w-full tech-input font-mono" placeholder="0" /></div>
+                      {/* ERG準備工作一 — 質押年利率：獨立欄位，不加入 Enter 跳格序列（aInputRefs），
+                          避免打亂既有欄位的跳格順序索引；預設4（代表4%），供之後 ERG 質押利息月額使用 */}
+                      <div><label className="block text-sm font-bold mb-1.5 text-slate-500 uppercase tracking-wider">{t('質押年利率 %', 'PLEDGE RATE %')}</label><input type="number" inputMode="decimal" step="0.01" name="pledgeRate" value={formData.pledgeRate} onChange={handleInputChange} className="w-full tech-input font-mono" placeholder="4" /></div>
                       <div className="grid grid-cols-2 gap-4">
                         <div><label className="block text-sm font-bold mb-1.5 text-slate-500 uppercase tracking-wider">C 0050</label><input type="number" inputMode="decimal" name="c0050" value={formData.c0050} onChange={handleInputChange} onKeyDown={handleEnterJump(aInputRefs, 1)} ref={el => aInputRefs.current[1] = el} className="w-full tech-input font-mono" placeholder="0" /></div>
                         <div><label className="block text-sm font-bold mb-1.5 text-slate-500 uppercase tracking-wider">C 00733</label><input type="number" inputMode="decimal" name="c00733" value={formData.c00733} onChange={handleInputChange} onKeyDown={handleEnterJump(aInputRefs, 2)} ref={el => aInputRefs.current[2] = el} className="w-full tech-input font-mono" placeholder="0" /></div>
@@ -2065,9 +2095,9 @@ Build the wall first. Attack second.`)}
               //          只改LCM讀哪個來源，現金護城河卡自己的cmMonthlyDebt/cmTarget/cmGap等既有計算與顯示完全不動。
               const lcmMonthlyDebtSource = (debtMonthlyTotal != null) ? 'debt' : 'manual';
               const lcmMonthlyDebtEffective = (debtMonthlyTotal != null) ? debtMonthlyTotal : cmMonthlyDebt;
-              const lcmDeathLine = L * 0.0606;
-              const lcmP1Available = Math.max(0, P1 - lcmDeathLine);
-              const lcmTotalLiquid = lcmP1Available + cmCash;
+              // ERG準備工作一 — 改呼叫共用函式 calcAvailableBuffer（逐字搬自原本這三行算式，
+              // 未改變任何運算順序，數字應與遷移前完全一致）
+              const { deathLine: lcmDeathLine, p1Available: lcmP1Available, totalLiquid: lcmTotalLiquid } = calcAvailableBuffer(P1, L, cmCash);
               const lcmHasDebt = lcmMonthlyDebtEffective > 0;
               const lcmMonths = lcmHasDebt ? (lcmTotalLiquid / lcmMonthlyDebtEffective) : null;
               const lcmZoneKey = !lcmHasDebt ? 'na' : (lcmMonths >= 9 ? 'green' : (lcmMonths >= 6 ? 'yellow' : 'red'));
@@ -4334,6 +4364,9 @@ Build the wall first. Attack second.`)}
       // v12.9 — 借款L：比照 onInjectPrefill 模式，FosTerminal 即時回傳給 AppShell 再轉給 AssetTerminal（WCI卡用）
       // 初始值同樣讀 fos_lAmount，避免頁面剛載入、使用者還沒打字時 AMBER 拿不到值
       const [lAmount, setLAmount] = useState(safeGetStorage('fos_lAmount', ''));
+      // ERG準備工作一 — 質押年利率：比照 lAmount 同一套「FosTerminal算好回傳給AppShell」模式，
+      // 供之後 ERG 分頁讀取；儲存格式是百分比數字（4代表4%），跟 formData.pledgeRate 一致
+      const [pledgeRate, setPledgeRate] = useState(safeGetStorage('fos_pledgeRate', '4'));
       // v12.16 — 債務分頁月付總和：比照 onLAmountChange 模式，DebtTerminal 算好後回傳，
       // null 代表尚未就緒(讀取中/失敗)，FosTerminal 的 LCM 卡遇到 null 會 fallback 回手動輸入值
       const [debtMonthlyTotal, setDebtMonthlyTotal] = useState(null);
@@ -4497,7 +4530,7 @@ Build the wall first. Attack second.`)}
             <AssetTerminal theme={theme} assetPrefill={assetPrefill} clearPrefill={() => setAssetPrefill(null)} lAmount={lAmount} />
           </div>
           <div style={{ display: activeTab === 'fos' ? 'block' : 'none' }}>
-            <FosTerminal isDarkMode={isDark} isEng={isEng} onInjectPrefill={(vals) => { setAssetPrefill(vals); setActiveTab('asset'); }} onLAmountChange={setLAmount} debtMonthlyTotal={debtMonthlyTotal} />
+            <FosTerminal isDarkMode={isDark} isEng={isEng} onInjectPrefill={(vals) => { setAssetPrefill(vals); setActiveTab('asset'); }} onLAmountChange={setLAmount} onPledgeRateChange={setPledgeRate} debtMonthlyTotal={debtMonthlyTotal} />
           </div>
           <div style={{ display: activeTab === 'debt' ? 'block' : 'none' }}>
             <DebtTerminal isDarkMode={isDark} isEng={isEng} onDebtTotalChange={setDebtMonthlyTotal} />
