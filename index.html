@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/21 09:15';
+    const APP_VERSION = '2026/08/21 23:50';
 
     /* ===================================================================
        共用工具
@@ -801,6 +801,8 @@
       const [showFiatModal, setShowFiatModal] = useState(false);
       const fiatHeaderRef = useRef(null);
       const fiatDragOffset = useDraggableOffset(fiatHeaderRef, showFiatModal);
+      // 2026/08/21 Boss拍板 — 點單一閘門彈出說明小視窗，取代/補充獨立說明頁
+      const [ergInfoGate, setErgInfoGate] = useState(null);
 
       const [liveCrypto, setLiveCrypto] = useState({ BTC: 0, ETH: 0 });
       const [betaConfig, setBetaConfig] = useState({ b0050: '1.0', b00733: '1.35', mrLimit: '130' });
@@ -1300,6 +1302,33 @@
             : t(`⚠️ 已勾選：近 ${ERG_GATE2_THRESHOLD_MONTHS} 個月內有已知月付變動`, `⚠️ Flagged: known payment change within ${ERG_GATE2_THRESHOLD_MONTHS}mo`)
         }
       ];
+      // 2026/08/21 Boss拍板 — 每道閘門的白話說明，點該閘門列會彈出小視窗顯示
+      const ERG_GATE_INFO = {
+        1: {
+          title: t('閘門1・斷頭壓力測試', 'GATE 1 · MARGIN CALL STRESS TEST'),
+          what: t('假設持股（0050+00733市值）直接跌50%，剩下的市值夠不夠蓋住借款，不會被追繳（斷頭）。', 'Assumes your holdings (0050+00733 market value) drop 50% outright — checks whether what remains still covers the loan without a margin call.'),
+          formula: t('（持股市值×0.5）÷借款金額，要 ≥ 150% 才安全。', '(Holdings value × 0.5) ÷ Loan amount, must be ≥ 150% to be safe.'),
+          howTo: t('提高持股市值（多買0050/00733），或還一部分質押借款（降低L）。', 'Increase holdings value, or pay down some of the pledged loan.')
+        },
+        2: {
+          title: t('閘門2・緩衝存糧', 'GATE 2 · BUFFER RESERVE'),
+          what: t('手上的現金+閒置資金，可以撐幾個月的每月支出（月付）。', 'Cash plus idle funds on hand — how many months of monthly payments they can cover.'),
+          formula: t('可動用緩衝÷月付，要 ≥ 24 個月。', 'Available buffer ÷ monthly payment, must be ≥ 24 months.'),
+          howTo: t('增加現金存量，或降低每月固定支出（還清一些債務）。', 'Increase cash reserves, or reduce fixed monthly expenses.')
+        },
+        3: {
+          title: t('閘門3・配息覆蓋', 'GATE 3 · DIVIDEND COVERAGE'),
+          what: t('就算配息打五折（保守估計），一年領到的配息夠不夠付一年生活費。', 'Even with dividends discounted 50% (a conservative estimate), do a year of dividends cover a year of living costs.'),
+          formula: t('年配息估×0.5 ≥ 月生活費×12。', 'Annual dividend estimate × 0.5 ≥ Monthly living cost × 12.'),
+          howTo: t('先填上方「殖利率%」與「月生活費」兩個欄位；沒過則提高殖利率持股比重、增加持股市值，或降低生活費。', 'First fill in "Yield %" and "Monthly Living" above; if it fails, raise yield-weighted holdings, increase holdings value, or lower living costs.')
+        },
+        4: {
+          title: t('閘門4・月付無未爆彈', 'GATE 4 · NO HIDDEN PAYMENT SPIKES'),
+          what: t('未來24個月內，月付有沒有已知會跳增的狀況（例如房貸寬限期到期）。', 'Whether there is a known monthly-payment increase coming in the next 24 months (e.g. a mortgage grace period ending).'),
+          formula: t('純手動勾選，不是系統自動判讀。', 'A manual flag — not auto-detected by the system.'),
+          howTo: t('有已知變動就勾選上方的勾選框（變紅燈提醒）；沒有就不勾（維持綠燈）。', 'Check the box above if you know of a change coming (turns red); leave unchecked if not (stays green).')
+        }
+      };
       const ergIcon = (status) => status === 'pass' ? '✅' : status === 'fail' ? '⬜' : '🔲';
       const ergRowColor = (status) => status === 'pass'
         ? 'text-emerald-600 dark:text-emerald-400'
@@ -1375,16 +1404,23 @@
               <div className="flex flex-col items-end gap-6 w-full xl:w-auto relative z-10">
                 <div className="flex flex-wrap items-center gap-4">
                   <div className="flex items-center gap-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-6 py-2.5 rounded-2xl shadow-sm">
-                    <span className="text-lg font-bold uppercase text-slate-500 dark:text-slate-400">PART 9</span>
+                    <span className="text-lg font-bold uppercase text-slate-500 dark:text-slate-400">{t('自在模式', 'FREE MODE')}</span>
                     <label className="tech-toggle">
-                      <input type="checkbox" checked={isPart9} onChange={() => { setIsPart9(!isPart9); safeSetStorage('fos_isPart9', (!isPart9).toString()); }} />
+                      <input type="checkbox" checked={isPart9} onChange={() => {
+                        const next = !isPart9;
+                        setIsPart9(next);
+                        safeSetStorage('fos_isPart9', next.toString());
+                        if (!next) setShowFiatModal(false); // 2026/08/21 — 關閉自在模式時，FIAT注入浮動視窗也一併收起
+                      }} />
                       <span className="tech-slider"></span>
                     </label>
                   </div>
-                  {/* v12.18 — FIAT注入觸發鈕：永遠顯示，不受isPart9控制，點擊開啟浮動視窗 */}
-                  <button type="button" onClick={() => setShowFiatModal(true)} className="tech-btn px-5 py-2.5 font-bold bg-violet-500 text-white flex items-center gap-2">
-                    💉 <span className="hidden sm:inline">{t('FIAT 注入', 'FIAT INJECT')}</span>
-                  </button>
+                  {/* 2026/08/21 Boss拍板 — FIAT注入鈕改回跟著自在模式(原PART9)開關連動，關閉時一併消失 */}
+                  {isPart9 && (
+                    <button type="button" onClick={() => setShowFiatModal(true)} className="tech-btn px-5 py-2.5 font-bold bg-violet-500 text-white flex items-center gap-2">
+                      💉 <span className="hidden sm:inline">{t('FIAT 注入', 'FIAT INJECT')}</span>
+                    </button>
+                  )}
                 </div>
 
                 {/* v12.18 — PART9開啟時，原本FIAT AMOUNT位置改顯示ERG精簡摘要（4燈號+總結），
@@ -1413,7 +1449,7 @@
                 )}
               </div>
 
-              {showFiatModal && ReactDOM.createPortal(
+              {showFiatModal && isPart9 && ReactDOM.createPortal(
                 <React.Fragment>
                   <div className="fixed inset-0 z-[999] bg-black/40" onClick={() => setShowFiatModal(false)} />
                   <div
@@ -2338,6 +2374,7 @@ Build the wall first. Attack second.`)}
               // ERG離職放行閘門計算區塊已搬到本函式開頭（cmStatus 之後、cardTitles 之前），
               // 這裡直接沿用 ergGates/ergPassCount/ergVerdict 等變數，純粹是宣告位置搬移，邏輯不變
               const cardErg = (
+                <React.Fragment>
                 <div className="tech-panel p-8">
                   <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200 flex items-center gap-2 mb-6">
                     <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
@@ -2364,10 +2401,15 @@ Build the wall first. Attack second.`)}
 
                   <div className="space-y-3">
                     {ergGates.map(g => (
-                      <div key={g.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 px-4 py-3 rounded-lg bg-slate-50 dark:bg-slate-800/50">
+                      <div
+                        key={g.id}
+                        onClick={() => setErgInfoGate(g.id)}
+                        className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 px-4 py-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                      >
                         <div className="flex items-center gap-2 font-bold text-slate-700 dark:text-slate-200">
                           <span>{ergIcon(g.status)}</span>
                           <span>{t(`閘門${g.id}`, `GATE ${g.id}`)} · {g.name}</span>
+                          <span className="text-xs text-slate-400 font-normal">ⓘ</span>
                         </div>
                         <div className={`text-sm font-mono font-bold ${ergRowColor(g.status)}`}>{g.display}</div>
                       </div>
@@ -2379,6 +2421,35 @@ Build the wall first. Attack second.`)}
                   </div>
                   <div className="text-xs text-slate-400 mt-3">{t('粗略模型階段（2026/08/20）：閘門1/2已接真實計算；閘門3為壓縮係數/殖利率簡化估算；閘門4為手動勾選簡化版，尚未接後端變動排程，之後逐步精修', 'Rough-model stage (2026/08/20): Gates 1/2 wired to real calculations; Gate 3 uses a simplified compression/yield estimate; Gate 4 is a manual-flag simplification without a backend change schedule yet — to be refined incrementally')}</div>
                 </div>
+
+                {/* 2026/08/21 Boss拍板 — 點單一閘門彈出白話說明小視窗 */}
+                {ergInfoGate && ReactDOM.createPortal(
+                  <React.Fragment>
+                    <div className="fixed inset-0 z-[999] bg-black/40" onClick={() => setErgInfoGate(null)} />
+                    <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[1000] w-[90vw] max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-sky-500/30 p-6 sm:p-8 max-h-[85vh] overflow-y-auto">
+                      <div className="flex items-center justify-between mb-4">
+                        <span className="text-lg font-black uppercase text-slate-700 dark:text-slate-200">{ERG_GATE_INFO[ergInfoGate].title}</span>
+                        <button onClick={() => setErgInfoGate(null)} className="text-slate-400 hover:text-rose-500 text-xl leading-none">✕</button>
+                      </div>
+                      <div className="space-y-4 text-sm">
+                        <div>
+                          <div className="text-xs font-bold uppercase tracking-widest text-sky-500 mb-1">{t('檢查什麼', 'WHAT IT CHECKS')}</div>
+                          <div className="text-slate-600 dark:text-slate-300">{ERG_GATE_INFO[ergInfoGate].what}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold uppercase tracking-widest text-sky-500 mb-1">{t('怎麼算', 'HOW IT IS CALCULATED')}</div>
+                          <div className="text-slate-600 dark:text-slate-300 font-mono">{ERG_GATE_INFO[ergInfoGate].formula}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold uppercase tracking-widest text-sky-500 mb-1">{t('要怎麼做才會綠燈', 'HOW TO PASS')}</div>
+                          <div className="text-slate-600 dark:text-slate-300">{ERG_GATE_INFO[ergInfoGate].howTo}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </React.Fragment>,
+                  document.body
+                )}
+                </React.Fragment>
               );
 
               const bottomCards = { usEngine: cardUsEngine, crypto: cardCrypto, radar: cardRadar, history: cardHistory, erg: cardErg };
@@ -2415,7 +2486,9 @@ Build the wall first. Attack second.`)}
                     </div>
 
                     <div className={sortMode ? 'space-y-3' : 'space-y-8'}>
-                      {bottomOrder.map(id => (
+                      {/* 2026/08/21 Boss拍板 — 自在模式(原PART9)關閉時，ERG完整卡片也一併消失；
+                          用filter而非改bottomOrder本身，重新開啟時原本拖曳順序不會跑掉 */}
+                      {bottomOrder.filter(id => isPart9 || id !== 'erg').map(id => (
                         <DraggableCard key={id} id={id} zone="bottom" order={bottomOrder} setOrder={setBottomOrder} dragInfo={dragInfo} setDragInfo={setDragInfo} collapsed={sortMode} title={cardTitles[id]}>
                           {bottomCards[id]}
                         </DraggableCard>
