@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/21 23:50';
+    const APP_VERSION = '2026/08/22 00:20';
 
     /* ===================================================================
        共用工具
@@ -1404,18 +1404,18 @@
               <div className="flex flex-col items-end gap-6 w-full xl:w-auto relative z-10">
                 <div className="flex flex-wrap items-center gap-4">
                   <div className="flex items-center gap-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-6 py-2.5 rounded-2xl shadow-sm">
-                    <span className="text-lg font-bold uppercase text-slate-500 dark:text-slate-400">{t('自在模式', 'FREE MODE')}</span>
+                    <span className="text-lg font-bold uppercase text-slate-500 dark:text-slate-400">{t('離職放行閘門', 'ERG')}</span>
                     <label className="tech-toggle">
                       <input type="checkbox" checked={isPart9} onChange={() => {
                         const next = !isPart9;
                         setIsPart9(next);
                         safeSetStorage('fos_isPart9', next.toString());
-                        if (!next) setShowFiatModal(false); // 2026/08/21 — 關閉自在模式時，FIAT注入浮動視窗也一併收起
+                        if (!next) setShowFiatModal(false); // 2026/08/21 — 關閉「離職放行閘門」開關時，FIAT注入浮動視窗也一併收起
                       }} />
                       <span className="tech-slider"></span>
                     </label>
                   </div>
-                  {/* 2026/08/21 Boss拍板 — FIAT注入鈕改回跟著自在模式(原PART9)開關連動，關閉時一併消失 */}
+                  {/* 2026/08/21 Boss拍板 — FIAT注入鈕改回跟著「離職放行閘門」(原PART9)開關連動，關閉時一併消失 */}
                   {isPart9 && (
                     <button type="button" onClick={() => setShowFiatModal(true)} className="tech-btn px-5 py-2.5 font-bold bg-violet-500 text-white flex items-center gap-2">
                       💉 <span className="hidden sm:inline">{t('FIAT 注入', 'FIAT INJECT')}</span>
@@ -2486,7 +2486,7 @@ Build the wall first. Attack second.`)}
                     </div>
 
                     <div className={sortMode ? 'space-y-3' : 'space-y-8'}>
-                      {/* 2026/08/21 Boss拍板 — 自在模式(原PART9)關閉時，ERG完整卡片也一併消失；
+                      {/* 2026/08/21 Boss拍板 — 「離職放行閘門」(原PART9)開關關閉時，ERG完整卡片也一併消失；
                           用filter而非改bottomOrder本身，重新開啟時原本拖曳順序不會跑掉 */}
                       {bottomOrder.filter(id => isPart9 || id !== 'erg').map(id => (
                         <DraggableCard key={id} id={id} zone="bottom" order={bottomOrder} setOrder={setBottomOrder} dragInfo={dragInfo} setDragInfo={setDragInfo} collapsed={sortMode} title={cardTitles[id]}>
