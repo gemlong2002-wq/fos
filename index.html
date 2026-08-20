@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/20 15:20';
+    const APP_VERSION = '2026/08/20 17:05';
 
     /* ===================================================================
        共用工具
@@ -4206,6 +4206,26 @@ Build the wall first. Attack second.`)}
         return pay * (1 - Math.pow(1 + r, -n)) / r;
       };
 
+      // 貸款/信用卡到期提示燈 — 依「剩餘期數」分級，只顯示最嚴重的一級（單一分級，不會同時顯示兩級）。
+      // 門檻為 Boss 尚未拍板的範例值，之後確認實際數字後再調參，不動這裡的判斷結構。
+      // 貸款、信用卡各自獨立門檻（不是同一組數字），保險/訂閱不套用這個機制（不新增判斷、天然不會有燈號）。
+      const URGENCY_THRESHOLDS = {
+        [DEBT_CATEGORY_DEFAULT]: { tier2: 6, tier1: 12 },     // 貸款：≤6期 二級／≤12期 一級／其餘無提示
+        [DEBT_CATEGORY_CREDIT_CARD]: { tier2: 3, tier1: 6 }   // 信用卡：≤3期 二級／≤6期 一級／其餘無提示
+      };
+      // remainingMonths 為 null(無到期資料/非分期信用卡)一律不顯示提示燈，只取最嚴重的一級（tier2 優先於 tier1）
+      const getUrgencyTier = (category, remainingMonths) => {
+        const thresholds = URGENCY_THRESHOLDS[category];
+        if (!thresholds || remainingMonths == null) return null;
+        if (remainingMonths <= thresholds.tier2) return 'tier2';
+        if (remainingMonths <= thresholds.tier1) return 'tier1';
+        return null;
+      };
+      const URGENCY_TIER_CLASS = {
+        tier1: ' border-l-4 border-amber-400 dark:border-amber-300 animate-pulse',
+        tier2: ' border-l-8 border-rose-500 dark:border-rose-400 animate-pulse'
+      };
+
       const openNewModal = () => setEditingRecord({ ...emptyForm });
       const openEditModal = (r) => setEditingRecord({
         ...r,
@@ -4304,8 +4324,18 @@ Build the wall first. Attack second.`)}
         const closedClass = isClosed
           ? " bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-950/20 dark:to-slate-900 border-emerald-200 dark:border-emerald-800/50 closed-card-flash"
           : "";
+        // 已結清的項目不需要到期提示燈（已經沒有「還沒繳完」這回事），只對執行中的貸款/信用卡判定；
+        // 貸款用 months（既有 getRemainingInfo 算出的剩餘期數），信用卡用 creditCardRemainMonths（有分期才有值）
+        const urgencyTier = isClosed
+          ? null
+          : isLoan
+          ? getUrgencyTier(DEBT_CATEGORY_DEFAULT, months)
+          : isCreditCard
+          ? getUrgencyTier(DEBT_CATEGORY_CREDIT_CARD, creditCardRemainMonths)
+          : null;
+        const urgencyClass = urgencyTier ? URGENCY_TIER_CLASS[urgencyTier] : '';
         return (
-          <div key={r.id} className={"tech-panel p-5 flex flex-col gap-3" + closedClass}>
+          <div key={r.id} className={"tech-panel p-5 flex flex-col gap-3" + closedClass + urgencyClass}>
           <div className="flex flex-col md:flex-row md:items-center gap-4">
             <div className="flex-grow grid grid-cols-2 md:grid-cols-4 gap-3">
               <div>
