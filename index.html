@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/20 11:15';
+    const APP_VERSION = '2026/08/20 15:20';
 
     /* ===================================================================
        共用工具
@@ -4192,6 +4192,20 @@ Build the wall first. Attack second.`)}
         return { months, remainAmount: months * pay };
       };
 
+      // 貸款「剩餘應繳(估)」改用年金現值公式反推剩餘本金，修正「月付×剩餘期數」對有利息貸款的
+      // 系統性高估(把未來還沒發生的利息也算進剩餘總額)。只影響貸款分支，getRemainingInfo 本身
+      // (剩餘期數/insurance等其他類型的金額算法)完全不動。
+      // 月利率 r = 年利率(百分比) / 12 / 100；r=0(零利率貸款，例如免息分期)時公式退化為
+      // 「月付 × n」，跟改動前的結果完全一致，不影響既有 0% 利率案例。
+      const calcRemainingPrincipal = (monthlyPay, annualRatePct, remainingMonths) => {
+        const pay = parseFloat(monthlyPay) || 0;
+        const n = remainingMonths;
+        if (n == null || n <= 0) return 0;
+        const r = (parseFloat(annualRatePct) || 0) / 12 / 100;
+        if (r === 0) return pay * n;
+        return pay * (1 - Math.pow(1 + r, -n)) / r;
+      };
+
       const openNewModal = () => setEditingRecord({ ...emptyForm });
       const openEditModal = (r) => setEditingRecord({
         ...r,
@@ -4275,6 +4289,11 @@ Build the wall first. Attack second.`)}
         const isCreditCard = category === DEBT_CATEGORY_CREDIT_CARD;
         const isSubscription = category === DEBT_CATEGORY_SUBSCRIPTION;
         const hasInstallmentPlan = isCreditCard && r.installmentTotal != null;
+        // 貸款「剩餘應繳(估)」改用攤還公式（見 calcRemainingPrincipal），月付沿用同一張卡「月付」
+        // 欄位已換算過的值(toMonthlyEquivalent)，期數(months)沿用 getRemainingInfo 算出來的既有值，
+        // 只換金額算法，不改期數算法；信用卡/訂閱/保險不受影響，維持原本各自的分支
+        const isLoan = category === DEBT_CATEGORY_DEFAULT;
+        const loanRemainAmount = isLoan && months !== null ? calcRemainingPrincipal(toMonthlyEquivalent(r.monthlyPay, freq), r.rate, months) : null;
         // 信用卡有填分期：初始總額/剩餘應繳(估) 用「月付 × 期數」算，月付沿用同一張卡「月付」欄位已換算過的值(toMonthlyEquivalent)，
         // 口徑一致；沒填分期(單純月扣，例如串流訂閱型信用卡扣款)不硬套公式，顯示「非分期」，不誤導成0
         const creditCardMonthly = isCreditCard ? toMonthlyEquivalent(r.monthlyPay, freq) : 0;
@@ -4337,7 +4356,10 @@ Build the wall first. Attack second.`)}
                     )
                   ) : (
                     <Fragment>
-                      <div className="text-base font-bold font-mono text-slate-600 dark:text-slate-300">{remainAmount !== null ? formatNumber(remainAmount) : 'N/A'}</div>
+                      <div className="text-base font-bold font-mono text-slate-600 dark:text-slate-300">{(() => {
+                        const displayAmount = isLoan ? loanRemainAmount : remainAmount;
+                        return displayAmount !== null ? formatNumber(displayAmount) : 'N/A';
+                      })()}</div>
                       <div className="text-xs text-slate-400 mt-0.5">{months !== null ? t(`剩 ${months} 期`, `${months} left`) : t('無到期資料', 'no end date')}</div>
                     </Fragment>
                   )}
