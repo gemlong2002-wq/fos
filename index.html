@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/20 09:30';
+    const APP_VERSION = '2026/08/20 11:15';
 
     /* ===================================================================
        共用工具
@@ -4054,6 +4054,7 @@ Build the wall first. Attack second.`)}
       const DEBT_CATEGORY_DEFAULT = '貸款';
       const DEBT_CATEGORY_CREDIT_CARD = '信用卡';
       const DEBT_CATEGORY_SUBSCRIPTION = '訂閱';
+      const DEBT_CATEGORY_INSURANCE = '保險';
       const CATEGORY_LABEL_EN = { '貸款': 'LOAN', '信用卡': 'CREDIT CARD', '訂閱': 'SUBSCRIPTION', '保險': 'INSURANCE' };
 
       // v1.2 — 繳費頻率(月繳/年繳)：不動後端、不新增資料庫欄位，用note欄位尾端一段
@@ -4074,7 +4075,26 @@ Build the wall first. Attack second.`)}
       // 四捨五入較貼近真實月流出)
       const toMonthlyEquivalent = (amount, freq) => freq === PAY_FREQ_YEARLY ? Math.round((parseFloat(amount) || 0) / 12) : (parseFloat(amount) || 0);
 
-      const emptyForm = { id: '', name: '', category: DEBT_CATEGORY_DEFAULT, partnerBank: '', deductBank: '', rate: '', fee: '', totalAmount: '', monthlyPay: '', endDate: '', status: DEBT_STATUS_ACTIVE, note: '', payFrequency: PAY_FREQ_MONTHLY, installmentTotal: '', installmentPaid: '' };
+      // 保險到期年月 — 比照 FREQ 標記同一套手法，不動後端 schema，用 note 欄位尾端另一段隱藏標記存
+      // ([END:YYYY-MM])，對Boss完全透明(表單/列表只顯示乾淨的note文字，標記只在存檔/讀檔時被加上/剝除)。
+      // 舊保單資料沒有這個標記，一律視為「無到期資料」，不會自動套用「繳至XXXX年止」這類自由文字備註
+      // (那只是使用者手動打的字，程式完全不解析，Boss需要之後手動用這個新欄位重新填一次)。
+      // ⚠️ END_TAG_REGEX 刻意不用 $ 結尾錨定(跟 FREQ_TAG_REGEX 不同)：因為存檔時 END 標記會被放在
+      // FREQ 標記「之前」（讓 FREQ 標記維持在字串最尾端，不去動它原本靠 $ 錨定辨識的邏輯），
+      // 若兩個標記同時存在，END 標記就不會落在字串結尾，所以用不錨定的寫法讓它在字串任何位置都能被找到。
+      const END_TAG_REGEX = /\s*\[END:(\d{4}-\d{2})\]/;
+      const getInsuranceEndDate = (note) => {
+        const m = END_TAG_REGEX.exec(String(note || ''));
+        return m ? m[1] : '';
+      };
+      const stripEndTag = (note) => String(note || '').replace(END_TAG_REGEX, '');
+      const encodeNoteWithEndDate = (note, endDate) => {
+        const clean = stripEndTag(note);
+        if (!endDate) return clean;
+        return clean ? clean + ` [END:${endDate}]` : `[END:${endDate}]`;
+      };
+
+      const emptyForm = { id: '', name: '', category: DEBT_CATEGORY_DEFAULT, partnerBank: '', deductBank: '', rate: '', fee: '', totalAmount: '', monthlyPay: '', endDate: '', status: DEBT_STATUS_ACTIVE, note: '', payFrequency: PAY_FREQ_MONTHLY, installmentTotal: '', installmentPaid: '', insuranceEndDate: '' };
 
       const [records, setRecords] = useState([]);
       const [loading, setLoading] = useState(true);
@@ -4177,7 +4197,10 @@ Build the wall first. Attack second.`)}
         ...r,
         category: r.category || DEBT_CATEGORY_DEFAULT,
         payFrequency: getPayFrequency(r.note),
-        note: stripFreqTag(r.note),
+        // 保險到期年月從 note 隱藏標記解析回填，表單重新開啟編輯時看到的是乾淨的 YYYY-MM 值，
+        // 不是原始的 [END:...] 標記文字
+        insuranceEndDate: getInsuranceEndDate(r.note),
+        note: stripEndTag(stripFreqTag(r.note)),
         // 後端空值一律回傳 null，表單 number input 綁 null 會被 React 當成非受控，統一轉成空字串回填
         installmentTotal: r.installmentTotal != null ? String(r.installmentTotal) : '',
         installmentPaid: r.installmentPaid != null ? String(r.installmentPaid) : ''
@@ -4199,6 +4222,13 @@ Build the wall first. Attack second.`)}
         setMsg('');
         const category = editingRecord.category || DEBT_CATEGORY_DEFAULT;
         const isCreditCard = category === DEBT_CATEGORY_CREDIT_CARD;
+        const isInsurance = category === DEBT_CATEGORY_INSURANCE;
+        // 標記組裝順序刻意固定：先包 END 標記、再包 FREQ 標記，確保 FREQ 標記最終仍落在字串最尾端
+        // (FREQ_TAG_REGEX 靠 $ 錨定辨識，順序顛倒會讓既有月繳/年繳判斷失效)
+        const noteWithTags = encodeNoteWithFreq(
+          encodeNoteWithEndDate(editingRecord.note, isInsurance ? editingRecord.insuranceEndDate : ''),
+          editingRecord.payFrequency
+        );
         const payload = {
           id: editingRecord.id || '',
           name: editingRecord.name,
@@ -4211,7 +4241,7 @@ Build the wall first. Attack second.`)}
           monthlyPay: parseFloat(editingRecord.monthlyPay) || 0,
           endDate: editingRecord.endDate,
           status: editingRecord.status,
-          note: encodeNoteWithFreq(editingRecord.note, editingRecord.payFrequency),
+          note: noteWithTags,
           installmentTotal: isCreditCard ? parseInstallmentInput(editingRecord.installmentTotal) : null,
           installmentPaid: isCreditCard ? parseInstallmentInput(editingRecord.installmentPaid) : null
         };
@@ -4233,8 +4263,12 @@ Build the wall first. Attack second.`)}
 
       const renderLoanRow = (r) => {
         const freq = getPayFrequency(r.note);
-        const { months, remainAmount } = getRemainingInfo(r.endDate, r.monthlyPay, freq);
         const category = r.category || DEBT_CATEGORY_DEFAULT;
+        // 保險沒有 endDate 欄位(表單只對貸款顯示)，改用 note 隱藏標記 [END:YYYY-MM] 解析出的到期年月，
+        // 其餘類型維持原本吃 r.endDate；getRemainingInfo 算法本身不動，只是換一個來源餵給它
+        const insuranceEndDate = category === DEBT_CATEGORY_INSURANCE ? getInsuranceEndDate(r.note) : '';
+        const effectiveEndDate = category === DEBT_CATEGORY_INSURANCE ? insuranceEndDate : r.endDate;
+        const { months, remainAmount } = getRemainingInfo(effectiveEndDate, r.monthlyPay, freq);
         // 「優先消滅」只在類型為貸款時判定，信用卡/訂閱/保險即使利率填了>2.5%也不顯示
         const highRate = category === DEBT_CATEGORY_DEFAULT && (parseFloat(r.rate) || 0) > 2.5;
         // 項目卡片客製化(一) — 信用卡串接既有分期資料，訂閱隱藏不適用欄位
@@ -4315,10 +4349,10 @@ Build the wall first. Attack second.`)}
               <button onClick={() => setDeleteTarget(r.id)} className="tech-btn px-4 py-2 text-sm font-bold bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800">{t('刪除', 'DELETE')}</button>
             </div>
           </div>
-          {stripFreqTag(r.note) && (
+          {stripEndTag(stripFreqTag(r.note)) && (
             <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50">
               <span className="text-amber-500 dark:text-amber-400 animate-pulse shrink-0">📌</span>
-              <span className="text-sm font-bold text-amber-700 dark:text-amber-300">{stripFreqTag(r.note)}</span>
+              <span className="text-sm font-bold text-amber-700 dark:text-amber-300">{stripEndTag(stripFreqTag(r.note))}</span>
             </div>
           )}
           </div>
@@ -4459,6 +4493,11 @@ Build the wall first. Attack second.`)}
                         <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('總期數', 'INSTALLMENT TOTAL')}</label><input type="number" name="installmentTotal" value={editingRecord.installmentTotal} onChange={handleFormChange} className="w-full tech-input" /></div>
                         <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('已繳期數', 'INSTALLMENT PAID')}</label><input type="number" name="installmentPaid" value={editingRecord.installmentPaid} onChange={handleFormChange} className="w-full tech-input" /></div>
                       </Fragment>
+                    )}
+                    {/* v1.9 — 到期年月只對「保險」類型顯示，存檔時編碼成 note 隱藏標記([END:YYYY-MM])，
+                        不動後端 schema；比照上面貸款/信用卡專屬欄位的隱藏機制，切換類型時值不清空 */}
+                    {(editingRecord.category || DEBT_CATEGORY_DEFAULT) === DEBT_CATEGORY_INSURANCE && (
+                      <div><label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('到期年月 (YYYY-MM)', 'END DATE (YYYY-MM)')}</label><input name="insuranceEndDate" value={editingRecord.insuranceEndDate} onChange={handleFormChange} placeholder="2030-01" className="w-full tech-input" /></div>
                     )}
                     <div>
                       <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('狀態', 'STATUS')}</label>
