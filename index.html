@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/20 19:40';
+    const APP_VERSION = '2026/08/21 09:15';
 
     /* ===================================================================
        共用工具
@@ -4401,7 +4401,8 @@ Build the wall first. Attack second.`)}
                   <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 normal-case">{freq === PAY_FREQ_YEARLY ? t('年繳', 'YEARLY') : t('月繳', 'MONTHLY')}</span>
                 </div>
                 {freq === PAY_FREQ_YEARLY && <div className="text-xs text-slate-400 mt-0.5">{t(`(年繳 ${formatNumber(r.monthlyPay)})`, `(yearly ${formatNumber(r.monthlyPay)})`)}</div>}
-                <div className="text-xs text-slate-400 mt-0.5">{t('利率', 'RATE')} {r.rate}%</div>
+                {/* 利率只對貸款有意義，信用卡/保險/訂閱表單填不到這欄，一律顯示「利率0%」會造成混淆，這三類不顯示 */}
+                {isLoan && <div className="text-xs text-slate-400 mt-0.5">{t('利率', 'RATE')} {r.rate}%</div>}
                 {category === DEBT_CATEGORY_CREDIT_CARD && r.installmentTotal != null && (
                   <div className="text-xs text-slate-400 mt-0.5">
                     {t(`已繳 ${r.installmentPaid || 0} / 共 ${r.installmentTotal} 期，剩 ${Math.max(0, r.installmentTotal - (r.installmentPaid || 0))} 期`,
