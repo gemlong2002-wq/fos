@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/22 00:20';
+    const APP_VERSION = '2026/08/22 09:10';
 
     /* ===================================================================
        共用工具
@@ -1410,7 +1410,10 @@
                         const next = !isPart9;
                         setIsPart9(next);
                         safeSetStorage('fos_isPart9', next.toString());
-                        if (!next) setShowFiatModal(false); // 2026/08/21 — 關閉「離職放行閘門」開關時，FIAT注入浮動視窗也一併收起
+                        if (!next) {
+                          setShowFiatModal(false); // 2026/08/21 — 關閉「離職放行閘門」開關時，FIAT注入浮動視窗也一併收起
+                          setErgInfoGate(null); // 2026/08/22 — 同時清空閘門說明小視窗狀態，避免重新開啟開關時殘留值讓小視窗意外自動彈出
+                        }
                       }} />
                       <span className="tech-slider"></span>
                     </label>
