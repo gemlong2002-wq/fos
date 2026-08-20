@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/20 17:05';
+    const APP_VERSION = '2026/08/20 19:40';
 
     /* ===================================================================
        共用工具
@@ -4206,25 +4206,66 @@ Build the wall first. Attack second.`)}
         return pay * (1 - Math.pow(1 + r, -n)) / r;
       };
 
-      // 貸款/信用卡到期提示燈 — 依「剩餘期數」分級，只顯示最嚴重的一級（單一分級，不會同時顯示兩級）。
-      // 門檻為 Boss 尚未拍板的範例值，之後確認實際數字後再調參，不動這裡的判斷結構。
-      // 貸款、信用卡各自獨立門檻（不是同一組數字），保險/訂閱不套用這個機制（不新增判斷、天然不會有燈號）。
+      // 信用卡/保險到期提示燈 — 依「剩餘期數／剩餘繳費次數」分級，只顯示最嚴重的一級（單一分級，不會同時顯示兩級）。
+      // v2 — 貸款拿掉這個機制：Boss 確認貸款剩餘期數落差太大(49~332期)，且實務上會提前還清/重新貸款，
+      // 自然到期幾乎不會發生，提示燈對貸款沒有意義，整個移除(不是門檻設很寬鬆，是完全不判定)。
+      // 保險改用「剩餘繳費次數」而非「剩餘月數」：多數保單年繳，用月數當門檻會誤判(剩6個月不代表快繳完，
+      // 只是快到下一次扣款)。年繳保單 = 剩餘月數÷12無條件進位；月繳保單 = 剩餘月數本身。
+      // 信用卡邏輯不變，門檻仍是範例值，待 Boss 拍板實際數字。
       const URGENCY_THRESHOLDS = {
-        [DEBT_CATEGORY_DEFAULT]: { tier2: 6, tier1: 12 },     // 貸款：≤6期 二級／≤12期 一級／其餘無提示
-        [DEBT_CATEGORY_CREDIT_CARD]: { tier2: 3, tier1: 6 }   // 信用卡：≤3期 二級／≤6期 一級／其餘無提示
+        [DEBT_CATEGORY_CREDIT_CARD]: { tier2: 3, tier1: 6 },  // 信用卡：≤3期 二級／≤6期 一級／其餘無提示
+        [DEBT_CATEGORY_INSURANCE]: { tier2: 2, tier1: 4 }     // 保險：以剩餘繳費次數為準，≤2次 二級／≤4次 一級／其餘無提示
       };
-      // remainingMonths 為 null(無到期資料/非分期信用卡)一律不顯示提示燈，只取最嚴重的一級（tier2 優先於 tier1）
-      const getUrgencyTier = (category, remainingMonths) => {
+      // remainingCount 為 null(無到期資料/非分期信用卡)一律不顯示提示燈，只取最嚴重的一級（tier2 優先於 tier1）
+      const getUrgencyTier = (category, remainingCount) => {
         const thresholds = URGENCY_THRESHOLDS[category];
-        if (!thresholds || remainingMonths == null) return null;
-        if (remainingMonths <= thresholds.tier2) return 'tier2';
-        if (remainingMonths <= thresholds.tier1) return 'tier1';
+        if (!thresholds || remainingCount == null) return null;
+        if (remainingCount <= thresholds.tier2) return 'tier2';
+        if (remainingCount <= thresholds.tier1) return 'tier1';
         return null;
       };
       const URGENCY_TIER_CLASS = {
         tier1: ' border-l-4 border-amber-400 dark:border-amber-300 animate-pulse',
         tier2: ' border-l-8 border-rose-500 dark:border-rose-400 animate-pulse'
       };
+
+      // 分類卡片頭部「剩餘總額(估)」加總 — 只算貸款/信用卡/保險（訂閱不適用，天然不在下面 categoryRemainingTotals
+      // 的 key 裡）。沿用單筆項目卡片已驗證過的三套算法(貸款攤還公式/信用卡分期/保險到期標記)，不重新發明算法、
+      // 不動 renderLoanRow 單筆顯示邏輯本身。算不出金額的項目(貸款缺到期日/信用卡非分期/保險無到期標記)不計入
+      // 加總，另外累計筆數供表頭顯示「(N筆資料不足，未計入)」。
+      const getItemRemainingAmount = (r) => {
+        const category = r.category || DEBT_CATEGORY_DEFAULT;
+        const freq = getPayFrequency(r.note);
+        if (category === DEBT_CATEGORY_DEFAULT) {
+          const { months } = getRemainingInfo(r.endDate, r.monthlyPay, freq);
+          if (months === null) return null;
+          return calcRemainingPrincipal(toMonthlyEquivalent(r.monthlyPay, freq), r.rate, months);
+        }
+        if (category === DEBT_CATEGORY_CREDIT_CARD) {
+          if (r.installmentTotal == null) return null;
+          const monthly = toMonthlyEquivalent(r.monthlyPay, freq);
+          return monthly * Math.max(0, r.installmentTotal - (r.installmentPaid || 0));
+        }
+        if (category === DEBT_CATEGORY_INSURANCE) {
+          const { remainAmount } = getRemainingInfo(getInsuranceEndDate(r.note), r.monthlyPay, freq);
+          return remainAmount;
+        }
+        return null; // 訂閱與未知類型不適用
+      };
+      const categoryRemainingTotals = useMemo(() => {
+        const totals = {};
+        [DEBT_CATEGORY_DEFAULT, DEBT_CATEGORY_CREDIT_CARD, DEBT_CATEGORY_INSURANCE].forEach(cat => {
+          totals[cat] = { sum: 0, missingCount: 0 };
+        });
+        activeRecords.forEach(r => {
+          const cat = r.category || DEBT_CATEGORY_DEFAULT;
+          if (!totals[cat]) return; // 訂閱/未知分類不適用，不計入
+          const amt = getItemRemainingAmount(r);
+          if (amt === null) totals[cat].missingCount += 1;
+          else totals[cat].sum += amt;
+        });
+        return totals;
+      }, [activeRecords]);
 
       const openNewModal = () => setEditingRecord({ ...emptyForm });
       const openEditModal = (r) => setEditingRecord({
@@ -4300,8 +4341,9 @@ Build the wall first. Attack second.`)}
         const category = r.category || DEBT_CATEGORY_DEFAULT;
         // 保險沒有 endDate 欄位(表單只對貸款顯示)，改用 note 隱藏標記 [END:YYYY-MM] 解析出的到期年月，
         // 其餘類型維持原本吃 r.endDate；getRemainingInfo 算法本身不動，只是換一個來源餵給它
-        const insuranceEndDate = category === DEBT_CATEGORY_INSURANCE ? getInsuranceEndDate(r.note) : '';
-        const effectiveEndDate = category === DEBT_CATEGORY_INSURANCE ? insuranceEndDate : r.endDate;
+        const isInsurance = category === DEBT_CATEGORY_INSURANCE;
+        const insuranceEndDate = isInsurance ? getInsuranceEndDate(r.note) : '';
+        const effectiveEndDate = isInsurance ? insuranceEndDate : r.endDate;
         const { months, remainAmount } = getRemainingInfo(effectiveEndDate, r.monthlyPay, freq);
         // 「優先消滅」只在類型為貸款時判定，信用卡/訂閱/保險即使利率填了>2.5%也不顯示
         const highRate = category === DEBT_CATEGORY_DEFAULT && (parseFloat(r.rate) || 0) > 2.5;
@@ -4324,14 +4366,19 @@ Build the wall first. Attack second.`)}
         const closedClass = isClosed
           ? " bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-950/20 dark:to-slate-900 border-emerald-200 dark:border-emerald-800/50 closed-card-flash"
           : "";
-        // 已結清的項目不需要到期提示燈（已經沒有「還沒繳完」這回事），只對執行中的貸款/信用卡判定；
-        // 貸款用 months（既有 getRemainingInfo 算出的剩餘期數），信用卡用 creditCardRemainMonths（有分期才有值）
+        // 保險「剩餘繳費次數」：年繳保單用剩餘月數÷12無條件進位(例如剩7個月=還要繳2次)，
+        // 月繳保單就是剩餘月數本身。months 為 null(無到期標記)時維持 null，不顯示提示燈。
+        const insuranceRemainingPaymentCount = isInsurance && months !== null
+          ? (freq === PAY_FREQ_YEARLY ? Math.ceil(months / 12) : months)
+          : null;
+        // 已結清的項目不需要到期提示燈（已經沒有「還沒繳完」這回事），只對執行中的信用卡/保險判定；
+        // 貸款不再套用提示燈機制（剩餘期數落差太大、實務上幾乎不會自然到期，Boss 確認拿掉）
         const urgencyTier = isClosed
           ? null
-          : isLoan
-          ? getUrgencyTier(DEBT_CATEGORY_DEFAULT, months)
           : isCreditCard
           ? getUrgencyTier(DEBT_CATEGORY_CREDIT_CARD, creditCardRemainMonths)
+          : isInsurance
+          ? getUrgencyTier(DEBT_CATEGORY_INSURANCE, insuranceRemainingPaymentCount)
           : null;
         const urgencyClass = urgencyTier ? URGENCY_TIER_CLASS[urgencyTier] : '';
         return (
@@ -4454,6 +4501,19 @@ Build the wall first. Attack second.`)}
                           <div className="flex flex-col items-end gap-1">
                             <span className="text-[10px] sm:text-xs text-slate-500 dark:text-slate-400 font-mono tracking-wider uppercase">{t('月付總額(執行中)', 'MONTHLY (ACTIVE)')}</span>
                             <span className="text-2xl sm:text-3xl md:text-4xl font-extrabold font-mono text-rose-600 dark:text-rose-400">{formatNumber(group.activeMonthlyTotal)}</span>
+                            {categoryRemainingTotals[cat] && (
+                              <div className="flex flex-col items-end mt-1">
+                                <span className="text-[10px] sm:text-xs text-slate-400 dark:text-slate-500 font-mono tracking-wider uppercase">{t('剩餘總額(估)', 'REMAINING (EST.)')}</span>
+                                <span className="text-base sm:text-lg font-bold font-mono text-slate-600 dark:text-slate-300 flex items-baseline gap-1 flex-wrap justify-end">
+                                  {formatNumber(categoryRemainingTotals[cat].sum)}
+                                  {categoryRemainingTotals[cat].missingCount > 0 && (
+                                    <span className="text-[10px] font-normal text-slate-400 dark:text-slate-500 normal-case">
+                                      {t(`(${categoryRemainingTotals[cat].missingCount}筆資料不足，未計入)`, `(${categoryRemainingTotals[cat].missingCount} incomplete, excluded)`)}
+                                    </span>
+                                  )}
+                                </span>
+                              </div>
+                            )}
                           </div>
                         </div>
                         <div className="w-full mt-4">
