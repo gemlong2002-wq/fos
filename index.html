@@ -832,6 +832,23 @@
         });
       };
 
+      // ERG閘門3/4 — 粗略模型（Boss拍板：先求有再求好），純前端 local state，不動後端/GAS，
+      // 之後有真實殖利率/生活費資料或要接後端排程時再逐步精修
+      const [ergExtraInputs, setErgExtraInputs] = useState(() => ({
+        dividendYieldPct: safeGetStorage('fos_erg_dividendYieldPct', ''),
+        monthlyLiving: safeGetStorage('fos_erg_monthlyLiving', ''),
+        gate4HasUpcomingSpike: safeGetStorage('fos_erg_gate4HasUpcomingSpike', 'false') === 'true'
+      }));
+      const handleErgExtraChange = (e) => {
+        const { name, value, type, checked } = e.target;
+        const v = type === 'checkbox' ? checked : value;
+        setErgExtraInputs(p => {
+          const next = { ...p, [name]: v };
+          safeSetStorage('fos_erg_' + name, type === 'checkbox' ? String(v) : v);
+          return next;
+        });
+      };
+
       // v12.5 — 卡片拖曳排序，順序存 localStorage（這台機器的顯示偏好，不跨裝置同步）
       const [leftOrder, setLeftOrder] = useState(() => loadCardOrder('left', DEFAULT_LEFT_ORDER));
       const [topOrder, setTopOrder] = useState(() => loadCardOrder('top', DEFAULT_TOP_ORDER));
@@ -1226,13 +1243,37 @@
       const ERG_GATE2_THRESHOLD_MONTHS = 24; // 達標門檻，先寫死，之後可改參數化
       const ergGate2Pass = ergHasDebt && ergBufferMonths >= ERG_GATE2_THRESHOLD_MONTHS;
 
+      // 閘門1「斷頭壓力測試」— 2026/08/20 對話端拍板定案：跌幅直接乘在持股C（非大盤/beta換算），
+      // 只有跌50%情境參與判定，安全墊150%沿用MR卡片同一套算法（C×0.5÷L），不新增輸入欄位
+      const ERG_GATE1_SAFETY_MR = 150; // 安全墊，先寫死，之後可改參數化
+      const ergGate1HasData = C > 0 && L > 0;
+      const ergMrAfter50 = ergGate1HasData ? ((C * 0.5) / L) * 100 : 0;
+      const ergGate1Pass = ergGate1HasData && ergMrAfter50 >= ERG_GATE1_SAFETY_MR;
+
+      // 閘門3「配息覆蓋」— 粗略模型：殖利率、月生活費為新增前端輸入（ergExtraInputs），
+      // 殖利率預設視為稅前、統一年化處理，壓縮係數0.5先寫死不做UI可調參數，之後再精修
+      const ERG_GATE3_COMPRESSION = 0.5; // 壓縮係數，先寫死
+      const ergYieldPct = parseFloat(ergExtraInputs.dividendYieldPct) || 0;
+      const ergMonthlyLiving = parseFloat(ergExtraInputs.monthlyLiving) || 0;
+      const ergGate3HasData = C > 0 && ergYieldPct > 0 && ergMonthlyLiving > 0;
+      const ergAnnualDividendEst = C * (ergYieldPct / 100);
+      const ergCompressedDividend = ergAnnualDividendEst * ERG_GATE3_COMPRESSION;
+      const ergAnnualLiving = ergMonthlyLiving * 12;
+      const ergGate3Pass = ergGate3HasData && ergCompressedDividend >= ergAnnualLiving;
+
+      // 閘門4「月付無未爆彈」— 簡化版：手動勾選「近N個月內是否有已知月付變動」，不新增後端欄位，
+      // 沿用閘門2的N=24；未勾選視為通過，之後若要接後端排程結構再升級
+      const ergGate4Pass = !ergExtraInputs.gate4HasUpcomingSpike;
+
       // status: 'pass'(✅達標) / 'fail'(⬜未達標，已建置但未過門檻) / 'pending'(🔲尚未建置，或已建置但缺資料無法判定)
       const ergGates = [
         {
           id: 1,
           name: t('斷頭壓力測試', 'MARGIN CALL STRESS TEST'),
-          status: 'pending',
-          display: t('尚未建置', 'NOT BUILT')
+          status: !ergGate1HasData ? 'pending' : (ergGate1Pass ? 'pass' : 'fail'),
+          display: !ergGate1HasData
+            ? t('資料未就緒（C 或 L 未輸入）', 'DATA NOT READY (C or L unset)')
+            : t(`跌50%後維持率 ${ergMrAfter50.toFixed(2)}%（門檻 ≥ ${ERG_GATE1_SAFETY_MR}%）`, `MR after -50% ${ergMrAfter50.toFixed(2)}% (threshold ≥ ${ERG_GATE1_SAFETY_MR}%)`)
         },
         {
           id: 2,
@@ -1245,14 +1286,18 @@
         {
           id: 3,
           name: t('配息覆蓋', 'DIVIDEND COVERAGE'),
-          status: 'pending',
-          display: t('尚未建置', 'NOT BUILT')
+          status: !ergGate3HasData ? 'pending' : (ergGate3Pass ? 'pass' : 'fail'),
+          display: !ergGate3HasData
+            ? t('資料未就緒（殖利率或生活費未輸入）', 'DATA NOT READY (yield or living cost unset)')
+            : t(`壓縮後年配息估 ${formatNumber(Math.round(ergCompressedDividend))}（年生活費 ${formatNumber(Math.round(ergAnnualLiving))}）`, `Compressed est. annual dividend ${formatNumber(Math.round(ergCompressedDividend))} (annual living cost ${formatNumber(Math.round(ergAnnualLiving))})`)
         },
         {
           id: 4,
           name: t('月付無未爆彈', 'NO HIDDEN PAYMENT SPIKES'),
-          status: 'pending',
-          display: t('尚未建置', 'NOT BUILT')
+          status: ergGate4Pass ? 'pass' : 'fail',
+          display: ergGate4Pass
+            ? t(`近 ${ERG_GATE2_THRESHOLD_MONTHS} 個月內無已知月付變動（簡化版手動勾選，尚未接後端排程）`, `No known payment change in next ${ERG_GATE2_THRESHOLD_MONTHS}mo (simplified manual flag, no backend schedule yet)`)
+            : t(`⚠️ 已勾選：近 ${ERG_GATE2_THRESHOLD_MONTHS} 個月內有已知月付變動`, `⚠️ Flagged: known payment change within ${ERG_GATE2_THRESHOLD_MONTHS}mo`)
         }
       ];
       const ergIcon = (status) => status === 'pass' ? '✅' : status === 'fail' ? '⬜' : '🔲';
@@ -2298,6 +2343,25 @@ Build the wall first. Attack second.`)}
                     <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                     {cardTitles.erg}
                   </h2>
+
+                  {/* 閘門3/4 粗略模型輸入 — 純前端local state，不動後端，2026/08/20 Boss拍板先求有再求好 */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('殖利率% (稅前,年化)', 'YIELD % (pre-tax, annualized)')}</label>
+                      <input type="number" inputMode="decimal" name="dividendYieldPct" value={ergExtraInputs.dividendYieldPct} onChange={handleErgExtraChange} className="w-full tech-input text-lg py-2 px-3" placeholder="0" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('月生活費 (TWD)', 'MONTHLY LIVING (TWD)')}</label>
+                      <input type="number" inputMode="decimal" name="monthlyLiving" value={ergExtraInputs.monthlyLiving} onChange={handleErgExtraChange} className="w-full tech-input text-lg py-2 px-3" placeholder="0" />
+                    </div>
+                    <div className="flex flex-col justify-end">
+                      <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400 mb-1 cursor-pointer">
+                        <input type="checkbox" name="gate4HasUpcomingSpike" checked={ergExtraInputs.gate4HasUpcomingSpike} onChange={handleErgExtraChange} />
+                        {t(`近${ERG_GATE2_THRESHOLD_MONTHS}個月內有已知月付變動`, `Known payment change in ${ERG_GATE2_THRESHOLD_MONTHS}mo`)}
+                      </label>
+                    </div>
+                  </div>
+
                   <div className="space-y-3">
                     {ergGates.map(g => (
                       <div key={g.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 px-4 py-3 rounded-lg bg-slate-50 dark:bg-slate-800/50">
@@ -2313,7 +2377,7 @@ Build the wall first. Attack second.`)}
                     <span className="text-sm font-bold uppercase tracking-widest text-slate-400">{t(`${ergPassCount} / 4 達標`, `${ergPassCount} / 4 PASSED`)}</span>
                     <span className={`text-lg font-black ${ergVerdict.color}`}>{ergVerdict.text}</span>
                   </div>
-                  <div className="text-xs text-slate-400 mt-3">{t('骨架階段：閘門2「緩衝存糧」已接真實計算，閘門1/3/4待後續逐一補上', 'Skeleton stage: Gate 2 (Buffer Reserve) is wired to real calculations; Gates 1/3/4 to be implemented later')}</div>
+                  <div className="text-xs text-slate-400 mt-3">{t('粗略模型階段（2026/08/20）：閘門1/2已接真實計算；閘門3為壓縮係數/殖利率簡化估算；閘門4為手動勾選簡化版，尚未接後端變動排程，之後逐步精修', 'Rough-model stage (2026/08/20): Gates 1/2 wired to real calculations; Gate 3 uses a simplified compression/yield estimate; Gate 4 is a manual-flag simplification without a backend change schedule yet — to be refined incrementally')}</div>
                 </div>
               );
 
