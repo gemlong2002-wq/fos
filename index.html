@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/22 09:35';
+    const APP_VERSION = '2026/08/22 10:05';
 
     /* ===================================================================
        共用工具
@@ -837,10 +837,6 @@
       // ERG閘門3/4 — 粗略模型（Boss拍板：先求有再求好），純前端 local state，不動後端/GAS，
       // 之後有真實殖利率/生活費資料或要接後端排程時再逐步精修
       const [ergExtraInputs, setErgExtraInputs] = useState(() => ({
-        // 2026/08/21 — 預設值改為0050(近10年均殖利率約3.00%)與00733(近7年均殖利率約4.40%，含2024一次性偏高
-        // 配息年)的簡單平均約3.70%（未依實際0050:00733市值比重加權，之後如需精算可再調整）；
-        // 使用者一旦手動輸入過，localStorage會存下他自己的數字，這個預設值只在從未填過時生效
-        dividendYieldPct: safeGetStorage('fos_erg_dividendYieldPct', '3.7'),
         monthlyLiving: safeGetStorage('fos_erg_monthlyLiving', ''),
         gate4HasUpcomingSpike: safeGetStorage('fos_erg_gate4HasUpcomingSpike', 'false') === 'true'
       }));
@@ -1258,9 +1254,12 @@
       // 閘門3「配息覆蓋」— 粗略模型：殖利率、月生活費為新增前端輸入（ergExtraInputs），
       // 殖利率預設視為稅前、統一年化處理，壓縮係數0.5先寫死不做UI可調參數，之後再精修
       const ERG_GATE3_COMPRESSION = 0.5; // 壓縮係數，先寫死
-      const ergYieldPct = parseFloat(ergExtraInputs.dividendYieldPct) || 0;
+      // 2026/08/22 Boss拍板 — 殖利率%不再開放輸入，直接固定當參考依據，理由同壓縮係數：
+      // 0050近10年均殖利率約3.00% + 00733近7年均殖利率約4.40%（含2024一次性偏高配息年）簡單平均
+      const ERG_GATE3_YIELD_PCT = 3.7;
+      const ergYieldPct = ERG_GATE3_YIELD_PCT;
       const ergMonthlyLiving = parseFloat(ergExtraInputs.monthlyLiving) || 0;
-      const ergGate3HasData = C > 0 && ergYieldPct > 0 && ergMonthlyLiving > 0;
+      const ergGate3HasData = C > 0 && ergMonthlyLiving > 0;
       const ergAnnualDividendEst = C * (ergYieldPct / 100);
       const ergCompressedDividend = ergAnnualDividendEst * ERG_GATE3_COMPRESSION;
       const ergAnnualLiving = ergMonthlyLiving * 12;
@@ -2390,8 +2389,8 @@ Build the wall first. Attack second.`)}
                   {/* 閘門3/4 粗略模型輸入 — 純前端local state，不動後端，2026/08/20 Boss拍板先求有再求好 */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                     <div>
-                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('殖利率% (稅前,年化)', 'YIELD % (pre-tax, annualized)')}</label>
-                      <input type="number" inputMode="decimal" name="dividendYieldPct" value={ergExtraInputs.dividendYieldPct} onChange={handleErgExtraChange} className="w-full tech-input text-lg py-2 px-3" placeholder="0" />
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('殖利率% (稅前,年化,固定參考值)', 'YIELD % (pre-tax, annualized, fixed reference)')}</label>
+                      <div className="w-full tech-input text-lg py-2 px-3 opacity-70 cursor-default select-none">{ERG_GATE3_YIELD_PCT}%</div>
                     </div>
                     <div>
                       <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('月生活費 (TWD)', 'MONTHLY LIVING (TWD)')}</label>
