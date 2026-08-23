@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/23 01:00';
+    const APP_VERSION = '2026/08/23 02:00';
 
     /* ===================================================================
        共用工具
@@ -2484,7 +2484,7 @@ Build the wall first. Attack second.`)}
                       ))}
                     </div>
 
-                    <div className={sortMode ? 'space-y-3' : 'grid grid-cols-2 md:grid-cols-3 gap-4'}>
+                    <div className={sortMode ? 'space-y-3' : 'grid grid-cols-2 gap-4'}>
                       {miniOrder.map(id => (
                         <DraggableCard key={id} id={id} zone="mini" order={miniOrder} setOrder={setMiniOrder} dragInfo={dragInfo} setDragInfo={setDragInfo} collapsed={sortMode} title={cardTitles[id]}>
                           {miniCards[id]}
