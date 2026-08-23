@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/23 10:00';
+    const APP_VERSION = '2026/08/24 00:00';
 
     /* ===================================================================
        共用工具
@@ -4952,17 +4952,20 @@ Build the wall first. Attack second.`)}
                   <button onClick={() => setShowPwGuide(false)} className="text-slate-400 hover:text-slate-700 dark:hover:text-amber-300 text-xl leading-none">✕</button>
                 </div>
                 <div className="text-sm sm:text-base leading-relaxed text-slate-700 dark:text-slate-300 space-y-3 whitespace-pre-line">
-                  <p>{t('密碼分存於兩個後台，改時「兩邊都要改」，缺一邊會導致資料讀不出來。', 'The password is stored in two separate backends. When changing it, you must update BOTH sides — missing either one will make data unreadable.')}</p>
+                  <p>{t('密碼分存於三個後台，改時「三邊都要改」，缺一邊會導致該後台資料讀不出來。', 'The password is stored in three separate backends. When changing it, you must update ALL THREE — missing any one will make that backend\'s data unreadable.')}</p>
                   <p className="font-bold text-slate-800 dark:text-amber-400">{t('步驟：', 'Steps:')}</p>
                   <p>{t(`1. 開啟 AMBER（總資產）GAS 專案 → 專案設定 ⚙️ → 指令碼屬性
    → 修改 WRITE_SECRET 為新值`, `1. Open the AMBER (Asset) GAS project → Project Settings ⚙️ → Script Properties
    → Change WRITE_SECRET to the new value`)}</p>
                   <p>{t(`2. 開啟 FOS（FOS BOSS）GAS 專案 → 同上路徑
-   → 將 WRITE_SECRET 改成「與 AMBER 完全相同」的新值`, `2. Open the FOS (FOS BOSS) GAS project → same path as above
-   → Set WRITE_SECRET to the EXACT SAME new value as AMBER`)}</p>
-                  <p>{t('3. 兩邊改完即時生效，不需重新部署', '3. Both changes take effect immediately — no redeployment needed')}</p>
-                  <p className="text-amber-600 dark:text-amber-400">{t('⚠️ 備援碼（BACKUP_CODE）若要改，同樣兩邊都要改。', '⚠️ If you also change the BACKUP_CODE, it must be updated on both sides too.')}</p>
-                  <p className="text-amber-600 dark:text-amber-400">{t('⚠️ 兩邊的值必須一模一樣，否則其中一邊會驗證失敗。', '⚠️ The values on both sides must match exactly, or authentication will fail on one side.')}</p>
+   → 將 WRITE_SECRET 改成與 AMBER 相同的新值`, `2. Open the FOS (FOS BOSS) GAS project → same path as above
+   → Set WRITE_SECRET to the same new value as AMBER`)}</p>
+                  <p>{t(`3. 開啟 DEBT（債務）GAS 專案 → 同上路徑
+   → 將 WRITE_SECRET 改成與 AMBER 相同的新值`, `3. Open the DEBT GAS project → same path as above
+   → Set WRITE_SECRET to the same new value as AMBER`)}</p>
+                  <p>{t('4. 三邊改完即時生效，不需重新部署', '4. All three changes take effect immediately — no redeployment needed')}</p>
+                  <p className="text-amber-600 dark:text-amber-400">{t('⚠️ 備援碼（BACKUP_CODE）若要改，同樣三邊都要改。', '⚠️ If you also change the BACKUP_CODE, it must be updated on all three too.')}</p>
+                  <p className="text-amber-600 dark:text-amber-400">{t('⚠️ 三邊的值必須一模一樣，否則沒改到的那一邊會驗證失敗。', '⚠️ The values on all three must match exactly, or authentication will fail on whichever side was missed.')}</p>
                 </div>
               </div>
             </React.Fragment>,
