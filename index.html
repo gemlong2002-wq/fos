@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/23 09:00';
+    const APP_VERSION = '2026/08/23 10:00';
 
     /* ===================================================================
        共用工具
@@ -2543,11 +2543,11 @@ Build the wall first. Attack second.`)}
 
                 {expandedCardContent && (
                   <div
-                    className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 backdrop-blur-sm p-4 md:p-10"
+                    className="fixed inset-0 z-50 flex justify-center overflow-y-auto bg-black/60 backdrop-blur-sm p-4 md:p-10"
                     onClick={() => setExpandedCard(null)}
                   >
                     <div
-                      className="relative w-full max-w-4xl my-8"
+                      className="relative w-full max-w-4xl my-auto"
                       onClick={(e) => e.stopPropagation()}
                     >
                       <button
