@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/23 00:00';
+    const APP_VERSION = '2026/08/23 01:00';
 
     /* ===================================================================
        共用工具
@@ -1618,7 +1618,7 @@
                         )}
                       </div>
 
-                      <div className="grid grid-cols-3 gap-4 border-b border-slate-200 dark:border-slate-700 pb-4">
+                      <div className="grid grid-cols-1 gap-4 border-b border-slate-200 dark:border-slate-700 pb-4">
                         {[{name:'tsla',label:'TSLA'},{name:'spcx',label:'SPCX'},{name:'qld',label:'QLD'}].map((f, fIdx) => (
                           <div key={f.name} className="relative">
                             <label className="block text-xs font-bold mb-1 text-slate-500 dark:text-slate-400">{f.label}</label>
