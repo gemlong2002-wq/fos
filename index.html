@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/24 00:00';
+    const APP_VERSION = '2026/08/24 01:00';
 
     /* ===================================================================
        共用工具
@@ -877,6 +877,18 @@
 
       // v12.4 — 崩盤指數：手動輸入當前大盤指數，不持久化（比照 betaConfig pattern）
       const [crashIndexInput, setCrashIndexInput] = useState('20000');
+      // v12.18 — 大盤指數自動抓取：卡片載入時打一次唯讀端點(?action=marketIndex，不需WRITE_SECRET)，
+      // 成功才覆蓋顯示值；失敗(success:false或拋錯)靜默維持原值，欄位本身仍可手動輸入覆寫
+      const [isFetchingIndex, setIsFetchingIndex] = useState(false);
+      const fetchMarketIndex = () => {
+        setIsFetchingIndex(true);
+        fetch(GAS_URL_FOS + '?action=marketIndex')
+          .then(res => res.json())
+          .then(data => { if (data && data.success) setCrashIndexInput(String(data.index)); })
+          .catch(() => {})
+          .finally(() => setIsFetchingIndex(false));
+      };
+      useEffect(() => { fetchMarketIndex(); }, []);
 
       // v12.4 — 拖曳中自動捲動：拖到視窗上/下緣 60px 內時捲動，離開/結束時停止
       useEffect(() => {
@@ -1820,7 +1832,12 @@ Ask this box before you withdraw.`
                     <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
                       <div className="flex justify-between items-center gap-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 border border-slate-100 dark:border-slate-700">
                         <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">{t('當前大盤指數', 'CURRENT INDEX')}</span>
-                        <input type="number" value={crashIndexInput} onChange={(e) => setCrashIndexInput(e.target.value)} className="w-28 text-right text-lg font-black font-mono bg-transparent outline-none text-slate-700 dark:text-slate-300 data-text" />
+                        <div className="flex items-center gap-1.5">
+                          <button type="button" onClick={fetchMarketIndex} disabled={isFetchingIndex} title={t('重新抓取即時指數', 'Refresh live index')} className={`text-slate-400 hover:text-sky-500 dark:hover:text-amber-400 transition-colors ${isFetchingIndex ? 'animate-spin' : ''}`}>
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                          </button>
+                          <input type="number" value={crashIndexInput} onChange={(e) => setCrashIndexInput(e.target.value)} className="w-28 text-right text-lg font-black font-mono bg-transparent outline-none text-slate-700 dark:text-slate-300 data-text" />
+                        </div>
                       </div>
                       <div className={`rounded-xl p-4 text-center border ${isCrashSafe ? 'bg-sky-50 dark:bg-sky-950/30 border-sky-100 dark:border-sky-900/50' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-700'}`}>
                         <div className="text-xs font-bold mb-1 uppercase tracking-widest text-slate-500 dark:text-slate-400">{t('崩盤指數', 'CRASH INDEX')}</div>
