@@ -1211,7 +1211,7 @@
             const usStockTwd = Math.round(usStockUsdSum * rate);
             const cryptoTwd = Math.round((parseFloat(formDataB.eth) || 0) + (parseFloat(formDataB.btc) || 0));
             const cryptoDisplayValue = (parseFloat(formDataB.eth) || 0) > 0
-              ? String(parseFloat(((parseFloat(formDataB.eth) || 0) + (parseFloat(formDataB.btc) || 0)).toFixed(8)))
+              ? String(Number(((parseFloat(formDataB.eth) || 0) + (parseFloat(formDataB.btc) || 0)).toFixed(8)))
               : formDataB.btc;
             const twStockTwd = Math.round(c0050 + c00733 + P1);
             if (onInjectPrefill) onInjectPrefill({ twStock: twStockTwd, usStock: usStockTwd, crypto: cryptoTwd });
