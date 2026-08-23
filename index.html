@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/22 10:05';
+    const APP_VERSION = '2026/08/23 00:00';
 
     /* ===================================================================
        共用工具
@@ -1052,6 +1052,11 @@
         setAiFields(p => { const n = {...p}; delete n[e.target.name]; return n; });
       };
 
+      const handleCryptoChange = (e) => {
+        setFormDataB(p => ({ ...p, btc: e.target.value, eth: '0' }));
+        setAiFields(p => { const n = {...p}; delete n.eth; delete n.btc; return n; });
+      };
+
       const handleScreenshot = async (e) => {
         const file = e.target.files && e.target.files[0];
         if (!file) return;
@@ -1205,6 +1210,9 @@
             const usStockUsdSum = (parseFloat(formDataB.tsla) || 0) + (parseFloat(formDataB.qld) || 0) + (parseFloat(formDataB.spcx) || 0);
             const usStockTwd = Math.round(usStockUsdSum * rate);
             const cryptoTwd = Math.round((parseFloat(formDataB.eth) || 0) + (parseFloat(formDataB.btc) || 0));
+            const cryptoDisplayValue = (parseFloat(formDataB.eth) || 0) > 0
+              ? String(parseFloat(((parseFloat(formDataB.eth) || 0) + (parseFloat(formDataB.btc) || 0)).toFixed(8)))
+              : formDataB.btc;
             const twStockTwd = Math.round(c0050 + c00733 + P1);
             if (onInjectPrefill) onInjectPrefill({ twStock: twStockTwd, usStock: usStockTwd, crypto: cryptoTwd });
           }
@@ -1618,17 +1626,10 @@
                           </div>
                         ))}
                       </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="relative">
-                          <label className="block text-sm font-bold mb-1 text-sky-500 dark:text-sky-400">ETH</label>
-                          <input type="number" inputMode="decimal" name="eth" value={formDataB.eth} onChange={handleInputBChange} onKeyDown={handleEnterJump(bInputRefs, 4)} ref={el => bInputRefs.current[4] = el} className={`w-full tech-input font-mono ${aiFields.eth ? 'ring-2 ring-violet-400 ring-offset-1 dark:ring-offset-slate-900' : 'focus:border-sky-400'}`} placeholder="0" />
-                          {aiFields.eth && <span className="absolute top-0 right-1 text-[10px] font-black text-violet-500 bg-violet-100 dark:bg-violet-900/50 px-1.5 py-0.5 rounded-bl-lg rounded-tr-xl">AI</span>}
-                        </div>
-                        <div className="relative">
-                          <label className="block text-sm font-bold mb-1 text-amber-500 dark:text-amber-400">BTC</label>
-                          <input type="number" inputMode="decimal" name="btc" value={formDataB.btc} onChange={handleInputBChange} onKeyDown={handleEnterJump(bInputRefs, 5)} ref={el => bInputRefs.current[5] = el} className={`w-full tech-input font-mono ${aiFields.btc ? 'ring-2 ring-violet-400 ring-offset-1 dark:ring-offset-slate-900' : 'focus:border-amber-400'}`} placeholder="0" />
-                          {aiFields.btc && <span className="absolute top-0 right-1 text-[10px] font-black text-violet-500 bg-violet-100 dark:bg-violet-900/50 px-1.5 py-0.5 rounded-bl-lg rounded-tr-xl">AI</span>}
-                        </div>
+                      <div className="relative">
+                        <label className="block text-sm font-bold mb-1 text-amber-500 dark:text-amber-400">{t('加密貨幣', 'CRYPTO')}</label>
+                        <input type="number" inputMode="decimal" name="crypto" value={cryptoDisplayValue} onChange={handleCryptoChange} onKeyDown={handleEnterJump(bInputRefs, 4)} ref={el => bInputRefs.current[4] = el} className={`w-full tech-input font-mono ${(aiFields.eth || aiFields.btc) ? 'ring-2 ring-violet-400 ring-offset-1 dark:ring-offset-slate-900' : 'focus:border-amber-400'}`} placeholder="0" />
+                        {(aiFields.eth || aiFields.btc) && <span className="absolute top-0 right-1 text-[10px] font-black text-violet-500 bg-violet-100 dark:bg-violet-900/50 px-1.5 py-0.5 rounded-bl-lg rounded-tr-xl">AI</span>}
                       </div>
                     </div>
                   )}
