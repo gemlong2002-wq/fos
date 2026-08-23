@@ -1210,9 +1210,6 @@
             const usStockUsdSum = (parseFloat(formDataB.tsla) || 0) + (parseFloat(formDataB.qld) || 0) + (parseFloat(formDataB.spcx) || 0);
             const usStockTwd = Math.round(usStockUsdSum * rate);
             const cryptoTwd = Math.round((parseFloat(formDataB.eth) || 0) + (parseFloat(formDataB.btc) || 0));
-            const cryptoDisplayValue = (parseFloat(formDataB.eth) || 0) > 0
-              ? String(Number(((parseFloat(formDataB.eth) || 0) + (parseFloat(formDataB.btc) || 0)).toFixed(8)))
-              : formDataB.btc;
             const twStockTwd = Math.round(c0050 + c00733 + P1);
             if (onInjectPrefill) onInjectPrefill({ twStock: twStockTwd, usStock: usStockTwd, crypto: cryptoTwd });
           }
@@ -1391,6 +1388,10 @@
         );
         navigator.clipboard.writeText(report).then(() => setTerminalMsg('>> REPORT COPIED.')).catch(() => setTerminalMsg('>> COPY FAILED.'));
       };
+
+      const cryptoDisplayValue = (parseFloat(formDataB.eth) || 0) > 0
+        ? String(Number(((parseFloat(formDataB.eth) || 0) + (parseFloat(formDataB.btc) || 0)).toFixed(8)))
+        : formDataB.btc;
 
       return (
         <div className="fos-scope clean-grid-bg min-h-screen text-slate-800 dark:text-slate-200 text-lg md:text-xl pt-8 pb-20 selection:bg-sky-200 dark:selection:bg-sky-900">
