@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/23 04:00';
+    const APP_VERSION = '2026/08/23 05:00';
 
     /* ===================================================================
        共用工具
@@ -496,14 +496,14 @@
        同一 zone 內互換順序；zone 間不互通（保留原本的欄位/寬度結構）
        v12.5 — 順序存 localStorage（這台機器的顯示偏好，刻意不跨裝置同步）
     =================================================================== */
-    const DEFAULT_LEFT_ORDER = ['input', 'liquidity'];
+    const DEFAULT_LEFT_ORDER = ['input'];
     const DEFAULT_TOP_ORDER = ['crash'];
     // ERG離職放行閘門骨架 — 新增卡片放bottom zone（內容是清單+總結，篇幅比mini卡大，比照history/radar版型）
     // reconcileCardOrder 會自動把新id補進舊使用者已存的排序（見loadCardOrder），不需要額外遷移
     const DEFAULT_BOTTOM_ORDER = ['usEngine', 'crypto', 'radar', 'history', 'erg'];
     // v12.12 — mini zone：純顯示型卡片改AMBER小卡版型(h-44 grid)，收納自left/top/bottom搬遷的卡片
     // v12.13 — 現金護城河改「小卡摘要+彈窗輸入」比照passthrough/stress模式，一併搬進mini zone(與LCM同主題相鄰)
-    const DEFAULT_MINI_ORDER = ['mr', 'balance', 'lcm', 'allocationOrder', 'cashMoat', 'passthrough', 'stress'];
+    const DEFAULT_MINI_ORDER = ['mr', 'balance', 'lcm', 'allocationOrder', 'cashMoat', 'passthrough', 'stress', 'liquidity'];
 
     const CARD_ORDER_KEYS = { left: 'fos:cardOrder:left', top: 'fos:cardOrder:top', bottom: 'fos:cardOrder:bottom', mini: 'fos:cardOrder:mini' };
 
@@ -1743,7 +1743,7 @@ Ask this box before you withdraw.`
                 </div>
               );
 
-              const leftCards = { input: cardInput, liquidity: cardLiquidity };
+              const leftCards = { input: cardInput };
 
               // v12.12 — mini卡版型(比照AMBER h-44 glass-card + hover翻面)：計算邏輯不動，只改外層容器與排版
               const cardMr = (
@@ -2460,14 +2460,14 @@ Build the wall first. Attack second.`)}
               );
 
               const bottomCards = { usEngine: cardUsEngine, crypto: cardCrypto, radar: cardRadar, history: cardHistory, erg: cardErg };
-              const miniCards = { mr: cardMr, balance: cardBalance, lcm: cardLcm, allocationOrder: cardAllocationOrder, cashMoat: cardCashMoatCollapsed, passthrough: cardPassthroughCollapsed, stress: cardStressCollapsed };
+              const miniCards = { mr: cardMr, balance: cardBalance, lcm: cardLcm, allocationOrder: cardAllocationOrder, cashMoat: cardCashMoatCollapsed, passthrough: cardPassthroughCollapsed, stress: cardStressCollapsed, liquidity: cardLiquidity };
 
               const expandedCardContent = expandedCard === 'passthrough' ? cardPassthrough : expandedCard === 'stress' ? cardStress : expandedCard === 'cashMoat' ? cardCashMoat : null;
 
               return (
                 <Fragment>
                 <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
-                  <div className="xl:col-span-4 space-y-8">
+                  <div className="xl:col-span-12 space-y-8">
                     {leftOrder.map(id => (
                       <DraggableCard key={id} id={id} zone="left" order={leftOrder} setOrder={setLeftOrder} dragInfo={dragInfo} setDragInfo={setDragInfo} collapsed={sortMode} title={cardTitles[id]}>
                         {leftCards[id]}
@@ -2475,7 +2475,7 @@ Build the wall first. Attack second.`)}
                     ))}
                   </div>
 
-                  <div className="xl:col-span-8 space-y-8">
+                  <div className="xl:col-span-12">
                     <div className={sortMode ? 'space-y-3' : (topOrder.length > 1 ? 'grid grid-cols-1 md:grid-cols-2 gap-8' : 'space-y-8')}>
                       {topOrder.map(id => (
                         <DraggableCard key={id} id={id} zone="top" order={topOrder} setOrder={setTopOrder} dragInfo={dragInfo} setDragInfo={setDragInfo} collapsed={sortMode} title={cardTitles[id]}>
@@ -2495,7 +2495,7 @@ Build the wall first. Attack second.`)}
                     </div>
                   </div>
 
-                  <div className="xl:col-span-8 space-y-8">
+                  <div className="xl:col-span-12">
                     <div className={sortMode ? 'space-y-3' : 'space-y-8'}>
                       {/* 2026/08/21 Boss拍板 — 「離職放行閘門」(原PART9)開關關閉時，ERG完整卡片也一併消失；
                           用filter而非改bottomOrder本身，重新開啟時原本拖曳順序不會跑掉 */}
