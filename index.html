@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/01 00:00';
+    const APP_VERSION = '2026/09/01 01:00';
 
     /* ===================================================================
        共用工具
@@ -4565,9 +4565,12 @@ Build the wall first. Attack second.`)}
         const creditCardEffectivePaid = hasInstallmentPlan ? getEffectiveInstallmentPaid(r) : null;
         const creditCardRemainAmount = hasInstallmentPlan ? creditCardMonthly * Math.max(0, r.installmentTotal - (creditCardEffectivePaid || 0)) : null;
         const creditCardRemainMonths = hasInstallmentPlan ? Math.max(0, r.installmentTotal - (creditCardEffectivePaid || 0)) : null;
+        // v1.4 — 信用卡分期「有效已繳期數」達到/超過總期數(剩0期)：純視覺疊加判斷，不動 status 欄位本身、
+        // 不取代已結清的手動切換邏輯，也不自動刪除，只是提示使用者可以按清除按鈕手動處理
+        const isPaidOff = hasInstallmentPlan && creditCardEffectivePaid >= r.installmentTotal;
         const isClosed = r.status === DEBT_STATUS_CLOSED;
-        const closedClass = isClosed
-          ? " bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-950/20 dark:to-slate-900 border-emerald-200 dark:border-emerald-800/50 closed-card-flash"
+        const closedClass = (isClosed || isPaidOff)
+          ? " bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-950/20 dark:to-slate-900 border-emerald-200 dark:border-emerald-800/50" + (isClosed ? " closed-card-flash" : "")
           : "";
         // 保險「剩餘繳費次數」：年繳保單用剩餘月數÷12無條件進位(例如剩7個月=還要繳2次)，
         // 月繳保單就是剩餘月數本身。months 為 null(無到期標記)時維持 null，不顯示提示燈。
@@ -4594,6 +4597,7 @@ Build the wall first. Attack second.`)}
                   {r.name}
                   <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700">{category}</span>
                   {highRate && <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800">{t('優先消滅', 'PRIORITY')}</span>}
+                  {isPaidOff && <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">{t('✅ 已繳清・待清除', '✅ PAID OFF・PENDING CLEANUP')}</span>}
                 </div>
                 <div className="text-xs text-slate-400 mt-0.5">{r.partnerBank}{r.partnerBank && r.deductBank ? ' · ' : ''}{r.deductBank ? `${t('扣款', 'Debit')}: ${r.deductBank}` : ''}</div>
               </div>
@@ -4649,7 +4653,9 @@ Build the wall first. Attack second.`)}
             </div>
             <div className="flex md:flex-col gap-2 shrink-0">
               <button onClick={() => openEditModal(r)} className="tech-btn px-4 py-2 text-sm font-bold bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800">{t('編輯', 'EDIT')}</button>
-              <button onClick={() => setDeleteTarget(r.id)} className="tech-btn px-4 py-2 text-sm font-bold bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800">{t('刪除', 'DELETE')}</button>
+              {/* v1.4 — isPaidOff 時把同一顆刪除按鈕(同一個 onClick/confirm流程)放大變色顯眼化，
+                  不是另外發明新的刪除機制，只是視覺上更醒目、文字改成「清除」提示使用者可以處理了 */}
+              <button onClick={() => setDeleteTarget(r.id)} className={isPaidOff ? "tech-btn px-4 py-2.5 text-sm font-black bg-rose-500 hover:bg-rose-600 text-white border-2 border-rose-600 shadow-lg animate-pulse" : "tech-btn px-4 py-2 text-sm font-bold bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800"}>{isPaidOff ? t('🗑️ 清除', '🗑️ CLEAR') : t('刪除', 'DELETE')}</button>
             </div>
           </div>
           {stripEndTag(stripFreqTag(r.note)) && (
