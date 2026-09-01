@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/08/25 11:37';
+    const APP_VERSION = '2026/09/01 00:00';
 
     /* ===================================================================
        共用工具
@@ -4274,7 +4274,7 @@ Build the wall first. Attack second.`)}
         return clean ? clean + ` [END:${endDate}]` : `[END:${endDate}]`;
       };
 
-      const emptyForm = { id: '', name: '', category: DEBT_CATEGORY_DEFAULT, partnerBank: '', deductBank: '', rate: '', fee: '', totalAmount: '', monthlyPay: '', endDate: '', status: DEBT_STATUS_ACTIVE, note: '', payFrequency: PAY_FREQ_MONTHLY, installmentTotal: '', installmentPaid: '', insuranceEndDate: '' };
+      const emptyForm = { id: '', name: '', category: DEBT_CATEGORY_DEFAULT, partnerBank: '', deductBank: '', rate: '', fee: '', totalAmount: '', monthlyPay: '', endDate: '', status: DEBT_STATUS_ACTIVE, note: '', payFrequency: PAY_FREQ_MONTHLY, installmentTotal: '', installmentPaid: '', installmentAsOf: '', insuranceEndDate: '' };
 
       const [records, setRecords] = useState([]);
       const [loading, setLoading] = useState(true);
@@ -4372,6 +4372,22 @@ Build the wall first. Attack second.`)}
         return { months, remainAmount: months * pay };
       };
 
+      // v1.3 — 信用卡「有效已繳期數」：用後端存檔時戳記的 installmentAsOf 錨點日期跟今天的年月差，
+      // 自動把多過去的月數加回 installmentPaid，不用每月手動+1。純年月字串解析(跟 getRemainingInfo
+      // 對 endDate 的手法一致)，刻意不用 new Date(installmentAsOf) 直接轉，避免時區解析造成的日期偏移。
+      // 舊資料(還沒被存過一次、沒有 installmentAsOf)維持原樣顯示 installmentPaid，不強迫遷移。
+      const getEffectiveInstallmentPaid = (r) => {
+        if (r.installmentTotal == null || r.installmentPaid == null) return r.installmentPaid;
+        if (!r.installmentAsOf) return r.installmentPaid;
+        const match = /^(\d{4})-(\d{2})/.exec(String(r.installmentAsOf));
+        if (!match) return r.installmentPaid;
+        const y = parseInt(match[1], 10), m = parseInt(match[2], 10);
+        const now = new Date();
+        let elapsed = (now.getFullYear() - y) * 12 + (now.getMonth() + 1 - m);
+        if (elapsed < 0) elapsed = 0;
+        return Math.min(r.installmentTotal, r.installmentPaid + elapsed);
+      };
+
       // 貸款「剩餘應繳(估)」改用年金現值公式反推剩餘本金，修正「月付×剩餘期數」對有利息貸款的
       // 系統性高估(把未來還沒發生的利息也算進剩餘總額)。只影響貸款分支，getRemainingInfo 本身
       // (剩餘期數/insurance等其他類型的金額算法)完全不動。
@@ -4424,7 +4440,7 @@ Build the wall first. Attack second.`)}
         if (category === DEBT_CATEGORY_CREDIT_CARD) {
           if (r.installmentTotal == null) return null;
           const monthly = toMonthlyEquivalent(r.monthlyPay, freq);
-          return monthly * Math.max(0, r.installmentTotal - (r.installmentPaid || 0));
+          return monthly * Math.max(0, r.installmentTotal - (getEffectiveInstallmentPaid(r) || 0));
         }
         if (category === DEBT_CATEGORY_INSURANCE) {
           const { remainAmount } = getRemainingInfo(getInsuranceEndDate(r.note), r.monthlyPay, freq);
@@ -4458,7 +4474,12 @@ Build the wall first. Attack second.`)}
         note: stripEndTag(stripFreqTag(r.note)),
         // 後端空值一律回傳 null，表單 number input 綁 null 會被 React 當成非受控，統一轉成空字串回填
         installmentTotal: r.installmentTotal != null ? String(r.installmentTotal) : '',
-        installmentPaid: r.installmentPaid != null ? String(r.installmentPaid) : ''
+        // v1.3 — 用原始 r(數值型別)算出有效已繳期數再轉字串回填表單，讓使用者打開編輯視窗看到的
+        // 就是目前自動累加後的正確數字；若直接存檔不改動，也會正確把這個新數字存回去。
+        // 注意：這裡刻意用 r 而非 editingRecord 呼叫 getEffectiveInstallmentPaid，因為 editingRecord
+        // 的 installmentPaid/installmentTotal 已被上面轉成字串，直接丟進去做加法會變成字串串接
+        installmentPaid: r.installmentPaid != null ? String(getEffectiveInstallmentPaid(r)) : '',
+        installmentAsOf: r.installmentAsOf || null
       });
       const closeModal = () => { setEditingRecord(null); setMsg(''); };
 
@@ -4540,8 +4561,10 @@ Build the wall first. Attack second.`)}
         // 口徑一致；沒填分期(單純月扣，例如串流訂閱型信用卡扣款)不硬套公式，顯示「非分期」，不誤導成0
         const creditCardMonthly = isCreditCard ? toMonthlyEquivalent(r.monthlyPay, freq) : 0;
         const creditCardTotalAmount = hasInstallmentPlan ? creditCardMonthly * r.installmentTotal : null;
-        const creditCardRemainAmount = hasInstallmentPlan ? creditCardMonthly * Math.max(0, r.installmentTotal - (r.installmentPaid || 0)) : null;
-        const creditCardRemainMonths = hasInstallmentPlan ? Math.max(0, r.installmentTotal - (r.installmentPaid || 0)) : null;
+        // v1.3 — 已繳期數改用 getEffectiveInstallmentPaid(r)（錨點日期自動累加），取代原始 r.installmentPaid
+        const creditCardEffectivePaid = hasInstallmentPlan ? getEffectiveInstallmentPaid(r) : null;
+        const creditCardRemainAmount = hasInstallmentPlan ? creditCardMonthly * Math.max(0, r.installmentTotal - (creditCardEffectivePaid || 0)) : null;
+        const creditCardRemainMonths = hasInstallmentPlan ? Math.max(0, r.installmentTotal - (creditCardEffectivePaid || 0)) : null;
         const isClosed = r.status === DEBT_STATUS_CLOSED;
         const closedClass = isClosed
           ? " bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-950/20 dark:to-slate-900 border-emerald-200 dark:border-emerald-800/50 closed-card-flash"
@@ -4585,8 +4608,8 @@ Build the wall first. Attack second.`)}
                 {isLoan && <div className="text-xs text-slate-400 mt-0.5">{t('利率', 'RATE')} {r.rate}%</div>}
                 {category === DEBT_CATEGORY_CREDIT_CARD && r.installmentTotal != null && (
                   <div className="text-xs text-slate-400 mt-0.5">
-                    {t(`已繳 ${r.installmentPaid || 0} / 共 ${r.installmentTotal} 期，剩 ${Math.max(0, r.installmentTotal - (r.installmentPaid || 0))} 期`,
-                       `Paid ${r.installmentPaid || 0} / ${r.installmentTotal}, ${Math.max(0, r.installmentTotal - (r.installmentPaid || 0))} left`)}
+                    {t(`已繳 ${creditCardEffectivePaid || 0} / 共 ${r.installmentTotal} 期，剩 ${Math.max(0, r.installmentTotal - (creditCardEffectivePaid || 0))} 期`,
+                       `Paid ${creditCardEffectivePaid || 0} / ${r.installmentTotal}, ${Math.max(0, r.installmentTotal - (creditCardEffectivePaid || 0))} left`)}
                   </div>
                 )}
               </div>
