@@ -284,7 +284,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/01 02:00';
+    const APP_VERSION = '2026/09/01 03:00';
 
     /* ===================================================================
        共用工具
@@ -4748,15 +4748,17 @@ Build the wall first. Attack second.`)}
         <div className="clean-grid-bg min-h-screen text-slate-800 dark:text-slate-200 text-lg md:text-xl pt-8 pb-20 selection:bg-sky-200 dark:selection:bg-sky-900">
           <div className="max-w-[1600px] mx-auto px-4 md:px-10 space-y-8 pb-24 relative tracking-wide">
 
-            <div className="tech-panel p-8">
-              <h2 className="text-lg font-black uppercase text-slate-400 mb-4">{t('每月基礎失血量', 'MONTHLY BASE BURN')}</h2>
+            <div className="mb-4">
+              <h1 className="text-3xl font-bold tracking-widest text-slate-800 dark:text-rose-500 font-mono mb-4 vibe-hover-text"><ScrambleText text="DEBT_ RADAR [LOAN_CORE]" /></h1>
               {loading ? (
                 <div className="text-2xl font-black text-slate-300 dark:text-slate-600">{t('讀取中...', 'Loading...')}</div>
               ) : loadError ? (
                 <div className="text-rose-500 font-bold">{t('讀取失敗：', 'Load failed: ')}{loadError}</div>
               ) : (
-                <div className="flex items-baseline gap-3 flex-wrap">
-                  <span className="text-4xl md:text-5xl font-black font-mono text-rose-600 dark:text-rose-400 data-text">{formatNumber(monthlyTotal)}</span>
+                <div className="flex items-baseline gap-4 flex-wrap mb-2">
+                  <span className="text-4xl sm:text-6xl md:text-7xl lg:text-8xl font-black font-mono tracking-tight text-rose-600 dark:text-rose-400 data-text">
+                    <ScrambleText text={formatNumber(monthlyTotal)} />
+                  </span>
                   <span className="text-sm font-bold text-slate-400 uppercase tracking-widest">{t(`${activeRecords.length} 筆執行中貸款`, `${activeRecords.length} active loans`)}</span>
                 </div>
               )}
