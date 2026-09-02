@@ -291,7 +291,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/01 04:00';
+    const APP_VERSION = '2026/09/01 05:00';
 
     /* ===================================================================
        共用工具
@@ -689,7 +689,7 @@
     /* ===================================================================
        FOS 子元件 (Boss Terminal v12.2)  — isDarkMode / isEng 由 AppShell 注入
     =================================================================== */
-    function FosTerminal({ isDarkMode, isEng, onInjectPrefill, onLAmountChange, onPledgeRateChange, debtMonthlyTotal }) {
+    function FosTerminal({ isDarkMode, isEng, onInjectPrefill, onLAmountChange, onPledgeRateChange, debtMonthlyTotal, onCashMoatMonthlyDebtChange }) {
       function getMRZone(mr) {
         const val = parseFloat(mr);
         if (val === 0) return { dot: 'bg-slate-300 dark:bg-slate-600', text: 'text-slate-400', label: 'STANDBY', zone: 'STANDBY' };
@@ -1249,6 +1249,12 @@
       const cmCash = parseFloat(cashMoatInputs.cash) || 0;
       const cmMonthlyDebt = parseFloat(cashMoatInputs.monthlyDebt) || 0;
       const cmMonths = parseFloat(cashMoatInputs.months) || 6;
+      // v13.3 — cmMonthlyDebt 反向資料流上傳給 AppShell，供 DEBT 頁「月付壓力血條」讀取（比照
+      // DebtTerminal 既有的 onDebtTotalChange 寫法，同一種單向 useEffect 上傳模式）
+      useEffect(() => {
+        if (!onCashMoatMonthlyDebtChange) return;
+        onCashMoatMonthlyDebtChange(cmMonthlyDebt);
+      }, [cmMonthlyDebt]);
       const cmHasTarget = cmMonthlyDebt > 0;
       const cmTarget = cmHasTarget ? cmMonthlyDebt * cmMonths : 0;
       const cmProgress = cmHasTarget ? (cmCash / cmTarget) : 0;
@@ -4306,7 +4312,7 @@ Build the wall first. Attack second.`)}
        若舊資料實際用詞不同，非「已結清」的一律歸類到「執行中」清單，
        不會讓資料在畫面上憑空消失，但分類可能需要 Boss 之後核對舊資料調整。
     =================================================================== */
-    function DebtTerminal({ isDarkMode, isEng, onDebtTotalChange }) {
+    function DebtTerminal({ isDarkMode, isEng, onDebtTotalChange, cashMoatMonthlyDebt }) {
       const t = (zh, en) => isEng ? en : zh;
       function formatNumber(num) {
         return isNaN(parseFloat(num)) ? '0' : parseFloat(num).toLocaleString('en-US', { maximumFractionDigits: 0 });
@@ -4546,6 +4552,61 @@ Build the wall first. Attack second.`)}
         return totals;
       }, [activeRecords]);
 
+      // v13.3 — 三條血條(還債進度/負債品質/月付壓力)的聚合計算，沿用既有單筆估算函式
+      // (getItemRemainingAmount/categoryRemainingTotals)，不重新發明公式
+      const totalRemainingAllCategories = categoryRemainingTotals[DEBT_CATEGORY_DEFAULT].sum
+        + categoryRemainingTotals[DEBT_CATEGORY_CREDIT_CARD].sum
+        + categoryRemainingTotals[DEBT_CATEGORY_INSURANCE].sum;
+
+      // 原始總額 — 比照 renderLoanRow 既有「初始總額」欄位顯示邏輯逐字抽出成可重用函式：
+      // 貸款/保險用 r.totalAmount 原始欄位；信用卡用月付×總期數(hasInstallmentPlan時)，跟畫面
+      // 上「初始總額」那一格顯示的算法完全一致，不是另外發明的新公式
+      const getItemOriginalAmount = (r) => {
+        const category = r.category || DEBT_CATEGORY_DEFAULT;
+        if (category === DEBT_CATEGORY_CREDIT_CARD) {
+          if (r.installmentTotal == null) return null;
+          const freq = getPayFrequency(r.note);
+          const monthly = toMonthlyEquivalent(r.monthlyPay, freq);
+          return monthly * r.installmentTotal;
+        }
+        if (category === DEBT_CATEGORY_DEFAULT || category === DEBT_CATEGORY_INSURANCE) {
+          return parseFloat(r.totalAmount) || 0;
+        }
+        return null; // 訂閱與未知類型不適用
+      };
+      const debtOriginalTotal = useMemo(() => {
+        return activeRecords.reduce((sum, r) => {
+          const cat = r.category || DEBT_CATEGORY_DEFAULT;
+          if (![DEBT_CATEGORY_DEFAULT, DEBT_CATEGORY_CREDIT_CARD, DEBT_CATEGORY_INSURANCE].includes(cat)) return sum;
+          return sum + (getItemOriginalAmount(r) || 0);
+        }, 0);
+      }, [activeRecords]);
+
+      // A. 還債進度：(原始總額 − 剩餘總額) ÷ 原始總額，原始總額為0時顯示0%避免除以0
+      const debtPayoffPct = debtOriginalTotal > 0
+        ? Math.max(0, Math.min(100, (debtOriginalTotal - totalRemainingAllCategories) / debtOriginalTotal * 100))
+        : 0;
+
+      // B. 負債品質健康度：沿用既有 highRate(利率>2.5%) 判定邏輯，只對「貸款」類別適用
+      // (信用卡/保險本身沒有這個利率欄位語意)，用「高利率貸款剩餘金額」佔「全部負債剩餘金額」的比例反推健康度
+      const highRateRemainingTotal = useMemo(() => {
+        return activeRecords.reduce((sum, r) => {
+          const cat = r.category || DEBT_CATEGORY_DEFAULT;
+          if (cat !== DEBT_CATEGORY_DEFAULT) return sum;
+          const isHighRate = (parseFloat(r.rate) || 0) > 2.5;
+          if (!isHighRate) return sum;
+          return sum + (getItemRemainingAmount(r) || 0);
+        }, 0);
+      }, [activeRecords]);
+      const debtQualityPct = totalRemainingAllCategories > 0
+        ? Math.max(0, 100 - (highRateRemainingTotal / totalRemainingAllCategories * 100))
+        : 100;
+
+      // C. 月付壓力：實際月付總額 ÷ 現金護城河手動設定的月付基準，基準為 null(FosTerminal尚未
+      // mount)或0(尚未填)時一律視為「尚未設定基準」，不算除以0/顯示NaN
+      const hasMonthlyPressureBaseline = cashMoatMonthlyDebt != null && cashMoatMonthlyDebt > 0;
+      const monthlyPressurePct = hasMonthlyPressureBaseline ? (monthlyTotal / cashMoatMonthlyDebt * 100) : null;
+
       const openNewModal = () => setEditingRecord({ ...emptyForm });
       const openEditModal = (r) => setEditingRecord({
         ...r,
@@ -4772,6 +4833,58 @@ Build the wall first. Attack second.`)}
               <div className="text-xs text-slate-400 mt-3">{t('此數字會自動同步到 FOS 頁 LCM 卡的月付總額（優先於手動輸入值）', 'This number auto-syncs to the FOS page LCM card\'s monthly debt (takes priority over manual input)')}</div>
             </div>
 
+            {!loading && !loadError && (
+              <div className="space-y-4 mb-2">
+                {/* v13.3 — 三條血條：還債進度/負債品質/月付壓力，視覺比照 ASSET 頁 PROJECT_LVL_21
+                    漸層進度條(glass-card + h-8 rounded-full 漸層bar + 玻璃感陰影)，只借用視覺樣式，
+                    不共用該元件本身的計算邏輯 */}
+                <div className="glass-card p-5 rounded-xl border-t-[6px] border-cyan-500 dark:border-cyan-400 relative overflow-hidden shadow-lg">
+                  <div className="flex flex-wrap justify-between items-end mb-3 gap-2">
+                    <span className="text-sm font-mono text-slate-600 dark:text-cyan-400 font-bold uppercase tracking-widest">{t('還債進度 DEBT PAYOFF', 'DEBT PAYOFF')}</span>
+                    <span className="text-2xl font-mono font-bold text-slate-800 dark:text-cyan-300">{debtPayoffPct.toFixed(1)}%</span>
+                  </div>
+                  <div className="h-8 w-full bg-slate-100 dark:bg-slate-800/80 rounded-full overflow-hidden border border-slate-200 dark:border-cyan-500/30 shadow-inner">
+                    <div className="h-full bg-gradient-to-r from-emerald-400 to-cyan-500 relative transition-all duration-1000 shadow-md neon-bar" style={{ width: debtPayoffPct + '%' }}>
+                      <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
+                    </div>
+                  </div>
+                  <div className="mt-2 flex flex-col sm:flex-row justify-between text-xs font-mono font-bold opacity-80 gap-1">
+                    <span className="text-slate-500 dark:text-slate-400">{t(`已還 ${formatNumber(debtOriginalTotal - totalRemainingAllCategories)} / 原始 ${formatNumber(debtOriginalTotal)}`, `Paid ${formatNumber(debtOriginalTotal - totalRemainingAllCategories)} / Original ${formatNumber(debtOriginalTotal)}`)}</span>
+                  </div>
+                </div>
+
+                <div className="glass-card p-5 rounded-xl border-t-[6px] relative overflow-hidden shadow-lg" style={{ borderTopColor: debtQualityPct >= 80 ? '#10b981' : debtQualityPct >= 50 ? '#f59e0b' : '#f43f5e' }}>
+                  <div className="flex flex-wrap justify-between items-end mb-3 gap-2">
+                    <span className="text-sm font-mono text-slate-600 dark:text-slate-300 font-bold uppercase tracking-widest">{t('負債品質 DEBT QUALITY', 'DEBT QUALITY')}</span>
+                    <span className={"text-2xl font-mono font-bold " + (debtQualityPct >= 80 ? 'text-emerald-600 dark:text-emerald-400' : debtQualityPct >= 50 ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400')}>{debtQualityPct.toFixed(1)}%</span>
+                  </div>
+                  <div className="h-8 w-full bg-slate-100 dark:bg-slate-800/80 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700 shadow-inner">
+                    <div className={"h-full bg-gradient-to-r relative transition-all duration-1000 shadow-md neon-bar " + (debtQualityPct >= 80 ? 'from-emerald-400 to-emerald-600' : debtQualityPct >= 50 ? 'from-amber-400 to-amber-600' : 'from-rose-400 to-rose-600')} style={{ width: debtQualityPct + '%' }}>
+                      <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
+                    </div>
+                  </div>
+                  <div className="mt-2 flex flex-col sm:flex-row justify-between text-xs font-mono font-bold opacity-80 gap-1">
+                    <span className="text-slate-500 dark:text-slate-400">{t(`高利率負債佔比 ${(100 - debtQualityPct).toFixed(1)}%`, `High-rate debt share ${(100 - debtQualityPct).toFixed(1)}%`)}</span>
+                  </div>
+                </div>
+
+                <div className="glass-card p-5 rounded-xl border-t-[6px] relative overflow-hidden shadow-lg" style={{ borderTopColor: !hasMonthlyPressureBaseline ? '#94a3b8' : monthlyPressurePct <= 50 ? '#10b981' : monthlyPressurePct <= 80 ? '#f59e0b' : '#f43f5e' }}>
+                  <div className="flex flex-wrap justify-between items-end mb-3 gap-2">
+                    <span className="text-sm font-mono text-slate-600 dark:text-slate-300 font-bold uppercase tracking-widest">{t('月付壓力 MONTHLY PRESSURE', 'MONTHLY PRESSURE')}</span>
+                    <span className={"text-2xl font-mono font-bold " + (!hasMonthlyPressureBaseline ? 'text-slate-400' : monthlyPressurePct <= 50 ? 'text-emerald-600 dark:text-emerald-400' : monthlyPressurePct <= 80 ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400')}>{hasMonthlyPressureBaseline ? Math.min(999, monthlyPressurePct).toFixed(1) + '%' : t('尚未設定基準', 'NO BASELINE')}</span>
+                  </div>
+                  <div className="h-8 w-full bg-slate-100 dark:bg-slate-800/80 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700 shadow-inner">
+                    <div className={"h-full bg-gradient-to-r relative transition-all duration-1000 shadow-md neon-bar " + (!hasMonthlyPressureBaseline ? 'from-slate-300 to-slate-400' : monthlyPressurePct <= 50 ? 'from-emerald-400 to-emerald-600' : monthlyPressurePct <= 80 ? 'from-amber-400 to-amber-600' : 'from-rose-400 to-rose-600')} style={{ width: (hasMonthlyPressureBaseline ? Math.min(100, monthlyPressurePct) : 0) + '%' }}>
+                      <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
+                    </div>
+                  </div>
+                  <div className="mt-2 flex flex-col sm:flex-row justify-between text-xs font-mono font-bold opacity-80 gap-1">
+                    <span className="text-slate-500 dark:text-slate-400">{hasMonthlyPressureBaseline ? t(`實際 ${formatNumber(monthlyTotal)} / 手動基準 ${formatNumber(cashMoatMonthlyDebt)}`, `Actual ${formatNumber(monthlyTotal)} / Manual baseline ${formatNumber(cashMoatMonthlyDebt)}`) : t('請先到 FOS BOSS 頁「現金護城河」卡設定月付', 'Set monthly debt on the FOS BOSS "Cash Moat" card first')}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="flex justify-between items-center">
               <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200">{t('貸款列表', 'LOAN LIST')}</h2>
               <button onClick={openNewModal} className="tech-btn px-5 py-2.5 font-bold bg-sky-500 text-white">+ {t('新增貸款', 'ADD LOAN')}</button>
@@ -4977,6 +5090,10 @@ Build the wall first. Attack second.`)}
       // v12.16 — 債務分頁月付總和：比照 onLAmountChange 模式，DebtTerminal 算好後回傳，
       // null 代表尚未就緒(讀取中/失敗)，FosTerminal 的 LCM 卡遇到 null 會 fallback 回手動輸入值
       const [debtMonthlyTotal, setDebtMonthlyTotal] = useState(null);
+      // v13.3 — 反向：現金護城河的月付手動輸入值，回傳給 DEBT 頁「月付壓力血條」讀取。
+      // null 代表 FosTerminal 還沒 mount 過(尚未切到 FOS BOSS 分頁)，DebtTerminal 遇到 null
+      // 要降級顯示「尚未設定基準」，不能白屏或算出 NaN
+      const [cashMoatMonthlyDebt, setCashMoatMonthlyDebt] = useState(null);
       const [unlocked, setUnlocked] = useState(!!getAccessToken());
       const [showPwGuide, setShowPwGuide] = useState(false);
       const [showRefreshHelp, setShowRefreshHelp] = useState(false);
@@ -5140,10 +5257,10 @@ Build the wall first. Attack second.`)}
             <AssetTerminal theme={theme} assetPrefill={assetPrefill} clearPrefill={() => setAssetPrefill(null)} lAmount={lAmount} />
           </div>
           <div style={{ display: activeTab === 'fos' ? 'block' : 'none' }}>
-            <FosTerminal isDarkMode={isDark} isEng={isEng} onInjectPrefill={(vals) => { setAssetPrefill(vals); setActiveTab('asset'); }} onLAmountChange={setLAmount} onPledgeRateChange={setPledgeRate} debtMonthlyTotal={debtMonthlyTotal} />
+            <FosTerminal isDarkMode={isDark} isEng={isEng} onInjectPrefill={(vals) => { setAssetPrefill(vals); setActiveTab('asset'); }} onLAmountChange={setLAmount} onPledgeRateChange={setPledgeRate} debtMonthlyTotal={debtMonthlyTotal} onCashMoatMonthlyDebtChange={setCashMoatMonthlyDebt} />
           </div>
           <div style={{ display: activeTab === 'debt' ? 'block' : 'none' }}>
-            <DebtTerminal isDarkMode={isDark} isEng={isEng} onDebtTotalChange={setDebtMonthlyTotal} />
+            <DebtTerminal isDarkMode={isDark} isEng={isEng} onDebtTotalChange={setDebtMonthlyTotal} cashMoatMonthlyDebt={cashMoatMonthlyDebt} />
           </div>
         </div>
       );
