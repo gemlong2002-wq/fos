@@ -291,7 +291,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/01 05:00';
+    const APP_VERSION = '2026/09/02 12:00';
 
     /* ===================================================================
        共用工具
@@ -4317,6 +4317,29 @@ Build the wall first. Attack second.`)}
       function formatNumber(num) {
         return isNaN(parseFloat(num)) ? '0' : parseFloat(num).toLocaleString('en-US', { maximumFractionDigits: 0 });
       }
+      // v13.4 — 三條血條點擊說明彈窗，比照 FosTerminal 的 ergInfoGate/ERG_GATE_INFO 模式，
+      // 但這是 DebtTerminal 自己獨立的一份 state/資料，不共用 FosTerminal 那份
+      const [barInfoModal, setBarInfoModal] = useState(null);
+      const DEBT_BAR_INFO = {
+        payoff: {
+          title: t('還債進度 DEBT PAYOFF', 'DEBT PAYOFF'),
+          what: t('統計貸款、信用卡、保險三類的「已還金額」佔「原始總額」的比例，看整體債務清償了多少（訂閱類不計入）。', 'Sums how much of the original total across loans, credit cards, and insurance has been paid off (subscriptions are not included).'),
+          formula: t('(原始總額加總 − 剩餘總額加總) ÷ 原始總額加總 × 100%', '(Sum of original totals − Sum of remaining totals) ÷ Sum of original totals × 100%'),
+          howTo: t('提前多還一些本金、優先清償金額大的負債、或減少新增分期消費，都能讓這條進度加快。', 'Paying down extra principal, prioritizing larger debts, or cutting back on new installment purchases will speed this up.')
+        },
+        quality: {
+          title: t('負債品質 DEBT QUALITY', 'DEBT QUALITY'),
+          what: t('檢查目前負債裡有多少比例是高利率（>2.5%）——高利率負債佔比越低，代表欠的錢越「便宜」，品質越好。', 'Checks what share of current debt is high-rate (>2.5%) — the lower that share, the "cheaper" your debt, the better the quality.'),
+          formula: t('100% − (高利率負債剩餘金額 ÷ 全部負債剩餘金額 × 100%)', '100% − (High-rate debt remaining ÷ Total debt remaining × 100%)'),
+          howTo: t('優先清償或轉貸高利率的貸款/信用卡分期，把貴的債換成便宜的債，品質就會提升。', 'Prioritize paying off or refinancing high-rate loans/installments — swapping expensive debt for cheap debt raises this score.')
+        },
+        pressure: {
+          title: t('月付壓力 MONTHLY PRESSURE', 'MONTHLY PRESSURE'),
+          what: t('拿 DEBT 頁自動加總出來的「每月實際要繳多少」，對照 FOS 頁「現金護城河」卡片手動設定的月付基準，看實際支出有沒有超出你自己設定的預期上限。', 'Compares the DEBT page\'s auto-summed actual monthly payment against the manual monthly baseline set on the FOS page "Cash Moat" card, to see if actual spending exceeds your own expected ceiling.'),
+          formula: t('每月基礎失血量(自動加總) ÷ 現金護城河卡片手動填的月付數字 × 100%', 'Monthly base burn (auto-summed) ÷ Manual monthly figure on the Cash Moat card × 100%'),
+          howTo: t('降低每月固定支出（提前還清、減少分期消費），或去 FOS 頁現金護城河卡片更新月付基準數字，讓它反映最新真實狀況。若顯示「尚未設定基準」，代表你還沒切到過 FOS BOSS 分頁，切過去一次讓系統讀到基準值即可。', 'Lower fixed monthly expenses (pay off early, cut installments), or update the baseline figure on the FOS page Cash Moat card to reflect current reality. If it shows "NO BASELINE", you haven\'t visited the FOS BOSS tab yet — switch there once so the system can read the value.')
+        }
+      };
       const DEBT_STATUS_CLOSED = '已結清';
       const DEBT_STATUS_ACTIVE = '執行中';
       const DEBT_CATEGORIES = ['貸款', '信用卡', '訂閱', '保險'];
@@ -4840,7 +4863,7 @@ Build the wall first. Attack second.`)}
                     不共用該元件本身的計算邏輯 */}
                 <div className="glass-card p-5 rounded-xl border-t-[6px] border-cyan-500 dark:border-cyan-400 relative overflow-hidden shadow-lg">
                   <div className="flex flex-wrap justify-between items-end mb-3 gap-2">
-                    <span className="text-sm font-mono text-slate-600 dark:text-cyan-400 font-bold uppercase tracking-widest">{t('還債進度 DEBT PAYOFF', 'DEBT PAYOFF')}</span>
+                    <span onClick={(e) => { e.stopPropagation(); setBarInfoModal('payoff'); }} className="text-sm font-mono text-slate-600 dark:text-cyan-400 font-bold uppercase tracking-widest cursor-pointer hover:underline">{t('還債進度 DEBT PAYOFF', 'DEBT PAYOFF')}</span>
                     <span className="text-2xl font-mono font-bold text-slate-800 dark:text-cyan-300">{debtPayoffPct.toFixed(1)}%</span>
                   </div>
                   <div className="h-8 w-full bg-slate-100 dark:bg-slate-800/80 rounded-full overflow-hidden border border-slate-200 dark:border-cyan-500/30 shadow-inner">
@@ -4855,7 +4878,7 @@ Build the wall first. Attack second.`)}
 
                 <div className="glass-card p-5 rounded-xl border-t-[6px] relative overflow-hidden shadow-lg" style={{ borderTopColor: debtQualityPct >= 80 ? '#10b981' : debtQualityPct >= 50 ? '#f59e0b' : '#f43f5e' }}>
                   <div className="flex flex-wrap justify-between items-end mb-3 gap-2">
-                    <span className="text-sm font-mono text-slate-600 dark:text-slate-300 font-bold uppercase tracking-widest">{t('負債品質 DEBT QUALITY', 'DEBT QUALITY')}</span>
+                    <span onClick={(e) => { e.stopPropagation(); setBarInfoModal('quality'); }} className="text-sm font-mono text-slate-600 dark:text-slate-300 font-bold uppercase tracking-widest cursor-pointer hover:underline">{t('負債品質 DEBT QUALITY', 'DEBT QUALITY')}</span>
                     <span className={"text-2xl font-mono font-bold " + (debtQualityPct >= 80 ? 'text-emerald-600 dark:text-emerald-400' : debtQualityPct >= 50 ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400')}>{debtQualityPct.toFixed(1)}%</span>
                   </div>
                   <div className="h-8 w-full bg-slate-100 dark:bg-slate-800/80 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700 shadow-inner">
@@ -4870,7 +4893,7 @@ Build the wall first. Attack second.`)}
 
                 <div className="glass-card p-5 rounded-xl border-t-[6px] relative overflow-hidden shadow-lg" style={{ borderTopColor: !hasMonthlyPressureBaseline ? '#94a3b8' : monthlyPressurePct <= 50 ? '#10b981' : monthlyPressurePct <= 80 ? '#f59e0b' : '#f43f5e' }}>
                   <div className="flex flex-wrap justify-between items-end mb-3 gap-2">
-                    <span className="text-sm font-mono text-slate-600 dark:text-slate-300 font-bold uppercase tracking-widest">{t('月付壓力 MONTHLY PRESSURE', 'MONTHLY PRESSURE')}</span>
+                    <span onClick={(e) => { e.stopPropagation(); setBarInfoModal('pressure'); }} className="text-sm font-mono text-slate-600 dark:text-slate-300 font-bold uppercase tracking-widest cursor-pointer hover:underline">{t('月付壓力 MONTHLY PRESSURE', 'MONTHLY PRESSURE')}</span>
                     <span className={"text-2xl font-mono font-bold " + (!hasMonthlyPressureBaseline ? 'text-slate-400' : monthlyPressurePct <= 50 ? 'text-emerald-600 dark:text-emerald-400' : monthlyPressurePct <= 80 ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400')}>{hasMonthlyPressureBaseline ? Math.min(999, monthlyPressurePct).toFixed(1) + '%' : t('尚未設定基準', 'NO BASELINE')}</span>
                   </div>
                   <div className="h-8 w-full bg-slate-100 dark:bg-slate-800/80 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700 shadow-inner">
@@ -4883,6 +4906,34 @@ Build the wall first. Attack second.`)}
                   </div>
                 </div>
               </div>
+            )}
+
+            {/* v13.4 — 三條血條點擊說明彈窗，結構比照 FosTerminal 的 ergInfoGate 版本 */}
+            {barInfoModal && ReactDOM.createPortal(
+              <React.Fragment>
+                <div className="fixed inset-0 z-[999] bg-black/40" onClick={() => setBarInfoModal(null)} />
+                <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[1000] w-[90vw] max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-sky-500/30 p-6 sm:p-8 max-h-[85vh] overflow-y-auto">
+                  <div className="flex items-center justify-between mb-4">
+                    <span className="text-lg font-black uppercase text-slate-700 dark:text-slate-200">{DEBT_BAR_INFO[barInfoModal].title}</span>
+                    <button onClick={() => setBarInfoModal(null)} className="text-slate-400 hover:text-rose-500 text-xl leading-none">✕</button>
+                  </div>
+                  <div className="space-y-4 text-sm">
+                    <div>
+                      <div className="text-xs font-bold uppercase tracking-widest text-sky-500 mb-1">{t('檢查什麼', 'WHAT IT CHECKS')}</div>
+                      <div className="text-slate-600 dark:text-slate-300">{DEBT_BAR_INFO[barInfoModal].what}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold uppercase tracking-widest text-sky-500 mb-1">{t('怎麼算', 'HOW IT IS CALCULATED')}</div>
+                      <div className="text-slate-600 dark:text-slate-300 font-mono">{DEBT_BAR_INFO[barInfoModal].formula}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold uppercase tracking-widest text-sky-500 mb-1">{t('要怎麼做才會變好', 'HOW TO IMPROVE')}</div>
+                      <div className="text-slate-600 dark:text-slate-300">{DEBT_BAR_INFO[barInfoModal].howTo}</div>
+                    </div>
+                  </div>
+                </div>
+              </React.Fragment>,
+              document.body
             )}
 
             <div className="flex justify-between items-center">
