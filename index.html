@@ -201,6 +201,11 @@
       0%, 100% { box-shadow: inset 6px 0 10px -4px rgba(16,185,129,0.35), 0 0 12px rgba(16,185,129,0.18); }
       50% { box-shadow: inset 6px 0 14px -2px rgba(16,185,129,0.6), 0 0 20px rgba(16,185,129,0.32); }
     }
+    /* v13.10 — hover時暫停脈動並改用固定低強度陰影，避免.glass-card/.holo-card的hover位移+
+       脈動動畫尖峰疊加在一起，視覺上被誤讀成「整張卡實心變紅」。不動background-image(斜紋仍在但淡)，
+       只降box-shadow強度，維持文字可讀性。 */
+    .mini-card-danger:hover { animation-play-state: paused; box-shadow: inset 6px 0 8px -4px rgba(244,63,94,0.3), 0 0 10px rgba(244,63,94,0.15); }
+    .mini-card-core:hover { animation-play-state: paused; box-shadow: inset 6px 0 8px -4px rgba(16,185,129,0.25), 0 0 10px rgba(16,185,129,0.12); }
     .mini-card-danger { border-color: #f43f5e !important; background-image: repeating-linear-gradient(45deg, rgba(244,63,94,0.07), rgba(244,63,94,0.07) 6px, transparent 6px, transparent 12px); animation: mini-card-pulse-danger 2.2s ease-in-out infinite; }
     html.dark .mini-card-danger { background-image: repeating-linear-gradient(45deg, rgba(244,63,94,0.14), rgba(244,63,94,0.14) 6px, transparent 6px, transparent 12px); }
     .mini-card-danger::before { content: 'CRITICAL'; position: absolute; top: 6px; right: 8px; z-index: 30; font-size: 9px; font-weight: 900; letter-spacing: 0.05em; color: #fecdd3; background: rgba(190,18,60,0.9); padding: 1px 6px; border-radius: 4px; font-family: ui-monospace, monospace; pointer-events: none; }
@@ -370,7 +375,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/03 13:54';
+    const APP_VERSION = '2026/09/03 14:12';
 
     /* ===================================================================
        共用工具
@@ -2400,7 +2405,7 @@ Ask this box before you withdraw.`
                   onMouseMove={handleMouseMove}
                   className={`relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card mini-card-frost mini-card-corners cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors ${cmTier === 'danger' ? 'mini-card-danger' : 'mini-card-core'}`}
                 >
-                  <div className="px-5 pt-4 pb-2 flex items-center gap-1.5 relative z-30">
+                  <div className="px-5 pt-4 pb-2 pr-16 flex items-center gap-1.5 relative z-30">
                     <span className={`w-2 h-2 rounded-full ${cmStyle.dot}`}></span>
                     <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-extrabold shrink-0">{cardTitles.cashMoat}</span>
                   </div>
