@@ -309,7 +309,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/02 13:00';
+    const APP_VERSION = '2026/09/03 13:10';
 
     /* ===================================================================
        共用工具
@@ -4874,57 +4874,106 @@ Build the wall first. Attack second.`)}
               <div className="text-xs text-slate-400 mt-3">{t('此數字會自動同步到 FOS 頁 LCM 卡的月付總額（優先於手動輸入值）', 'This number auto-syncs to the FOS page LCM card\'s monthly debt (takes priority over manual input)')}</div>
             </div>
 
-            {!loading && !loadError && (
-              <div className="space-y-4 mb-2">
-                {/* v13.3 — 三條血條：還債進度/負債品質/月付壓力，視覺比照 ASSET 頁 PROJECT_LVL_21
-                    漸層進度條(glass-card + h-8 rounded-full 漸層bar + 玻璃感陰影)，只借用視覺樣式，
-                    不共用該元件本身的計算邏輯 */}
-                <div className="glass-card p-5 rounded-xl border-t-[6px] border-cyan-500 dark:border-cyan-400 relative overflow-hidden shadow-lg">
-                  <div className="flex flex-wrap justify-between items-end mb-3 gap-2">
-                    <span onClick={(e) => { e.stopPropagation(); setBarInfoModal('payoff'); }} className="text-sm font-mono text-slate-600 dark:text-cyan-400 font-bold uppercase tracking-widest cursor-pointer hover:underline">{t('還債進度 DEBT PAYOFF', 'DEBT PAYOFF')}</span>
-                    <span className="text-2xl font-mono font-bold glass-text-premium-cyan">{debtPayoffPct.toFixed(1)}%</span>
+            {!loading && !loadError && (() => {
+              // v13.6 — 三條血條視覺重構(Gemini方案經濾除調整)：1+2非對稱佈局
+              // + A用SVG環形進度圈 + B/C改分格量表。計算邏輯(debtPayoffPct/
+              // debtQualityPct/monthlyPressurePct/hasMonthlyPressureBaseline)
+              // 完全不動，只重寫呈現方式；barInfoModal點擊機制與內容不動。
+              const DEBT_METER_SEGMENTS = 24;
+              const renderSegmentMeter = (rawPct, activeClass) => {
+                const clampedPct = Math.min(100, Math.max(0, rawPct));
+                const litCount = Math.round((clampedPct / 100) * DEBT_METER_SEGMENTS);
+                return (
+                  <div className="flex gap-[2px] h-8">
+                    {Array.from({ length: DEBT_METER_SEGMENTS }).map((_, i) => (
+                      <div
+                        key={i}
+                        className={
+                          "flex-1 rounded-sm transition-all duration-500 " +
+                          (i < litCount ? activeClass : 'bg-slate-200/60 dark:bg-slate-800/60') +
+                          (i === litCount - 1 ? ' ring-2 ring-white/70 dark:ring-white/50 animate-pulse' : '')
+                        }
+                      ></div>
+                    ))}
                   </div>
-                  <div className="h-8 w-full bg-slate-100 dark:bg-slate-800/80 rounded-full overflow-hidden border border-slate-200 dark:border-cyan-500/30 shadow-inner">
-                    <div className="h-full bg-gradient-to-r from-emerald-400 to-cyan-500 relative transition-all duration-1000 shadow-md neon-bar" style={{ width: debtPayoffPct + '%' }}>
-                      <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
-                    </div>
-                  </div>
-                  <div className="mt-2 flex flex-col sm:flex-row justify-between text-xs font-mono font-bold opacity-80 gap-1">
-                    <span className="text-slate-500 dark:text-slate-400">{t(`已還 ${formatNumber(debtOriginalTotal - totalRemainingAllCategories)} / 原始 ${formatNumber(debtOriginalTotal)}`, `Paid ${formatNumber(debtOriginalTotal - totalRemainingAllCategories)} / Original ${formatNumber(debtOriginalTotal)}`)}</span>
-                  </div>
-                </div>
+                );
+              };
+              const qualityMeterClass = debtQualityPct >= 80 ? 'bg-gradient-to-b from-emerald-400 to-emerald-600' : debtQualityPct >= 50 ? 'bg-gradient-to-b from-amber-400 to-amber-600' : 'bg-gradient-to-b from-rose-400 to-rose-600';
+              const pressureMeterClass = !hasMonthlyPressureBaseline ? '' : monthlyPressurePct <= 50 ? 'bg-gradient-to-b from-emerald-400 to-emerald-600' : monthlyPressurePct <= 80 ? 'bg-gradient-to-b from-amber-400 to-amber-600' : 'bg-gradient-to-b from-rose-400 to-rose-600';
+              // 視覺封頂：C 超過100%時分格量表(內部Math.min(100,...))與百分比文字顯示不同——
+              // 文字仍可看到真實超額比例(Math.min(999,...))，量表格子維持封頂在容器邊界，改用
+              // OVERLOAD 徽章示警，不讓格子真的撐爆版面
+              const isOverload = hasMonthlyPressureBaseline && monthlyPressurePct > 100;
+              // SVG 環形進度圈參數
+              const PAYOFF_R = 85;
+              const PAYOFF_CIRC = 2 * Math.PI * PAYOFF_R;
+              const payoffClamped = Math.min(100, Math.max(0, debtPayoffPct));
+              const payoffOffset = PAYOFF_CIRC * (1 - payoffClamped / 100);
 
-                <div className="glass-card p-5 rounded-xl border-t-[6px] relative overflow-hidden shadow-lg" style={{ borderTopColor: debtQualityPct >= 80 ? '#10b981' : debtQualityPct >= 50 ? '#f59e0b' : '#f43f5e' }}>
-                  <div className="flex flex-wrap justify-between items-end mb-3 gap-2">
-                    <span onClick={(e) => { e.stopPropagation(); setBarInfoModal('quality'); }} className="text-sm font-mono text-slate-600 dark:text-slate-300 font-bold uppercase tracking-widest cursor-pointer hover:underline">{t('負債品質 DEBT QUALITY', 'DEBT QUALITY')}</span>
-                    <span className={"text-2xl font-mono font-bold " + (debtQualityPct >= 80 ? 'glass-text-premium-emerald' : debtQualityPct >= 50 ? 'glass-text-premium-amber' : 'glass-text-premium-rose')}>{debtQualityPct.toFixed(1)}%</span>
-                  </div>
-                  <div className="h-8 w-full bg-slate-100 dark:bg-slate-800/80 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700 shadow-inner">
-                    <div className={"h-full bg-gradient-to-r relative transition-all duration-1000 shadow-md neon-bar " + (debtQualityPct >= 80 ? 'from-emerald-400 to-emerald-600' : debtQualityPct >= 50 ? 'from-amber-400 to-amber-600' : 'from-rose-400 to-rose-600')} style={{ width: debtQualityPct + '%' }}>
-                      <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
+              return (
+                <div className="space-y-4 mb-2">
+                  {/* A：還債進度 — 獨佔一整排，SVG環形進度圈 */}
+                  <div onClick={() => setBarInfoModal('payoff')} className="glass-card p-6 rounded-2xl border-t-[6px] border-cyan-500 dark:border-cyan-400 relative overflow-hidden shadow-lg cursor-pointer hover:shadow-xl transition-shadow">
+                    <div className="mb-4">
+                      <span className="text-sm font-mono text-slate-600 dark:text-cyan-400 font-bold uppercase tracking-widest hover:underline">{t('還債進度 DEBT PAYOFF', 'DEBT PAYOFF')}</span>
+                    </div>
+                    <div className="flex flex-col sm:flex-row items-center gap-6">
+                      <div className="relative w-40 h-40 sm:w-44 sm:h-44 shrink-0" style={{ filter: 'drop-shadow(0 0 10px rgba(8,145,178,0.35))' }}>
+                        <svg viewBox="0 0 200 200" className="w-full h-full -rotate-90">
+                          <defs>
+                            <linearGradient id="payoffRingLight" x1="0%" y1="0%" x2="100%" y2="100%">
+                              <stop offset="0%" stopColor="#0891B2" />
+                              <stop offset="100%" stopColor="#059669" />
+                            </linearGradient>
+                            <linearGradient id="payoffRingDark" x1="0%" y1="0%" x2="100%" y2="100%">
+                              <stop offset="0%" stopColor="#06B6D4" />
+                              <stop offset="100%" stopColor="#10B981" />
+                            </linearGradient>
+                          </defs>
+                          <circle cx="100" cy="100" r={PAYOFF_R} fill="none" strokeWidth="16" className="stroke-slate-200 dark:stroke-slate-800/80" />
+                          <circle cx="100" cy="100" r={PAYOFF_R} fill="none" strokeWidth="16" strokeLinecap="round" stroke="url(#payoffRingLight)" strokeDasharray={PAYOFF_CIRC} strokeDashoffset={payoffOffset} className="block dark:hidden transition-all duration-1000" />
+                          <circle cx="100" cy="100" r={PAYOFF_R} fill="none" strokeWidth="16" strokeLinecap="round" stroke="url(#payoffRingDark)" strokeDasharray={PAYOFF_CIRC} strokeDashoffset={payoffOffset} className="hidden dark:block transition-all duration-1000" />
+                        </svg>
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <span className="text-3xl sm:text-4xl font-mono font-bold glass-text-premium-cyan">{debtPayoffPct.toFixed(1)}%</span>
+                        </div>
+                      </div>
+                      <div className="text-center sm:text-left">
+                        <div className="text-xs font-mono font-bold text-slate-500 dark:text-slate-400">{t(`已還 ${formatNumber(debtOriginalTotal - totalRemainingAllCategories)} / 原始 ${formatNumber(debtOriginalTotal)}`, `Paid ${formatNumber(debtOriginalTotal - totalRemainingAllCategories)} / Original ${formatNumber(debtOriginalTotal)}`)}</div>
+                      </div>
                     </div>
                   </div>
-                  <div className="mt-2 flex flex-col sm:flex-row justify-between text-xs font-mono font-bold opacity-80 gap-1">
-                    <span className="text-slate-500 dark:text-slate-400">{t(`高利率負債佔比 ${(100 - debtQualityPct).toFixed(1)}%`, `High-rate debt share ${(100 - debtQualityPct).toFixed(1)}%`)}</span>
-                  </div>
-                </div>
 
-                <div className="glass-card p-5 rounded-xl border-t-[6px] relative overflow-hidden shadow-lg" style={{ borderTopColor: !hasMonthlyPressureBaseline ? '#94a3b8' : monthlyPressurePct <= 50 ? '#10b981' : monthlyPressurePct <= 80 ? '#f59e0b' : '#f43f5e' }}>
-                  <div className="flex flex-wrap justify-between items-end mb-3 gap-2">
-                    <span onClick={(e) => { e.stopPropagation(); setBarInfoModal('pressure'); }} className="text-sm font-mono text-slate-600 dark:text-slate-300 font-bold uppercase tracking-widest cursor-pointer hover:underline">{t('月付壓力 MONTHLY PRESSURE', 'MONTHLY PRESSURE')}</span>
-                    <span className={"text-2xl font-mono font-bold " + (!hasMonthlyPressureBaseline ? 'text-slate-400' : monthlyPressurePct <= 50 ? 'glass-text-premium-emerald' : monthlyPressurePct <= 80 ? 'glass-text-premium-amber' : 'glass-text-premium-rose')}>{hasMonthlyPressureBaseline ? Math.min(999, monthlyPressurePct).toFixed(1) + '%' : t('尚未設定基準', 'NO BASELINE')}</span>
-                  </div>
-                  <div className="h-8 w-full bg-slate-100 dark:bg-slate-800/80 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700 shadow-inner">
-                    <div className={"h-full bg-gradient-to-r relative transition-all duration-1000 shadow-md neon-bar " + (!hasMonthlyPressureBaseline ? 'from-slate-300 to-slate-400' : monthlyPressurePct <= 50 ? 'from-emerald-400 to-emerald-600' : monthlyPressurePct <= 80 ? 'from-amber-400 to-amber-600' : 'from-rose-400 to-rose-600')} style={{ width: (hasMonthlyPressureBaseline ? Math.min(100, monthlyPressurePct) : 0) + '%' }}>
-                      <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
+                  {/* B + C：負債品質 / 月付壓力 — 並排兩張較小卡片，分格量表 */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div onClick={() => setBarInfoModal('quality')} className="glass-card p-5 rounded-xl border-t-[6px] relative overflow-hidden shadow-lg cursor-pointer hover:shadow-xl transition-shadow" style={{ borderTopColor: debtQualityPct >= 80 ? '#10b981' : debtQualityPct >= 50 ? '#f59e0b' : '#f43f5e' }}>
+                      <div className="flex flex-wrap justify-between items-end mb-3 gap-2">
+                        <span className="text-sm font-mono text-slate-600 dark:text-slate-300 font-bold uppercase tracking-widest hover:underline">{t('負債品質 DEBT QUALITY', 'DEBT QUALITY')}</span>
+                        <span className={"text-2xl font-mono font-bold " + (debtQualityPct >= 80 ? 'glass-text-premium-emerald' : debtQualityPct >= 50 ? 'glass-text-premium-amber' : 'glass-text-premium-rose')}>{debtQualityPct.toFixed(1)}%</span>
+                      </div>
+                      {renderSegmentMeter(debtQualityPct, qualityMeterClass)}
+                      <div className="mt-2 flex flex-col sm:flex-row justify-between text-xs font-mono font-bold opacity-80 gap-1">
+                        <span className="text-slate-500 dark:text-slate-400">{t(`高利率負債佔比 ${(100 - debtQualityPct).toFixed(1)}%`, `High-rate debt share ${(100 - debtQualityPct).toFixed(1)}%`)}</span>
+                      </div>
+                    </div>
+
+                    <div onClick={() => setBarInfoModal('pressure')} className="glass-card p-5 rounded-xl border-t-[6px] relative overflow-hidden shadow-lg cursor-pointer hover:shadow-xl transition-shadow" style={{ borderTopColor: !hasMonthlyPressureBaseline ? '#94a3b8' : monthlyPressurePct <= 50 ? '#10b981' : monthlyPressurePct <= 80 ? '#f59e0b' : '#f43f5e' }}>
+                      {isOverload && (
+                        <span className="absolute top-3 right-3 px-2 py-0.5 rounded-full bg-rose-600 text-white text-[10px] font-black tracking-wider animate-pulse z-10">⚠ OVERLOAD</span>
+                      )}
+                      <div className="flex flex-wrap justify-between items-end mb-3 gap-2">
+                        <span className="text-sm font-mono text-slate-600 dark:text-slate-300 font-bold uppercase tracking-widest hover:underline">{t('月付壓力 MONTHLY PRESSURE', 'MONTHLY PRESSURE')}</span>
+                        <span className={"text-2xl font-mono font-bold " + (!hasMonthlyPressureBaseline ? 'text-slate-400' : monthlyPressurePct <= 50 ? 'glass-text-premium-emerald' : monthlyPressurePct <= 80 ? 'glass-text-premium-amber' : 'glass-text-premium-rose')}>{hasMonthlyPressureBaseline ? Math.min(999, monthlyPressurePct).toFixed(1) + '%' : t('尚未設定基準', 'NO BASELINE')}</span>
+                      </div>
+                      {renderSegmentMeter(hasMonthlyPressureBaseline ? monthlyPressurePct : 0, pressureMeterClass)}
+                      <div className="mt-2 flex flex-col sm:flex-row justify-between text-xs font-mono font-bold opacity-80 gap-1">
+                        <span className="text-slate-500 dark:text-slate-400">{hasMonthlyPressureBaseline ? t(`實際 ${formatNumber(monthlyTotal)} / 手動基準 ${formatNumber(cashMoatMonthlyDebt)}`, `Actual ${formatNumber(monthlyTotal)} / Manual baseline ${formatNumber(cashMoatMonthlyDebt)}`) : t('請先到 FOS BOSS 頁「現金護城河」卡設定月付', 'Set monthly debt on the FOS BOSS "Cash Moat" card first')}</span>
+                      </div>
                     </div>
                   </div>
-                  <div className="mt-2 flex flex-col sm:flex-row justify-between text-xs font-mono font-bold opacity-80 gap-1">
-                    <span className="text-slate-500 dark:text-slate-400">{hasMonthlyPressureBaseline ? t(`實際 ${formatNumber(monthlyTotal)} / 手動基準 ${formatNumber(cashMoatMonthlyDebt)}`, `Actual ${formatNumber(monthlyTotal)} / Manual baseline ${formatNumber(cashMoatMonthlyDebt)}`) : t('請先到 FOS BOSS 頁「現金護城河」卡設定月付', 'Set monthly debt on the FOS BOSS "Cash Moat" card first')}</span>
-                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* v13.4 — 三條血條點擊說明彈窗，結構比照 FosTerminal 的 ergInfoGate 版本 */}
             {barInfoModal && ReactDOM.createPortal(
