@@ -201,11 +201,13 @@
       0%, 100% { box-shadow: inset 6px 0 10px -4px rgba(16,185,129,0.35), 0 0 12px rgba(16,185,129,0.18); }
       50% { box-shadow: inset 6px 0 14px -2px rgba(16,185,129,0.6), 0 0 20px rgba(16,185,129,0.32); }
     }
-    /* v13.10 — hover時暫停脈動並改用固定低強度陰影，避免.glass-card/.holo-card的hover位移+
-       脈動動畫尖峰疊加在一起，視覺上被誤讀成「整張卡實心變紅」。不動background-image(斜紋仍在但淡)，
-       只降box-shadow強度，維持文字可讀性。 */
-    .mini-card-danger:hover { animation-play-state: paused; box-shadow: inset 6px 0 8px -4px rgba(244,63,94,0.3), 0 0 10px rgba(244,63,94,0.15); }
-    .mini-card-core:hover { animation-play-state: paused; box-shadow: inset 6px 0 8px -4px rgba(16,185,129,0.25), 0 0 10px rgba(16,185,129,0.12); }
+    /* v13.11 — 修正v13.10的迴歸bug：animation-play-state: paused 疑似跟MR/資金平衡/LCM/分配順序
+       這4張卡既有的group-hover翻面(::group-hover opacity/scale)互動產生衝突，導致滑鼠移開後卡片
+       卡在背面不會翻回正面。改用!important直接覆寫box-shadow數值(CSS規範下!important本就能覆寫
+       animation算出的值，不需要暫停動畫本身)，脈動動畫繼續在背景跑但視覺上被鉗制在低強度，
+       不再使用animation-play-state，只動box-shadow這一個屬性，不碰opacity/transform/visibility。 */
+    .mini-card-danger:hover { box-shadow: inset 6px 0 8px -4px rgba(244,63,94,0.3), 0 0 10px rgba(244,63,94,0.15) !important; }
+    .mini-card-core:hover { box-shadow: inset 6px 0 8px -4px rgba(16,185,129,0.25), 0 0 10px rgba(16,185,129,0.12) !important; }
     .mini-card-danger { border-color: #f43f5e !important; background-image: repeating-linear-gradient(45deg, rgba(244,63,94,0.07), rgba(244,63,94,0.07) 6px, transparent 6px, transparent 12px); animation: mini-card-pulse-danger 2.2s ease-in-out infinite; }
     html.dark .mini-card-danger { background-image: repeating-linear-gradient(45deg, rgba(244,63,94,0.14), rgba(244,63,94,0.14) 6px, transparent 6px, transparent 12px); }
     .mini-card-danger::before { content: 'CRITICAL'; position: absolute; top: 6px; right: 8px; z-index: 30; font-size: 9px; font-weight: 900; letter-spacing: 0.05em; color: #fecdd3; background: rgba(190,18,60,0.9); padding: 1px 6px; border-radius: 4px; font-family: ui-monospace, monospace; pointer-events: none; }
@@ -375,7 +377,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/03 14:12';
+    const APP_VERSION = '2026/09/03 14:31';
 
     /* ===================================================================
        共用工具
