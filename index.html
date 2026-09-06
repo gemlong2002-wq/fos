@@ -377,7 +377,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/07 01:10';
+    const APP_VERSION = '2026/09/07 02:00';
 
     /* ===================================================================
        共用工具
@@ -1567,7 +1567,9 @@
         <div className="fos-scope clean-grid-bg min-h-screen text-slate-800 dark:text-slate-200 text-lg md:text-xl pt-8 pb-20 selection:bg-sky-200 dark:selection:bg-sky-900">
           <div className="max-w-[1600px] mx-auto px-4 md:px-10 space-y-10 pb-24 relative tracking-wide">
 
-            <div className="fixed bottom-8 right-8 z-[9999]">
+            {/* v13.7 — 改垂直置中在螢幕右側（原本疊在右下角，中段捲動時不順手）；
+                與AppShell的回到頂部按鈕(-translate-y-16)搭配，兩者以螢幕垂直中心對稱排列 */}
+            <div className="fixed top-1/2 right-8 z-[9999]">
               <button onClick={handleCopyReport} className="tech-btn w-16 h-16 rounded-full bg-sky-500 text-white flex items-center justify-center text-2xl shadow-lg hover:bg-sky-400">📋</button>
             </div>
 
@@ -5437,7 +5439,9 @@ Build the wall first. Attack second.`)}
           )}
 
           {showBackToTop && (
-            <div className="fixed bottom-24 right-8 z-[9998]">
+            // v13.7 — 改垂直置中在螢幕右側，與FosTerminal的複製報告按鈕(top-1/2)搭配，
+            // 兩者以螢幕垂直中心對稱排列(回到頂部在上方、複製報告在下方，維持原本相對順序)
+            <div className="fixed top-1/2 -translate-y-16 right-8 z-[9998]">
               <button
                 onClick={handleBackToTop}
                 title={t('回到頂部', 'Back to top')}
