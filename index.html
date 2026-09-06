@@ -377,7 +377,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/06 12:00';
+    const APP_VERSION = '2026/09/07 01:10';
 
     /* ===================================================================
        共用工具
@@ -1330,25 +1330,6 @@
         catch (err) { setHistory(previousHistory); setTerminalMsg('>> FAILED.'); }
       };
 
-      // v13.6 — 退休下滑路徑：距退休時間用固定日期 2030-01-01（Boss離職轉全職FOS的時間），
-      // 與系統其他既有ETA/財務自由估算完全無關，不共用、不參照那些數值。即時計算，可正可負
-      // （負值代表已過2030年1月1日），供「保命緩衝」動態目標與FIAT級聯防禦/成長二分比例使用。
-      const RETIREMENT_TARGET_DATE = new Date(2030, 0, 1);
-      const retirementYearsLeft = (RETIREMENT_TARGET_DATE - new Date()) / (365.25 * 24 * 60 * 60 * 1000);
-
-      // 下滑路徑：距退休 >=4年鎖在起點(6個月緩衝/20%防禦)，<=0年鎖在終點(24個月緩衝/100%防禦)，
-      // 中間線性內插。24個月上限沿用既有 ERG_GATE2_THRESHOLD_MONTHS 的門檻語意。
-      function slopeBufferMonths(yearsLeft) {
-        if (yearsLeft >= 4) return 6;
-        if (yearsLeft <= 0) return 24;
-        return 24 - (yearsLeft / 4) * 18; // 4年時=6，0年時=24
-      }
-      function slopeDefenseRatio(yearsLeft) {
-        if (yearsLeft >= 4) return 0.20;
-        if (yearsLeft <= 0) return 1.00;
-        return 1.00 - (yearsLeft / 4) * 0.80; // 4年時=20%，0年時=100%
-      }
-
       /* 現金護城河 CASH MOAT — 計算（純新增，不引用/不影響 MR、C、B帳戶市值、80/20分流、ASSET曲線）
          目標水位 = MONTHLY_DEBT × MONTHS；MONTHLY_DEBT=0 時無目標水位可言，防呆為「未設定月付」，不算除以零 */
       const cmCash = parseFloat(cashMoatInputs.cash) || 0;
@@ -1361,11 +1342,7 @@
         onCashMoatMonthlyDebtChange(cmMonthlyDebt);
       }, [cmMonthlyDebt]);
       const cmHasTarget = cmMonthlyDebt > 0;
-      // v13.6 — 目標值改「手動值 vs 下滑路徑算出值」取較大值疊加保底，系統永遠不會自動把防線
-      // 變寬鬆；cmProgress/cmProgressPct/cmStatus/cmTier、fiatGap1 皆直接讀 cmTarget，
-      // 自動吃到新值，不需另外改動那幾行本身
-      const cmSlopeMonths = slopeBufferMonths(retirementYearsLeft);
-      const cmTarget = cmHasTarget ? Math.max(cmMonthlyDebt * cmMonths, cmMonthlyDebt * cmSlopeMonths) : 0;
+      const cmTarget = cmHasTarget ? cmMonthlyDebt * cmMonths : 0;
       const cmProgress = cmHasTarget ? (cmCash / cmTarget) : 0;
       const cmProgressPct = cmHasTarget ? Math.round(cmProgress * 100) : 0;
       const cmGap = cmTarget - cmCash;
@@ -1552,28 +1529,15 @@
         fiatRemaining -= fiatP1Alloc;
         fiatReasonTags.push('p1_gap');
       }
-      // v13.6 — Step3 改二分：先依退休下滑路徑比例切出防禦部位(進現金格，不新增UI欄位，
-      // 維持現有「現金/P1/美股/加密」四格結構)，剩餘成長部位才套用原本的frozen/80-20判斷
-      const fiatDefenseRatio = slopeDefenseRatio(retirementYearsLeft);
-      let fiatDefensePortion = 0, fiatGrowthPortion = 0;
       if (fiatRemaining > 0) {
         fiatReachedStep3 = true;
-        fiatDefensePortion = fiatRemaining * fiatDefenseRatio;
-        fiatGrowthPortion = fiatRemaining - fiatDefensePortion;
-
-        if (fiatDefensePortion > 0) {
-          fiatCashAlloc += fiatDefensePortion;
-          fiatReasonTags.push('retirement_slope');
-        }
-        if (fiatGrowthPortion > 0) {
-          if (fiatIsFrozen) {
-            fiatCryptoAlloc += fiatGrowthPortion;
-            fiatReasonTags.push('stock_frozen');
-          } else {
-            fiatStockAlloc += fiatGrowthPortion * 0.8;
-            fiatCryptoAlloc += fiatGrowthPortion * 0.2;
-            fiatReasonTags.push('growth');
-          }
+        if (fiatIsFrozen) {
+          fiatCryptoAlloc += fiatRemaining;
+          fiatReasonTags.push('stock_frozen');
+        } else {
+          fiatStockAlloc += fiatRemaining * 0.8;
+          fiatCryptoAlloc += fiatRemaining * 0.2;
+          fiatReasonTags.push('growth');
         }
         fiatRemaining = 0;
       }
@@ -1588,14 +1552,12 @@
           const only = fiatReasonTags[0];
           if (only === 'cash_gap') return t('現金緩衝未達標，優先補存活線', 'Cash buffer below target — prioritizing survival line');
           if (only === 'p1_gap') return t('緩衝已足，補P1至目標水位', 'Buffer sufficient — topping up P1 to target');
-          if (only === 'retirement_slope') return t(`距退休${Math.max(0, retirementYearsLeft).toFixed(1)}年，依下滑路徑撥${(fiatDefenseRatio * 100).toFixed(0)}%存退休老本（非現金護城河缺口）`, `${Math.max(0, retirementYearsLeft).toFixed(1)}yr to retirement — routing ${(fiatDefenseRatio * 100).toFixed(0)}% to retirement reserve per slope (not a cash-moat gap)`);
           if (only === 'growth') return t('防禦到位，進成長部位', 'Defenses in place — entering growth allocation');
           if (only === 'stock_frozen') return t('美股凍結中，資金轉入加密', 'US equities frozen — funds routed to crypto');
         }
         const parts = [];
         if (fiatReasonTags.includes('cash_gap')) parts.push(t(`現金缺口 ${formatNumber(fiatCashAlloc)} 元`, `cash gap ${formatNumber(fiatCashAlloc)}`));
         if (fiatReasonTags.includes('p1_gap')) parts.push(t('剩餘補P1至目標', 'remainder to P1 target'));
-        if (fiatReasonTags.includes('retirement_slope')) parts.push(t(`剩餘依退休下滑路徑撥${(fiatDefenseRatio * 100).toFixed(0)}%存老本(${formatNumber(fiatDefensePortion)}元)`, `remainder routes ${(fiatDefenseRatio * 100).toFixed(0)}% to retirement reserve per slope (${formatNumber(fiatDefensePortion)})`));
         if (fiatReasonTags.includes('growth')) parts.push(t('剩餘進成長部位', 'remainder to growth'));
         if (fiatReasonTags.includes('stock_frozen')) parts.push(t('剩餘進成長部位（美股凍結，全進加密）', 'remainder to growth (US equities frozen, all to crypto)'));
         return parts.join(' → ');
