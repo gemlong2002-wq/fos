@@ -206,16 +206,25 @@
        卡在背面不會翻回正面。改用!important直接覆寫box-shadow數值(CSS規範下!important本就能覆寫
        animation算出的值，不需要暫停動畫本身)，脈動動畫繼續在背景跑但視覺上被鉗制在低強度，
        不再使用animation-play-state，只動box-shadow這一個屬性，不碰opacity/transform/visibility。 */
-    .mini-card-danger:hover { box-shadow: inset 6px 0 8px -4px rgba(244,63,94,0.3), 0 0 10px rgba(244,63,94,0.15) !important; }
+    .mini-card-danger:hover { box-shadow: inset 6px 0 8px -4px rgba(244,63,94,0.3), 0 0 10px rgba(244,63,94,0.15) !important; background-image: repeating-linear-gradient(45deg, rgba(244,63,94,0.12), rgba(244,63,94,0.12) 6px, transparent 6px, transparent 12px); }
+    html.dark .mini-card-danger:hover { background-image: repeating-linear-gradient(45deg, rgba(244,63,94,0.20), rgba(244,63,94,0.20) 6px, transparent 6px, transparent 12px); }
     .mini-card-core:hover { box-shadow: inset 6px 0 8px -4px rgba(16,185,129,0.25), 0 0 10px rgba(16,185,129,0.12) !important; }
     .mini-card-danger { border-color: #f43f5e !important; background-image: repeating-linear-gradient(45deg, rgba(244,63,94,0.07), rgba(244,63,94,0.07) 6px, transparent 6px, transparent 12px); animation: mini-card-pulse-danger 2.2s ease-in-out infinite; }
     html.dark .mini-card-danger { background-image: repeating-linear-gradient(45deg, rgba(244,63,94,0.14), rgba(244,63,94,0.14) 6px, transparent 6px, transparent 12px); }
-    .mini-card-danger::before { content: 'CRITICAL'; position: absolute; top: 6px; right: 8px; z-index: 30; font-size: 9px; font-weight: 900; letter-spacing: 0.05em; color: #fecdd3; background: rgba(190,18,60,0.9); padding: 1px 6px; border-radius: 4px; font-family: ui-monospace, monospace; pointer-events: none; }
+    /* v13.12 — 修正CRITICAL/CORE角標(::before)在「單一div卡片」(現金護城河/穿透曝險/流動性防禦，
+       holo-card與mini-card-danger/core同時掛在同一顆div)上，意外繼承.holo-card::before的
+       left:0/bottom:0全卡鋪滿定位，導致hover時(.holo-card:hover::before opacity 0→1)角標從
+       小徽章膨脹成幾乎整張卡大小的實心深紅/綠色遮罩，蓋住文字。翻面式的4張卡(MR/1:1平衡/LCM/
+       資金分配指令)不受影響，因為它們的mini-card-danger/core是掛在isolate的內層div，跟holo-card
+       不是同一個元素，天生沒有這個pseudo-element屬性繼承問題。
+       對症修法：角標本身明確補上left/bottom/width/height，讓它固定是右上角小徽章，
+       不再繼承來源不明的滿版定位。 */
+    .mini-card-danger::before { content: 'CRITICAL'; position: absolute; top: 6px; right: 8px; left: auto; bottom: auto; width: auto; height: auto; z-index: 30; font-size: 9px; font-weight: 900; letter-spacing: 0.05em; color: #fecdd3; background: rgba(190,18,60,0.9); padding: 1px 6px; border-radius: 4px; font-family: ui-monospace, monospace; pointer-events: none; }
     .mini-card-danger .mini-card-num { text-shadow: 0 0 10px rgba(244,63,94,0.7); transform: scale(1.08); transform-origin: left center; display: inline-block; }
 
     .mini-card-core { border-color: #10b981 !important; background-image: linear-gradient(160deg, rgba(16,185,129,0.09), transparent 60%); animation: mini-card-pulse-core 3.5s ease-in-out infinite; }
     html.dark .mini-card-core { background-image: linear-gradient(160deg, rgba(16,185,129,0.16), transparent 60%); }
-    .mini-card-core::before { content: 'CORE'; position: absolute; top: 6px; right: 8px; z-index: 30; font-size: 9px; font-weight: 900; letter-spacing: 0.05em; color: #a7f3d0; background: rgba(4,120,87,0.9); padding: 1px 6px; border-radius: 4px; font-family: ui-monospace, monospace; pointer-events: none; }
+    .mini-card-core::before { content: 'CORE'; position: absolute; top: 6px; right: 8px; left: auto; bottom: auto; width: auto; height: auto; z-index: 30; font-size: 9px; font-weight: 900; letter-spacing: 0.05em; color: #a7f3d0; background: rgba(4,120,87,0.9); padding: 1px 6px; border-radius: 4px; font-family: ui-monospace, monospace; pointer-events: none; }
     .mini-card-core .mini-card-num { text-shadow: 0 0 10px rgba(16,185,129,0.6); transform: scale(1.08); transform-origin: left center; display: inline-block; }
 
     .mini-card-standard { opacity: 0.85; }
@@ -377,7 +386,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/07 15:36';
+    const APP_VERSION = '2026/09/07 16:30';
 
     /* ===================================================================
        共用工具
