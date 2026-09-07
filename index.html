@@ -189,7 +189,7 @@
     }
 
     /* v13.9 — 8張FOS mini卡改用純CSS強度分級(danger/core/standard)取代上輪的col-span-2跨欄方案。
-       tier完全由各卡JS端讀取「該卡當前真實狀態」算出(mrZoneInfo.zone/cmStatus/lcmZoneKey/
+       tier完全由各卡JS端讀取「該卡當前真實狀態」算出(mrZoneInfo.zone/cmCash<cmTarget(v14.0起)/lcmZoneKey/
        allocZoneKey/p1Ratio/liquidityBufferSafe/overCap，壓力測試無即時狀態可讀故固定standard)，
        這裡只負責視覺呈現。danger與core互斥(MR/現金護城河若當下是danger，套danger不套core)。
        不改卡片尺寸/DOM結構，不用grid col-span。*/
@@ -377,7 +377,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/07 02:00';
+    const APP_VERSION = '2026/09/07 11:05';
 
     /* ===================================================================
        共用工具
@@ -417,16 +417,19 @@
        會 reject、saveCashMoat 的 GAS 呼叫會被吃掉，畫面照常用 localStorage 值運作。
     =================================================================== */
     const CASH_MOAT_KEY = 'fos:cashMoat';
-    const CASH_MOAT_DEFAULTS = { cash: 0, monthlyDebt: 0, months: 6 };
+    // v14.0 — 現金護城河簡化階段一：拿掉MONTHLY_DEBT×MONTHS公式，改成手動「目標水位」(targetAmount)。
+    // 本階段只動前端，後端GAS的saveCashMoat/getCashMoat action簽名(cash, monthlyDebt, months)維持不變，
+    // 避免後端payload格式突然改變造成存檔失敗——monthlyDebt/months固定傳0/6佔位、不再有意義；
+    // targetAmount這個新欄位這階段純前端localStorage持久化，不上傳GAS(下一階段才會補後端真正欄位)，
+    // 所以GAS成功回傳時只採信cash，避免覆蓋掉本地已存的targetAmount。
+    const CASH_MOAT_DEFAULTS = { cash: 0, targetAmount: 0 };
     function normalizeCashMoat(raw) {
       if (!raw || typeof raw !== 'object') return { ...CASH_MOAT_DEFAULTS };
       const cash = Number(raw.cash);
-      const monthlyDebt = Number(raw.monthlyDebt);
-      const months = Number(raw.months);
+      const targetAmount = Number(raw.targetAmount);
       return {
         cash: Number.isFinite(cash) ? cash : CASH_MOAT_DEFAULTS.cash,
-        monthlyDebt: Number.isFinite(monthlyDebt) ? monthlyDebt : CASH_MOAT_DEFAULTS.monthlyDebt,
-        months: Number.isFinite(months) && months > 0 ? months : CASH_MOAT_DEFAULTS.months
+        targetAmount: Number.isFinite(targetAmount) ? targetAmount : CASH_MOAT_DEFAULTS.targetAmount
       };
     }
     function loadCashMoat() {
@@ -447,9 +450,10 @@
       // 本地永遠先寫，不受 GAS 影響（維持原本零延遲的使用者體驗）
       persistCashMoatLocal(data);
       // 雙寫：非同步打 GAS，失敗只 log，不 throw、不彈窗、不影響本地已完成的儲存
+      // monthlyDebt/months 固定傳 0/6 佔位(後端action簽名不變，這階段不改後端)，targetAmount不上傳
       try {
         const n = normalizeCashMoat(data);
-        gasAPI('saveCashMoat', n.cash, n.monthlyDebt, n.months).catch(err => {
+        gasAPI('saveCashMoat', n.cash, 0, 6).catch(err => {
           console.warn('[CashMoat] GAS 儲存失敗，已忽略（本地已儲存）:', err && err.message);
         });
       } catch (e) {}
@@ -457,7 +461,7 @@
     async function fetchCashMoatFromGAS() {
       const res = await gasAPI('getCashMoat');
       if (!res || res.success !== true) throw new Error('CashMoat GAS response invalid');
-      return normalizeCashMoat({ cash: res.cash, monthlyDebt: res.monthlyDebt, months: res.moatMonths });
+      return { cash: Number.isFinite(Number(res.cash)) ? Number(res.cash) : CASH_MOAT_DEFAULTS.cash };
     }
 
     /* ===================================================================
@@ -775,7 +779,7 @@
     /* ===================================================================
        FOS 子元件 (Boss Terminal v12.2)  — isDarkMode / isEng 由 AppShell 注入
     =================================================================== */
-    function FosTerminal({ isDarkMode, isEng, onInjectPrefill, onLAmountChange, onPledgeRateChange, debtMonthlyTotal, onCashMoatMonthlyDebtChange }) {
+    function FosTerminal({ isDarkMode, isEng, onInjectPrefill, onLAmountChange, onPledgeRateChange, debtMonthlyTotal, totalAssetsFromAsset }) {
       function getMRZone(mr) {
         const val = parseFloat(mr);
         if (val === 0) return { dot: 'bg-slate-300 dark:bg-slate-600', text: 'text-slate-400', label: 'STANDBY', zone: 'STANDBY' };
@@ -903,16 +907,18 @@
       // 現金護城河 CASH MOAT — 純顯示模組，獨立於 MR/擔保品C/B帳戶/80-20分流，不參與任何既有運算
       const [cashMoatInputs, setCashMoatInputs] = useState(() => {
         const d = loadCashMoat();
-        return { cash: String(d.cash), monthlyDebt: String(d.monthlyDebt), months: String(d.months) };
+        return { cash: String(d.cash), targetAmount: String(d.targetAmount) };
       });
       // GAS 優先讀取：畫面先用上面 localStorage 初始值渲染（不空白），掛載後非同步跟後端要一次最新值，
       // 成功才覆蓋；GAS 還沒部署新 action 或網路失敗都會被吃掉，維持目前畫面上的值，不 crash、不彈窗。
+      // v14.0 — GAS 這階段只認得 cash，targetAmount 純前端持久化：合併時只覆蓋 cash，
+      // 保留使用者已填的 targetAmount，避免被GAS回應(不含此欄位)覆蓋清空。
       useEffect(() => {
         let cancelled = false;
         fetchCashMoatFromGAS().then(d => {
           if (cancelled) return;
-          setCashMoatInputs({ cash: String(d.cash), monthlyDebt: String(d.monthlyDebt), months: String(d.months) });
-          persistCashMoatLocal(d);
+          setCashMoatInputs(prev => ({ ...prev, cash: String(d.cash) }));
+          persistCashMoatLocal({ cash: d.cash, targetAmount: parseFloat(loadCashMoat().targetAmount) || 0 });
         }).catch(err => {
           console.warn('[CashMoat] GAS 讀取失敗，維持本地快取值:', err && err.message);
         });
@@ -1331,29 +1337,23 @@
       };
 
       /* 現金護城河 CASH MOAT — 計算（純新增，不引用/不影響 MR、C、B帳戶市值、80/20分流、ASSET曲線）
-         目標水位 = MONTHLY_DEBT × MONTHS；MONTHLY_DEBT=0 時無目標水位可言，防呆為「未設定月付」，不算除以零 */
+         v14.0 階段一：拿掉MONTHLY_DEBT×MONTHS公式與EXPOSED/BUILDING/FORTIFIED燈號，改成Boss手動
+         填「目標水位」(targetAmount)，並新增自動計算的「佔總資產%」(讀ASSET分頁totalAssetsFromAsset，
+         null/0時代表ASSET分頁尚未同步，佔比顯示為null，UI端降級成「—」，不算NaN)。 */
       const cmCash = parseFloat(cashMoatInputs.cash) || 0;
-      const cmMonthlyDebt = parseFloat(cashMoatInputs.monthlyDebt) || 0;
-      const cmMonths = parseFloat(cashMoatInputs.months) || 6;
-      // v13.3 — cmMonthlyDebt 反向資料流上傳給 AppShell，供 DEBT 頁「月付壓力血條」讀取（比照
-      // DebtTerminal 既有的 onDebtTotalChange 寫法，同一種單向 useEffect 上傳模式）
-      useEffect(() => {
-        if (!onCashMoatMonthlyDebtChange) return;
-        onCashMoatMonthlyDebtChange(cmMonthlyDebt);
-      }, [cmMonthlyDebt]);
-      const cmHasTarget = cmMonthlyDebt > 0;
-      const cmTarget = cmHasTarget ? cmMonthlyDebt * cmMonths : 0;
-      const cmProgress = cmHasTarget ? (cmCash / cmTarget) : 0;
-      const cmProgressPct = cmHasTarget ? Math.round(cmProgress * 100) : 0;
+      const cmTarget = parseFloat(cashMoatInputs.targetAmount) || 0;
+      const cmHasTarget = cmTarget > 0;
+      const cmTargetPctOfAssets = (totalAssetsFromAsset && totalAssetsFromAsset > 0) ? (cmTarget / totalAssetsFromAsset * 100) : null;
       const cmGap = cmTarget - cmCash;
       const cmSurplus = cmCash - cmTarget;
-      const cmStatus = !cmHasTarget ? 'EXPOSED' : (cmProgress >= 1 ? 'FORTIFIED' : (cmProgress >= 0.5 ? 'BUILDING' : 'EXPOSED'));
+      const cmTier = (cmCash < cmTarget) ? 'danger' : 'standard';
 
       // ERG離職放行閘門 — 檢查表骨架（本輪只接閘門2真實數字，閘門1/3/4先佔位）
-      // 閘門2「緩衝存糧」呼叫共用函式 calcAvailableBuffer，月付來源比照LCM卡既有邏輯
-      // （debtMonthlyTotal優先，null時fallback回cmMonthlyDebt手動輸入值），不新增計算來源
+      // 閘門2「緩衝存糧」呼叫共用函式 calcAvailableBuffer
+      // v14.0 — cmMonthlyDebt(手動月付)已移除，月付來源純粹依賴debtMonthlyTotal(債務分頁自動加總)，
+      // null時沿用既有「未設定」降級模式(下面ergHasDebt/ergBufferMonths判斷不變，null>0天生為false)
       // v12.18 — 計算區塊搬到 header 之前宣告（純粹移動宣告順序，不改任何邏輯），供 header 的 ERG 精簡摘要使用
-      const ergMonthlyDebtEffective = (debtMonthlyTotal != null) ? debtMonthlyTotal : cmMonthlyDebt;
+      const ergMonthlyDebtEffective = debtMonthlyTotal;
       const ergHasDebt = ergMonthlyDebtEffective > 0;
       const { totalLiquid: ergBufferLiquid } = calcAvailableBuffer(P1, L, cmCash);
       const ergBufferMonths = ergHasDebt ? (ergBufferLiquid / ergMonthlyDebtEffective) : null;
@@ -1494,8 +1494,8 @@
 
       const handleCopyReport = () => {
         const report = t(
-          `【A】\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)}（0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}） | P1: ${p1Ratio}%\n【美股固定比例分流 v12.4】\nTSLA ${(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}% | SPCX ${(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}% | QLD ${(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%\n燈號: ${mrZoneInfo.label} ${splitResult.frozen ? '→ 注資凍結' : '→ 放行'}\n【加密三態】\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n【現金護城河】CASH: ${formatNumber(cmCash)} | TARGET: ${cmHasTarget ? formatNumber(cmTarget) : '未設定月付'} | 進度: ${cmHasTarget ? cmProgressPct + '%' : '—'} | 狀態: ${cmStatus}`,
-          `[A]\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} (0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}) | P1: ${p1Ratio}%\n[US EQUITY SPLIT v12.4]\nTSLA ${(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}% | SPCX ${(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}% | QLD ${(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%\nSignal: ${mrZoneInfo.label} ${splitResult.frozen ? '→ INJECTION FROZEN' : '→ RELEASED'}\n[CRYPTO 3-STATE]\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n[CASH MOAT] CASH: ${formatNumber(cmCash)} | TARGET: ${cmHasTarget ? formatNumber(cmTarget) : 'NOT SET'} | Progress: ${cmHasTarget ? cmProgressPct + '%' : '—'} | Status: ${cmStatus}`
+          `【A】\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)}（0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}） | P1: ${p1Ratio}%\n【美股固定比例分流 v12.4】\nTSLA ${(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}% | SPCX ${(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}% | QLD ${(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%\n燈號: ${mrZoneInfo.label} ${splitResult.frozen ? '→ 注資凍結' : '→ 放行'}\n【加密三態】\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n【現金護城河】CASH: ${formatNumber(cmCash)} | TARGET: ${cmHasTarget ? formatNumber(cmTarget) : '未設定目標'} | 佔總資產: ${cmTargetPctOfAssets != null ? cmTargetPctOfAssets.toFixed(2) + '%' : '—'} | 狀態: ${cmTier === 'danger' ? '未達標' : '已達標'}`,
+          `[A]\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} (0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}) | P1: ${p1Ratio}%\n[US EQUITY SPLIT v12.4]\nTSLA ${(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}% | SPCX ${(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}% | QLD ${(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%\nSignal: ${mrZoneInfo.label} ${splitResult.frozen ? '→ INJECTION FROZEN' : '→ RELEASED'}\n[CRYPTO 3-STATE]\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n[CASH MOAT] CASH: ${formatNumber(cmCash)} | TARGET: ${cmHasTarget ? formatNumber(cmTarget) : 'NOT SET'} | % of assets: ${cmTargetPctOfAssets != null ? cmTargetPctOfAssets.toFixed(2) + '%' : '—'} | Status: ${cmTier === 'danger' ? 'BELOW TARGET' : 'ON TARGET'}`
         );
         navigator.clipboard.writeText(report).then(() => setTerminalMsg('>> REPORT COPIED.')).catch(() => setTerminalMsg('>> COPY FAILED.'));
       };
@@ -1510,7 +1510,7 @@
       // 固定80/20，不受這次改動影響)。P1戰備門檻用單一30%，是這輪Boss確認的獨立設計決定，
       // 跟「資金分配指令」卡片本身的24%/30%三段式門檻是兩回事，刻意不共用同一組門檻常數。
       const fiatGap1 = cmHasTarget ? Math.max(0, cmTarget - cmCash) : 0;
-      const fiatCashGapTriggered = cmStatus === 'EXPOSED' || (ergHasDebt && ergBufferMonths < ERG_GATE2_THRESHOLD_MONTHS);
+      const fiatCashGapTriggered = (cmCash < cmTarget) || (ergHasDebt && ergBufferMonths < ERG_GATE2_THRESHOLD_MONTHS);
       const fiatGap2 = Math.max(0, 0.30 * L - P1);
       const fiatIsFrozen = mrZoneInfo.zone === 'ZONE3' || mrZoneInfo.zone === 'DANGER';
 
@@ -2391,34 +2391,29 @@ Ask this box before you withdraw.`
                 </div>
               );
 
-              const cmStatusStyles = {
-                EXPOSED: { text: 'text-rose-500 dark:text-rose-400', dot: 'bg-rose-500', bar: 'bg-rose-500', badge: 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-2 border-rose-300 dark:border-rose-700' },
-                BUILDING: { text: 'text-yellow-600 dark:text-yellow-400', dot: 'bg-yellow-500', bar: 'bg-yellow-500', badge: 'bg-yellow-50 dark:bg-yellow-950/40 text-yellow-600 dark:text-yellow-400 border-2 border-yellow-300 dark:border-yellow-700' },
-                FORTIFIED: { text: 'text-emerald-500 dark:text-emerald-400', dot: 'bg-emerald-500', bar: 'bg-emerald-500', badge: 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border-2 border-emerald-300 dark:border-emerald-700' }
-              };
-              const cmStyle = cmStatusStyles[cmStatus];
-              const cmProgressBarPct = cmHasTarget ? Math.min(100, Math.max(0, cmProgress * 100)) : 0;
-              const cmMonthsLabel = `${cmMonths} ${t('個月', 'months')}`;
-              const cmBorderClass = { EXPOSED: 'border-rose-500', BUILDING: 'border-yellow-500', FORTIFIED: 'border-emerald-500' }[cmStatus];
-              const cmTier = cmStatus === 'EXPOSED' ? 'danger' : 'core';
+              // v14.0 — 現金護城河簡化階段一：拿掉EXPOSED/BUILDING/FORTIFIED三態燈號，
+              // 改成cmTier二元判斷(danger/standard)直接決定顏色，不再用cmStatusStyles查表。
+              const cmDotClass = cmTier === 'danger' ? 'bg-rose-500' : 'bg-emerald-500';
+              const cmTextClass = cmTier === 'danger' ? 'text-rose-500 dark:text-rose-400' : 'text-emerald-500 dark:text-emerald-400';
+              const cmBadgeClass = cmTier === 'danger' ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-2 border-rose-300 dark:border-rose-700' : 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border-2 border-emerald-300 dark:border-emerald-700';
+              const cmBorderClass = cmTier === 'danger' ? 'border-rose-500' : 'border-emerald-500';
+              const cmTierLabel = cmTier === 'danger' ? t('未達標', 'BELOW TARGET') : t('已達標', 'ON TARGET');
+              const cmPctDisplay = cmTargetPctOfAssets != null ? `${cmTargetPctOfAssets.toFixed(2)}%` : t('尚未同步ASSET分頁', 'ASSET tab not synced');
 
               // v12.13 — mini zone小卡摘要：點擊開modal輸入(比照passthrough/stress)，計算/state/輸入邏輯完全不動
               const cardCashMoatCollapsed = (
                 <div
                   onClick={() => setExpandedCard('cashMoat')}
                   onMouseMove={handleMouseMove}
-                  className={`relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card mini-card-frost mini-card-corners cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors ${cmTier === 'danger' ? 'mini-card-danger' : 'mini-card-core'}`}
+                  className={`relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card mini-card-frost mini-card-corners cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors ${cmTier === 'danger' ? 'mini-card-danger' : 'mini-card-standard'}`}
                 >
                   <div className="px-5 pt-4 pb-2 pr-16 flex items-center gap-1.5 relative z-30">
-                    <span className={`w-2 h-2 rounded-full ${cmStyle.dot}`}></span>
+                    <span className={`w-2 h-2 rounded-full ${cmDotClass}`}></span>
                     <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-extrabold shrink-0">{cardTitles.cashMoat}</span>
                   </div>
                   <div className={`flex-grow px-5 pb-4 flex flex-col justify-center border-l-[6px] ${cmBorderClass}`}>
-                    <span className={`text-3xl sm:text-4xl font-black font-mono data-text vibe-hover-text tabular-nums mini-card-num ${cmStyle.text}`}>{cmHasTarget ? `${cmProgressPct}%` : '—'}</span>
-                    <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden mt-2">
-                      <div className={`h-full transition-all duration-300 ${cmStyle.bar}`} style={{ width: `${cmProgressBarPct}%` }}></div>
-                    </div>
-                    <span className={`text-sm font-black mt-2 px-2 py-0.5 rounded self-start ${cmStyle.badge}`}>{cmStatus}</span>
+                    <span className={`text-3xl sm:text-4xl font-black font-mono data-text vibe-hover-text tabular-nums mini-card-num ${cmTextClass}`}>{cmHasTarget ? `$${formatNumber(cmTarget)}` : '—'}</span>
+                    <span className="text-sm font-bold mt-2 opacity-70">{cmPctDisplay}{cmTargetPctOfAssets != null ? ` ${t('佔總資產', 'of assets')}` : ''}</span>
                   </div>
                 </div>
               );
@@ -2428,10 +2423,10 @@ Ask this box before you withdraw.`
                 <div className="tech-panel p-8">
                   <div className="flex justify-between items-center mb-6">
                     <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200 flex items-center gap-2">
-                      <span className={`w-2.5 h-2.5 rounded-none ${cmStyle.dot}`}></span>
+                      <span className={`w-2.5 h-2.5 rounded-none ${cmDotClass}`}></span>
                       {cardTitles.cashMoat}
                     </h2>
-                    <span className={`px-4 py-1.5 rounded-none text-sm font-black ${cmStyle.badge}`}>{cmStatus}</span>
+                    <span className={`px-4 py-1.5 rounded-none text-sm font-black ${cmBadgeClass}`}>{cmTierLabel}</span>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
@@ -2440,41 +2435,29 @@ Ask this box before you withdraw.`
                       <input type="number" name="cash" value={cashMoatInputs.cash} onChange={handleCashMoatChange} className="w-full tech-input text-lg py-2 px-3" />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">MONTHLY_DEBT (TWD)</label>
-                      <input type="number" name="monthlyDebt" value={cashMoatInputs.monthlyDebt} onChange={handleCashMoatChange} className="w-full tech-input text-lg py-2 px-3" />
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('目標水位 (TWD)', 'TARGET (TWD)')}</label>
+                      <input type="number" name="targetAmount" value={cashMoatInputs.targetAmount} onChange={handleCashMoatChange} className="w-full tech-input text-lg py-2 px-3" />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">MONTHS</label>
-                      <input type="number" min="1" name="months" value={cashMoatInputs.months} onChange={handleCashMoatChange} className="w-full tech-input text-lg py-2 px-3" />
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('佔總資產% (自動)', '% OF ASSETS (AUTO)')}</label>
+                      <div className="w-full tech-input text-lg py-2 px-3 opacity-70 cursor-not-allowed">{cmPctDisplay}</div>
                     </div>
-                  </div>
-
-                  <div className="text-center mb-4">
-                    <div className={`text-6xl font-black font-mono data-text ${cmStyle.text}`}>{cmHasTarget ? `${cmProgressPct}%` : '—'}</div>
-                    <div className="text-xs font-bold uppercase tracking-widest text-slate-400 mt-1">{t('進度', 'PROGRESS')}</div>
-                  </div>
-
-                  <div className="w-full h-10 rounded-none border-2 border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 overflow-hidden mb-6 relative">
-                    <div className={`h-full transition-all duration-300 ${cmStyle.bar}`} style={{ width: `${cmProgressBarPct}%` }}></div>
-                    {cmProgressBarPct < 100 && (
-                      <div className="absolute inset-y-0 right-0 border-2 border-dashed border-slate-400 dark:border-slate-500" style={{ width: `${100 - cmProgressBarPct}%` }}></div>
-                    )}
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
                     <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
                       <span className="text-sm font-bold text-slate-600 dark:text-slate-300">{t('目標水位', 'TARGET')}</span>
-                      <span className="text-lg font-black font-mono text-slate-700 dark:text-slate-200">{cmHasTarget ? `$${formatNumber(cmTarget)}` : t('未設定月付', 'DEBT NOT SET')}</span>
+                      <span className="text-lg font-black font-mono text-slate-700 dark:text-slate-200">{cmHasTarget ? `$${formatNumber(cmTarget)}` : t('未設定目標', 'TARGET NOT SET')}</span>
                     </div>
                     <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
                       <span className="text-sm font-bold text-slate-600 dark:text-slate-300">{t('缺口', 'GAP')}</span>
-                      <span className={`text-lg font-black font-mono ${cmHasTarget && cmGap <= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>{cmHasTarget ? `$${formatNumber(cmGap)}` : t('未設定月付', 'DEBT NOT SET')}</span>
+                      <span className={`text-lg font-black font-mono ${cmHasTarget && cmGap <= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>{cmHasTarget ? `$${formatNumber(cmGap)}` : t('未設定目標', 'TARGET NOT SET')}</span>
                     </div>
                   </div>
 
-                  {cmStatus === 'FORTIFIED' ? (
+                  {cmTier !== 'danger' ? (
                     <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-800 text-sm text-emerald-700 dark:text-emerald-400 space-y-1 font-bold">
-                      <div>✅ {t(`${cmMonthsLabel}月付已備妥`, `${cmMonthsLabel} of payments secured`)}</div>
+                      <div>✅ {t('目標水位已達成', 'Target reached')}</div>
                       <div>{t('超額現金', 'Surplus cash')}: ${formatNumber(cmSurplus)}</div>
                       <div className="font-normal">{t('超額部分可走 80/20 分流。', 'Only the surplus may go through the 80/20 split.')}</div>
                     </div>
@@ -2495,10 +2478,11 @@ Build the wall first. Attack second.`)}
               );
 
               // v12.11 — 流動性覆蓋 LCM(階段二)：P1可用(扣死線)+現金 除以月付，沿用既有 P1/L/現金護城河欄位，不新增計算來源
-              // v12.16 — 月付來源改為優先讀債務分頁自動加總(debtMonthlyTotal)，null(債務分頁未就緒)時fallback回現金護城河手動輸入值(cmMonthlyDebt)。
-              //          只改LCM讀哪個來源，現金護城河卡自己的cmMonthlyDebt/cmTarget/cmGap等既有計算與顯示完全不動。
-              const lcmMonthlyDebtSource = (debtMonthlyTotal != null) ? 'debt' : 'manual';
-              const lcmMonthlyDebtEffective = (debtMonthlyTotal != null) ? debtMonthlyTotal : cmMonthlyDebt;
+              // v14.0 — cmMonthlyDebt(手動月付)已移除，月付來源純粹依賴debtMonthlyTotal(債務分頁自動加總)，
+              //         null時沿用既有lcmZoneKey==='na'的「未設定」降級模式，不再有手動fallback來源。
+              //         現金護城河卡自己的cmTarget/cmGap等既有計算與顯示完全不動。
+              const lcmMonthlyDebtSource = 'debt';
+              const lcmMonthlyDebtEffective = debtMonthlyTotal;
               // ERG準備工作一 — 改呼叫共用函式 calcAvailableBuffer（逐字搬自原本這三行算式，
               // 未改變任何運算順序，數字應與遷移前完全一致）
               const { deathLine: lcmDeathLine, p1Available: lcmP1Available, totalLiquid: lcmTotalLiquid } = calcAvailableBuffer(P1, L, cmCash);
@@ -2596,7 +2580,7 @@ Build the wall first. Attack second.`)}
                 </div>
               );
 
-              // ERG離職放行閘門計算區塊已搬到本函式開頭（cmStatus 之後、cardTitles 之前），
+              // ERG離職放行閘門計算區塊已搬到本函式開頭（現金護城河計算區塊之後、cardTitles 之前），
               // 這裡直接沿用 ergGates/ergPassCount/ergVerdict 等變數，純粹是宣告位置搬移，邏輯不變
               const cardErg = (
                 <React.Fragment>
@@ -2958,7 +2942,7 @@ Build the wall first. Attack second.`)}
     // 自動偵測本金進出污染：總資產日對日變化絕對值 > 15% 視為資金進出而非真實投資損益
     const CAPITAL_FLOW_THRESHOLD = 15; // %
 
-    const AssetTerminal = ({ theme, assetPrefill, clearPrefill, lAmount }) => {
+    const AssetTerminal = ({ theme, assetPrefill, clearPrefill, lAmount, onTotalAssetsChange }) => {
         const tierConfigs = useMemo(() => {
             return compoundTargets.map((data, index) => {
                 let colorsLight = "from-cyan-500 via-blue-500 to-indigo-500";
@@ -3132,6 +3116,14 @@ Build the wall first. Attack second.`)}
         const loadMoreRows = (year) => { setVisibleRows(prev => ({ ...prev, [year]: (prev[year] || 30) + 50 })); };
 
         const fxRate = marketData ? marketData.fxRate : 32.5;
+
+        // v14.0 — 現金護城河簡化階段一：把ASSET分頁最新總資產往上回呼給AppShell，
+        // 比照既有onLAmountChange/onCashMoatMonthlyDebtChange的單向useEffect上傳模式，
+        // 供FOS BOSS頁現金護城河卡計算「目標水位佔總資產%」。獨立effect，不動下面既有的圖表繪製effect。
+        const totalAssetsForFos = data.length > 0 ? (Number(data[data.length - 1].總資產) || 0) : 0;
+        useEffect(() => {
+            if (onTotalAssetsChange) onTotalAssetsChange(totalAssetsForFos);
+        }, [totalAssetsForFos]);
 
         useEffect(() => {
             if (data.length > 0 && lineChartRef.current && donutChartRef.current) {
@@ -5291,6 +5283,9 @@ Build the wall first. Attack second.`)}
       // null 代表 FosTerminal 還沒 mount 過(尚未切到 FOS BOSS 分頁)，DebtTerminal 遇到 null
       // 要降級顯示「尚未設定基準」，不能白屏或算出 NaN
       const [cashMoatMonthlyDebt, setCashMoatMonthlyDebt] = useState(null);
+      // v14.0 — 現金護城河簡化階段一：ASSET分頁最新總資產，比照lAmount模式由AssetTerminal算好回傳，
+      // 供FOS BOSS頁現金護城河卡計算「目標水位佔總資產%」。null代表AssetTerminal尚未mount過/資料未就緒。
+      const [totalAssetsFromAsset, setTotalAssetsFromAsset] = useState(null);
       const [unlocked, setUnlocked] = useState(!!getAccessToken());
       const [showPwGuide, setShowPwGuide] = useState(false);
       const [showRefreshHelp, setShowRefreshHelp] = useState(false);
@@ -5453,10 +5448,10 @@ Build the wall first. Attack second.`)}
           )}
 
           <div style={{ display: activeTab === 'asset' ? 'block' : 'none' }}>
-            <AssetTerminal theme={theme} assetPrefill={assetPrefill} clearPrefill={() => setAssetPrefill(null)} lAmount={lAmount} />
+            <AssetTerminal theme={theme} assetPrefill={assetPrefill} clearPrefill={() => setAssetPrefill(null)} lAmount={lAmount} onTotalAssetsChange={setTotalAssetsFromAsset} />
           </div>
           <div style={{ display: activeTab === 'fos' ? 'block' : 'none' }}>
-            <FosTerminal isDarkMode={isDark} isEng={isEng} onInjectPrefill={(vals) => { setAssetPrefill(vals); setActiveTab('asset'); }} onLAmountChange={setLAmount} onPledgeRateChange={setPledgeRate} debtMonthlyTotal={debtMonthlyTotal} onCashMoatMonthlyDebtChange={setCashMoatMonthlyDebt} />
+            <FosTerminal isDarkMode={isDark} isEng={isEng} onInjectPrefill={(vals) => { setAssetPrefill(vals); setActiveTab('asset'); }} onLAmountChange={setLAmount} onPledgeRateChange={setPledgeRate} debtMonthlyTotal={debtMonthlyTotal} totalAssetsFromAsset={totalAssetsFromAsset} />
           </div>
           <div style={{ display: activeTab === 'debt' ? 'block' : 'none' }}>
             <DebtTerminal isDarkMode={isDark} isEng={isEng} onDebtTotalChange={setDebtMonthlyTotal} cashMoatMonthlyDebt={cashMoatMonthlyDebt} />
