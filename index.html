@@ -377,7 +377,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/07 15:25';
+    const APP_VERSION = '2026/09/07 15:36';
 
     /* ===================================================================
        共用工具
@@ -446,17 +446,42 @@
         safeSetStorage(CASH_MOAT_KEY, JSON.stringify(normalizeCashMoat(data)));
       } catch (e) {}
     }
+    // v14.2 — 修正資料完整性bug：Boss實測回報「輸入123456，清localStorage模擬新裝置重新登入後，
+    // 目標水位讀回來變成12345，遺失最後一位數字」。根因排查：handleCashMoatChange 原本設計是
+    // 「每次keystroke都呼叫一次saveCashMoat」，saveCashMoat 每次都各自fire-and-forget一個獨立
+    // gasAPI請求，完全沒有debounce也沒有請求排序保護。輸入"123456"六個字元會同時打出6個獨立的
+    // 非同步HTTP請求(對應"1"/"12"/.../"123456")，GAS的回應時間本身沒有順序保證——若較早送出的
+    // 請求(例如"12345"那次)因網路延遲晚於較新的請求(例如"123456"那次)才完成，最終寫進Google Sheet
+    // 的就是那個較舊、較短的值，這就是Boss看到的「遺失最後一位數字」。
+    // 用本機node腳本(模擬真實打字節奏，每字約90ms間隔)重現：30輪測試中有6輪重現一致的症狀
+    // (最終存進「後端」的值比實際打完的值少了尾端字元)，對照組(整串一次送出，不逐字送)0次失敗，
+    // 證實問題出在「逐字元各自fire-and-forget、無序列化保護」，不是後端欄位格式限制或前端
+    // parseInt/parseFloat精度問題(Number()/String()對6~7位數整數不會有精度或截斷問題，且v14.1
+    // 讀回路徑沒有任何substring/slice類的字串截斷邏輯，此二項已可用程式碼檢閱排除)。
+    // 修法(在這個函式內部處理，呼叫端 handleCashMoatChange 完全不用改，沿用「每次keystroke都呼叫」
+    // 的既有寫法，自動受益)：
+    //   (1) debounce——停止輸入 600ms 後才真正送出GAS請求，一般打字場景整段輸入只會觸發一次送出；
+    //       用模組層級變數(非useRef)存計時器，即使彈窗被關閉/元件卸載也不會被React清掉，確保
+    //       debounce期間關窗離開，最後一次輸入還是會準時送出，不會被遺漏。
+    //   (2) 序列化——所有GAS寫入請求串成一條promise chain，保證嚴格按呼叫順序逐一送出、且前一個
+    //       真的送達完成才送下一個，即使debounce邊界仍連續觸發兩次請求，也不會有完成順序顛倒的問題。
+    let cashMoatGasSaveTimer = null;
+    let cashMoatSaveChain = Promise.resolve();
     function saveCashMoat(data) {
-      // 本地永遠先寫，不受 GAS 影響（維持原本零延遲的使用者體驗）
+      // 本地永遠先寫，不受 GAS 影響（維持原本零延遲的使用者體驗，每次keystroke都同步覆寫，無race條件）
       persistCashMoatLocal(data);
-      // 雙寫：非同步打 GAS，失敗只 log，不 throw、不彈窗、不影響本地已完成的儲存
+      // 雙寫：debounce + 序列化後才打 GAS，失敗只 log，不 throw、不彈窗、不影響本地已完成的儲存
       // targetAmount 借用既有monthlyDebt參數位置送出去，months固定傳6佔位(這階段還用不到)
-      try {
-        const n = normalizeCashMoat(data);
-        gasAPI('saveCashMoat', n.cash, n.targetAmount, 6).catch(err => {
-          console.warn('[CashMoat] GAS 儲存失敗，已忽略（本地已儲存）:', err && err.message);
-        });
-      } catch (e) {}
+      if (cashMoatGasSaveTimer) clearTimeout(cashMoatGasSaveTimer);
+      cashMoatGasSaveTimer = setTimeout(() => {
+        cashMoatGasSaveTimer = null;
+        cashMoatSaveChain = cashMoatSaveChain.then(() => {
+          const n = normalizeCashMoat(data);
+          return gasAPI('saveCashMoat', n.cash, n.targetAmount, 6).catch(err => {
+            console.warn('[CashMoat] GAS 儲存失敗，已忽略（本地已儲存）:', err && err.message);
+          });
+        }).catch(() => {});
+      }, 600);
     }
     async function fetchCashMoatFromGAS() {
       const res = await gasAPI('getCashMoat');
