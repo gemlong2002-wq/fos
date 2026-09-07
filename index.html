@@ -377,7 +377,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/07 11:05';
+    const APP_VERSION = '2026/09/07 15:25';
 
     /* ===================================================================
        共用工具
@@ -417,11 +417,11 @@
        會 reject、saveCashMoat 的 GAS 呼叫會被吃掉，畫面照常用 localStorage 值運作。
     =================================================================== */
     const CASH_MOAT_KEY = 'fos:cashMoat';
-    // v14.0 — 現金護城河簡化階段一：拿掉MONTHLY_DEBT×MONTHS公式，改成手動「目標水位」(targetAmount)。
-    // 本階段只動前端，後端GAS的saveCashMoat/getCashMoat action簽名(cash, monthlyDebt, months)維持不變，
-    // 避免後端payload格式突然改變造成存檔失敗——monthlyDebt/months固定傳0/6佔位、不再有意義；
-    // targetAmount這個新欄位這階段純前端localStorage持久化，不上傳GAS(下一階段才會補後端真正欄位)，
-    // 所以GAS成功回傳時只採信cash，避免覆蓋掉本地已存的targetAmount。
+    // v14.1 — 現金護城河簡化：拿掉MONTHLY_DEBT×MONTHS公式，改成手動「目標水位」(targetAmount)。
+    // 不動任何GAS後端程式碼：saveCashMoat/getCashMoat這兩個action的簽名(cash, monthlyDebt, months)
+    // 完全不變，純粹借用「monthlyDebt」這個既有數字欄位的位置來裝targetAmount的值(GAS端只是
+    // 存3個數字、不檢查語意，塞什麼數字進第二個位置都能正常存取)。months這個第三位置這階段
+    // 還用不到，維持固定佔位值。這樣targetAmount就能透過既有後端跨裝置同步，不用等後端加新欄位。
     const CASH_MOAT_DEFAULTS = { cash: 0, targetAmount: 0 };
     function normalizeCashMoat(raw) {
       if (!raw || typeof raw !== 'object') return { ...CASH_MOAT_DEFAULTS };
@@ -450,10 +450,10 @@
       // 本地永遠先寫，不受 GAS 影響（維持原本零延遲的使用者體驗）
       persistCashMoatLocal(data);
       // 雙寫：非同步打 GAS，失敗只 log，不 throw、不彈窗、不影響本地已完成的儲存
-      // monthlyDebt/months 固定傳 0/6 佔位(後端action簽名不變，這階段不改後端)，targetAmount不上傳
+      // targetAmount 借用既有monthlyDebt參數位置送出去，months固定傳6佔位(這階段還用不到)
       try {
         const n = normalizeCashMoat(data);
-        gasAPI('saveCashMoat', n.cash, 0, 6).catch(err => {
+        gasAPI('saveCashMoat', n.cash, n.targetAmount, 6).catch(err => {
           console.warn('[CashMoat] GAS 儲存失敗，已忽略（本地已儲存）:', err && err.message);
         });
       } catch (e) {}
@@ -461,7 +461,11 @@
     async function fetchCashMoatFromGAS() {
       const res = await gasAPI('getCashMoat');
       if (!res || res.success !== true) throw new Error('CashMoat GAS response invalid');
-      return { cash: Number.isFinite(Number(res.cash)) ? Number(res.cash) : CASH_MOAT_DEFAULTS.cash };
+      // targetAmount 從既有monthlyDebt欄位位置讀回來(對稱於saveCashMoat的存法)
+      return {
+        cash: Number.isFinite(Number(res.cash)) ? Number(res.cash) : CASH_MOAT_DEFAULTS.cash,
+        targetAmount: Number.isFinite(Number(res.monthlyDebt)) ? Number(res.monthlyDebt) : CASH_MOAT_DEFAULTS.targetAmount
+      };
     }
 
     /* ===================================================================
@@ -911,14 +915,14 @@
       });
       // GAS 優先讀取：畫面先用上面 localStorage 初始值渲染（不空白），掛載後非同步跟後端要一次最新值，
       // 成功才覆蓋；GAS 還沒部署新 action 或網路失敗都會被吃掉，維持目前畫面上的值，不 crash、不彈窗。
-      // v14.0 — GAS 這階段只認得 cash，targetAmount 純前端持久化：合併時只覆蓋 cash，
-      // 保留使用者已填的 targetAmount，避免被GAS回應(不含此欄位)覆蓋清空。
+      // v14.1 — targetAmount 現在借用既有monthlyDebt欄位位置跨裝置同步，GAS回應成功時cash跟
+      // targetAmount都採信、整包覆蓋本地畫面值(換裝置/清localStorage後也能讀回後端存的目標水位)。
       useEffect(() => {
         let cancelled = false;
         fetchCashMoatFromGAS().then(d => {
           if (cancelled) return;
-          setCashMoatInputs(prev => ({ ...prev, cash: String(d.cash) }));
-          persistCashMoatLocal({ cash: d.cash, targetAmount: parseFloat(loadCashMoat().targetAmount) || 0 });
+          setCashMoatInputs({ cash: String(d.cash), targetAmount: String(d.targetAmount) });
+          persistCashMoatLocal(d);
         }).catch(err => {
           console.warn('[CashMoat] GAS 讀取失敗，維持本地快取值:', err && err.message);
         });
