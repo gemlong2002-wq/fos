@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/14 16:13';
+    const APP_VERSION = '2026/09/14 16:25';
 
     /* ===================================================================
        共用工具
@@ -4795,6 +4795,39 @@ Build the wall first. Attack second.`)}
       const monthsOfRunway = (hasLiquidityBufferData && monthlyTotal > 0)
         ? (liquidityBufferFromAsset / monthlyTotal) : null;
 
+      // D. 到期時程時間軸：貸款+保險兩類(信用卡是分期次數概念，沒有日曆到期日，不列入)，
+      // 沿用既有effectiveEndDate概念逐字重現(貸款用r.endDate，保險用note隱藏標記解析出的
+      // insuranceEndDate，跟renderLoanRow內既有寫法/正規表示式一致，不重新發明)。
+      // 只留「現在起算，未來24個月內」有設定到期日的記錄，呼應ERG閘門2既有的24個月概念，
+      // 這裡不做成可調參數，先寫死。offset<0代表已過期(排除)，offset在[0,23]內才算未來24個月。
+      const UPCOMING_DEADLINE_MONTHS = 24;
+      const upcomingDeadlineItems = useMemo(() => {
+        const now = new Date();
+        const nowMonthIndex = now.getFullYear() * 12 + now.getMonth();
+        const items = [];
+        activeRecords.forEach(r => {
+          const cat = r.category || DEBT_CATEGORY_DEFAULT;
+          if (cat !== DEBT_CATEGORY_DEFAULT && cat !== DEBT_CATEGORY_INSURANCE) return;
+          const isInsurance = cat === DEBT_CATEGORY_INSURANCE;
+          const effectiveEndDate = isInsurance ? getInsuranceEndDate(r.note) : r.endDate;
+          const match = /^(\d{4})-(\d{2})$/.exec(String(effectiveEndDate || '').trim());
+          if (!match) return;
+          const y = parseInt(match[1], 10), m = parseInt(match[2], 10);
+          const offset = (y * 12 + (m - 1)) - nowMonthIndex;
+          if (offset < 0 || offset >= UPCOMING_DEADLINE_MONTHS) return;
+          items.push({ id: r.id, name: r.name, category: cat, yearMonth: `${y}-${String(m).padStart(2, '0')}` });
+        });
+        return items;
+      }, [activeRecords]);
+      const upcomingDeadlineGroups = useMemo(() => {
+        const groups = {};
+        upcomingDeadlineItems.forEach(item => {
+          if (!groups[item.yearMonth]) groups[item.yearMonth] = [];
+          groups[item.yearMonth].push(item);
+        });
+        return groups;
+      }, [upcomingDeadlineItems]);
+
       const openNewModal = () => setEditingRecord({ ...emptyForm });
       const openEditModal = (r) => setEditingRecord({
         ...r,
@@ -5154,6 +5187,57 @@ Build the wall first. Attack second.`)}
               </React.Fragment>,
               document.body
             )}
+
+            {/* v14.2 — 到期時程時間軸：貸款+保險未來24個月到期總覽，純視覺總覽卡，不可點擊、
+                不含互動跳轉，只讀upcomingDeadlineItems/upcomingDeadlineGroups(上面已算好)，
+                不改任何計算邏輯/資料流。集中到期(單月≥2筆)沿用今天稍早8張卡片danger等級的
+                紅色警示視覺語言(rose背景+邊框)，維持整體視覺一致性。 */}
+            <div className="glass-card p-6 rounded-2xl border-t-[6px] border-violet-500 dark:border-violet-400 relative overflow-hidden shadow-lg">
+              <div className="mb-4">
+                <span className="text-sm font-mono text-slate-600 dark:text-violet-400 font-bold uppercase tracking-widest">{t('到期時程 UPCOMING DEADLINES', 'UPCOMING DEADLINES')}</span>
+              </div>
+              {upcomingDeadlineItems.length === 0 ? (
+                <div className="text-sm font-mono font-bold text-slate-400 dark:text-slate-500 py-8 text-center">{t('未來24個月內無到期項目', 'No deadlines in the next 24 months')}</div>
+              ) : (
+                <div className="overflow-x-auto pb-2 -mx-1 px-1">
+                  <div className="flex gap-1.5">
+                    {Array.from({ length: UPCOMING_DEADLINE_MONTHS }).map((_, i) => {
+                      const now = new Date();
+                      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+                      const y = d.getFullYear();
+                      const m = d.getMonth() + 1;
+                      const slotKey = `${y}-${String(m).padStart(2, '0')}`;
+                      const slotItems = upcomingDeadlineGroups[slotKey] || [];
+                      const isCrowded = slotItems.length >= 2;
+                      return (
+                        <div
+                          key={slotKey}
+                          className={`flex flex-col items-center w-20 shrink-0 rounded-lg px-1.5 pt-2 pb-2 min-h-[72px] border transition-colors ${isCrowded ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-700' : slotItems.length > 0 ? 'bg-sky-50 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800' : 'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700'}`}
+                        >
+                          <span className={`text-[10px] font-mono font-bold whitespace-nowrap ${isCrowded ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400 dark:text-slate-500'}`}>{String(y).slice(2)}/{String(m).padStart(2, '0')}</span>
+                          {isCrowded && (
+                            <span className="text-[9px] font-black text-rose-600 dark:text-rose-400 mt-0.5">⚠️ {t(`集中到期 ${slotItems.length} 筆`, `${slotItems.length} DUE`)}</span>
+                          )}
+                          {slotItems.length > 0 && (
+                            <div className="mt-1 flex flex-col items-center gap-0.5 w-full">
+                              {slotItems.map(item => (
+                                <span
+                                  key={item.id}
+                                  title={item.name}
+                                  className={`text-[9px] font-bold leading-tight text-center w-full truncate ${isCrowded ? 'text-rose-700 dark:text-rose-300' : 'text-sky-700 dark:text-sky-300'}`}
+                                >
+                                  ● {item.name}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
 
             <div className="flex justify-between items-center">
               <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200">{t('貸款列表', 'LOAN LIST')}</h2>
