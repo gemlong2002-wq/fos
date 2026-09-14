@@ -219,12 +219,15 @@
        不是同一個元素，天生沒有這個pseudo-element屬性繼承問題。
        對症修法：角標本身明確補上left/bottom/width/height，讓它固定是右上角小徽章，
        不再繼承來源不明的滿版定位。 */
-    .mini-card-danger::before { content: 'CRITICAL'; position: absolute; top: 6px; right: 8px; left: auto; bottom: auto; width: auto; height: auto; z-index: 30; font-size: 9px; font-weight: 900; letter-spacing: 0.05em; color: #fecdd3; background: rgba(190,18,60,0.9); padding: 1px 6px; border-radius: 4px; font-family: ui-monospace, monospace; pointer-events: none; }
+    /* v13.13 — 角標質感升級：圓角膠囊+輕微陰影，借鏡澄鴻工程系統的警示徽章手法。
+       只動border-radius/box-shadow這兩個視覺屬性，left/bottom/width/height維持v13.12的
+       修法不動，不影響角標定位。 */
+    .mini-card-danger::before { content: 'CRITICAL'; position: absolute; top: 6px; right: 8px; left: auto; bottom: auto; width: auto; height: auto; z-index: 30; font-size: 9px; font-weight: 900; letter-spacing: 0.05em; color: #fecdd3; background: rgba(190,18,60,0.9); padding: 1px 8px; border-radius: 9999px; box-shadow: 0 2px 6px rgba(190,18,60,0.4), 0 0 0 1px rgba(255,255,255,0.15) inset; font-family: ui-monospace, monospace; pointer-events: none; }
     .mini-card-danger .mini-card-num { text-shadow: 0 0 10px rgba(244,63,94,0.7); transform: scale(1.08); transform-origin: left center; display: inline-block; }
 
     .mini-card-core { border-color: #10b981 !important; background-image: linear-gradient(160deg, rgba(16,185,129,0.09), transparent 60%); animation: mini-card-pulse-core 3.5s ease-in-out infinite; }
     html.dark .mini-card-core { background-image: linear-gradient(160deg, rgba(16,185,129,0.16), transparent 60%); }
-    .mini-card-core::before { content: 'CORE'; position: absolute; top: 6px; right: 8px; left: auto; bottom: auto; width: auto; height: auto; z-index: 30; font-size: 9px; font-weight: 900; letter-spacing: 0.05em; color: #a7f3d0; background: rgba(4,120,87,0.9); padding: 1px 6px; border-radius: 4px; font-family: ui-monospace, monospace; pointer-events: none; }
+    .mini-card-core::before { content: 'CORE'; position: absolute; top: 6px; right: 8px; left: auto; bottom: auto; width: auto; height: auto; z-index: 30; font-size: 9px; font-weight: 900; letter-spacing: 0.05em; color: #a7f3d0; background: rgba(4,120,87,0.9); padding: 1px 8px; border-radius: 9999px; box-shadow: 0 2px 6px rgba(4,120,87,0.4), 0 0 0 1px rgba(255,255,255,0.15) inset; font-family: ui-monospace, monospace; pointer-events: none; }
     .mini-card-core .mini-card-num { text-shadow: 0 0 10px rgba(16,185,129,0.6); transform: scale(1.08); transform-origin: left center; display: inline-block; }
 
     .mini-card-standard { opacity: 0.85; }
@@ -386,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/10 10:00';
+    const APP_VERSION = '2026/09/14 16:13';
 
     /* ===================================================================
        共用工具
@@ -1876,8 +1879,9 @@
                   className={`relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card mini-card-frost mini-card-corners cursor-pointer hover:border-rose-300 dark:hover:border-rose-700 transition-colors ${liquidityTier === 'danger' ? 'mini-card-danger' : 'mini-card-standard'}`}
                 >
                   <div className="px-5 pt-4 pb-2 flex items-center gap-2 relative z-30">
+                    <span className={`w-1 h-4 rounded-full shrink-0 ${liquidityBufferSafe ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
                     <span className="text-slate-400">▶</span>
-                    <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-extrabold shrink-0">{cardTitles.liquidity}</span>
+                    <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-black shrink-0">{cardTitles.liquidity}</span>
                   </div>
                   <div className={`px-5 pb-4 flex-grow flex flex-col justify-center border-l-[6px] ${liquidityBorderClass}`}>
                     <span className={`text-3xl sm:text-4xl md:text-5xl font-black font-mono tracking-tight break-words vibe-hover-text tabular-nums mini-card-num ${liquidityBufferSafe ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{formatNumber(p1LiquidityBuffer)}</span>
@@ -1961,8 +1965,9 @@ Ask this box before you withdraw.`
                   className={`relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card mini-card-frost mini-card-corners cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors ${passthroughTier === 'danger' ? 'mini-card-danger' : 'mini-card-standard'}`}
                 >
                   <div className="px-5 pt-4 pb-2 flex items-center gap-2 relative z-30">
+                    <span className={`w-1 h-4 rounded-full shrink-0 ${overCap ? 'bg-rose-500' : 'bg-emerald-500'}`}></span>
                     <span className="text-slate-400">▶</span>
-                    <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-extrabold shrink-0">{cardTitles.passthrough}</span>
+                    <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-black shrink-0">{cardTitles.passthrough}</span>
                   </div>
                   <div className={`flex-grow px-5 pb-4 flex flex-col justify-center border-l-[6px] ${overCap ? 'border-rose-500' : 'border-emerald-500'}`}>
                     <span className="text-sm font-mono uppercase tracking-widest text-slate-400 mb-0.5">{t('總曝險', 'TOTAL EXPOSURE')}</span>
@@ -1980,8 +1985,9 @@ Ask this box before you withdraw.`
                   className={`relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card mini-card-frost mini-card-corners cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors ${stressTier === 'danger' ? 'mini-card-danger' : 'mini-card-standard'}`}
                 >
                   <div className="px-5 pt-4 pb-2 flex items-center gap-2 relative z-30">
+                    <span className="w-1 h-4 rounded-full shrink-0 bg-rose-500"></span>
                     <span className="text-slate-400">▶</span>
-                    <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-extrabold shrink-0">{cardTitles.stress}</span>
+                    <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-black shrink-0">{cardTitles.stress}</span>
                   </div>
                   <div className="flex-grow px-5 pb-4 flex flex-col justify-center border-l-[6px] border-rose-500">
                     <span className="text-sm font-mono uppercase tracking-widest text-slate-400 mb-0.5">{t('馬斯克跌幅', 'MUSK DROP')}</span>
@@ -2002,7 +2008,10 @@ Ask this box before you withdraw.`
               const cardMr = (
                 <div className={`relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card mini-card-frost mini-card-corners`} onMouseMove={handleMouseMove}>
                   <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
-                    <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-extrabold shrink-0">{cardTitles.mr}</span>
+                    <span className="flex items-center gap-2">
+                      <span className={`w-1 h-4 rounded-full shrink-0 ${mrZoneInfo.dot}`}></span>
+                      <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-black shrink-0">{cardTitles.mr}</span>
+                    </span>
                     <span className={`w-3 h-3 rounded-full ${mrZoneInfo.dot}`}></span>
                   </div>
                   <div className="group relative flex-grow cursor-crosshair">
@@ -2092,7 +2101,10 @@ Ask this box before you withdraw.`
               const cardBalance = (
                 <div className={`relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card mini-card-frost mini-card-corners`} onMouseMove={handleMouseMove}>
                   <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
-                    <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-extrabold shrink-0">{cardTitles.balance}</span>
+                    <span className="flex items-center gap-2">
+                      <span className={`w-1 h-4 rounded-full shrink-0 ${balanceTier === 'danger' ? 'bg-rose-500' : 'bg-violet-500'}`}></span>
+                      <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-black shrink-0">{cardTitles.balance}</span>
+                    </span>
                   </div>
                   <div className="group relative flex-grow cursor-crosshair">
                     <div className={`absolute inset-0 isolate px-5 pb-4 flex flex-col justify-center border-l-[6px] ${balanceBorderClass} bg-slate-50/50 dark:bg-slate-900/50 transition-all duration-300 group-hover:opacity-0 group-hover:scale-95 ${balanceTier === 'danger' ? 'mini-card-danger' : 'mini-card-standard'}`}>
@@ -2457,8 +2469,9 @@ Ask this box before you withdraw.`
                   className={`relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card mini-card-frost mini-card-corners cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors ${cmTier === 'danger' ? 'mini-card-danger' : 'mini-card-standard'}`}
                 >
                   <div className="px-5 pt-4 pb-2 pr-16 flex items-center gap-1.5 relative z-30">
+                    <span className={`w-1 h-4 rounded-full shrink-0 ${cmDotClass}`}></span>
                     <span className={`w-2 h-2 rounded-full ${cmDotClass}`}></span>
-                    <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-extrabold shrink-0">{cardTitles.cashMoat}</span>
+                    <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-black shrink-0">{cardTitles.cashMoat}</span>
                   </div>
                   <div className={`flex-grow px-5 pb-4 flex flex-col justify-center border-l-[6px] ${cmBorderClass}`}>
                     <span className={`text-3xl sm:text-4xl font-black font-mono data-text vibe-hover-text tabular-nums mini-card-num ${cmTextClass}`}>{cmHasTarget ? `$${formatNumber(cmTarget)}` : '—'}</span>
@@ -2546,13 +2559,18 @@ Build the wall first. Attack second.`)}
               };
               const lcmStyle = lcmZoneStyles[lcmZoneKey];
               const lcmBorderClass = { green: 'border-emerald-500', yellow: 'border-yellow-500', red: 'border-rose-500', na: 'border-slate-300 dark:border-slate-600' }[lcmZoneKey];
+              // v13.13 — 標題左側強調色條用，跟lcmBorderClass同一套顏色語意，純視覺不影響判斷邏輯
+              const lcmDotClass = { green: 'bg-emerald-500', yellow: 'bg-yellow-500', red: 'bg-rose-500', na: 'bg-slate-300 dark:bg-slate-600' }[lcmZoneKey];
               const lcmTier = lcmZoneKey === 'red' ? 'danger' : 'standard';
 
               // v12.12 — mini卡版型：主數字+燈號留正面，明細+說明移到背面(hover展開)，計算邏輯完全不動
               const cardLcm = (
                 <div className={`relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card mini-card-frost mini-card-corners`} onMouseMove={handleMouseMove}>
                   <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
-                    <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-extrabold shrink-0">{cardTitles.lcm}</span>
+                    <span className="flex items-center gap-2">
+                      <span className={`w-1 h-4 rounded-full shrink-0 ${lcmDotClass}`}></span>
+                      <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-black shrink-0">{cardTitles.lcm}</span>
+                    </span>
                   </div>
                   <div className="group relative flex-grow cursor-crosshair">
                     <div className={`absolute inset-0 isolate px-5 pb-4 flex flex-col justify-center border-l-[6px] ${lcmBorderClass} bg-slate-50/50 dark:bg-slate-900/50 transition-all duration-300 group-hover:opacity-0 group-hover:scale-95 ${lcmTier === 'danger' ? 'mini-card-danger' : 'mini-card-standard'}`}>
@@ -2594,13 +2612,18 @@ Build the wall first. Attack second.`)}
               ];
               const allocCurrent = allocZones.find(z => z.key === allocZoneKey);
               const allocBorderClass = { low: 'border-rose-500', mid: 'border-yellow-500', high: 'border-emerald-500' }[allocZoneKey];
+              // v13.13 — 標題左側強調色條用，跟allocBorderClass同一套顏色語意，純視覺不影響判斷邏輯
+              const allocDotClass = { low: 'bg-rose-500', mid: 'bg-yellow-500', high: 'bg-emerald-500' }[allocZoneKey];
               const allocTier = allocZoneKey === 'low' ? 'danger' : 'standard';
 
               // v12.12 — mini卡版型：指令留正面，3區間對照表+完整說明移到背面(hover展開)，判定邏輯完全不動
               const cardAllocationOrder = (
                 <div className={`relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card mini-card-frost mini-card-corners`} onMouseMove={handleMouseMove}>
                   <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
-                    <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-extrabold shrink-0">{cardTitles.allocationOrder}</span>
+                    <span className="flex items-center gap-2">
+                      <span className={`w-1 h-4 rounded-full shrink-0 ${allocDotClass}`}></span>
+                      <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-black shrink-0">{cardTitles.allocationOrder}</span>
+                    </span>
                   </div>
                   <div className="group relative flex-grow cursor-crosshair">
                     <div className={`absolute inset-0 isolate px-5 pb-4 flex flex-col justify-center border-l-[6px] ${allocBorderClass} bg-slate-50/50 dark:bg-slate-900/50 transition-all duration-300 group-hover:opacity-0 group-hover:scale-95 ${allocTier === 'danger' ? 'mini-card-danger' : 'mini-card-standard'}`}>
@@ -5150,7 +5173,8 @@ Build the wall first. Attack second.`)}
                       <button onClick={() => toggleCategory(cat)} className="w-full flex flex-col p-6 md:p-8 text-left outline-none hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
                         <div className="flex flex-wrap justify-between items-start gap-2 w-full">
                           <div className="flex items-center gap-3">
-                            <span className="font-extrabold text-slate-800 dark:text-slate-100 font-mono text-3xl md:text-4xl uppercase tracking-wide">{catLabel}</span>
+                            <span className="w-1.5 h-8 md:h-9 rounded-full shrink-0 bg-sky-500 dark:bg-amber-500"></span>
+                            <span className="font-black text-slate-800 dark:text-slate-100 font-mono text-3xl md:text-4xl uppercase tracking-wide">{catLabel}</span>
                             <span className="text-slate-400 dark:text-slate-500 text-lg font-bold">{catOpen ? '▲' : '▼'}</span>
                           </div>
                           <div className="flex flex-col items-end gap-1">
