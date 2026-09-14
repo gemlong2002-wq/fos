@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/14 16:53';
+    const APP_VERSION = '2026/09/14 17:26';
 
     /* ===================================================================
        共用工具
@@ -5210,56 +5210,90 @@ Build the wall first. Attack second.`)}
               document.body
             )}
 
-            {/* v14.3 — 到期時程時間軸：貸款+信用卡(用剩餘期數推算)+保險未來12個月到期總覽，
-                純視覺總覽卡，不可點擊、不含互動跳轉，只讀upcomingDeadlineItems/
-                upcomingDeadlineGroups(上面已算好)，不改任何計算邏輯/資料流。集中到期(單月≥2筆，
-                三類合併計算)沿用今天稍早8張卡片danger等級的紅色警示視覺語言(rose背景+邊框)，
-                維持整體視覺一致性。訂閱不在這裡，另外在下方獨立常駐清單呈現。 */}
+            {/* v14.4 — 到期時程改橫槓式時間軸(取代上輪12格標記點設計)：每個到期項目一條橫槓，
+                從「現在」畫到該項目到期月份，橫槓長度視覺化距離到期還有多久，比照甘特圖手法。
+                純視覺改版，資料來源完全沿用upcomingDeadlineItems/upcomingDeadlineGroups(上面
+                已算好，完全不動)，不改任何計算邏輯/資料流。不可點擊、不含互動跳轉。集中到期
+                (單月≥2筆，三類合併計算)改成用rose警示色標示對應橫槓本身+X軸刻度上的⚠️圖示，
+                取代原本「整個月份格子變紅」的做法(新設計沒有月份格子這個概念了)。訂閱不在這裡，
+                另外在下方獨立常駐清單呈現。 */}
             <div className="glass-card p-6 rounded-2xl border-t-[6px] border-violet-500 dark:border-violet-400 relative overflow-hidden shadow-lg">
               <div className="mb-4">
                 <span className="text-sm font-mono text-slate-600 dark:text-violet-400 font-bold uppercase tracking-widest">{t('到期時程 UPCOMING DEADLINES', 'UPCOMING DEADLINES')}</span>
               </div>
               {upcomingDeadlineItems.length === 0 ? (
                 <div className="text-sm font-mono font-bold text-slate-400 dark:text-slate-500 py-8 text-center">{t('未來12個月內無到期項目', 'No deadlines in the next 12 months')}</div>
-              ) : (
-                <div className="overflow-x-auto pb-2 -mx-1 px-1">
-                  <div className="flex gap-1.5">
-                    {Array.from({ length: UPCOMING_DEADLINE_MONTHS }).map((_, i) => {
-                      const now = new Date();
-                      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
-                      const y = d.getFullYear();
-                      const m = d.getMonth() + 1;
-                      const slotKey = `${y}-${String(m).padStart(2, '0')}`;
-                      const slotItems = upcomingDeadlineGroups[slotKey] || [];
-                      const isCrowded = slotItems.length >= 2;
-                      return (
-                        <div
-                          key={slotKey}
-                          className={`flex flex-col items-center w-20 shrink-0 rounded-lg px-1.5 pt-2 pb-2 min-h-[72px] border transition-colors ${isCrowded ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-700' : slotItems.length > 0 ? 'bg-sky-50 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800' : 'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700'}`}
-                        >
-                          <span className={`text-[10px] font-mono font-bold whitespace-nowrap ${isCrowded ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400 dark:text-slate-500'}`}>{String(y).slice(2)}/{String(m).padStart(2, '0')}</span>
-                          {isCrowded && (
-                            <span className="text-[9px] font-black text-rose-600 dark:text-rose-400 mt-0.5">⚠️ {t(`集中到期 ${slotItems.length} 筆`, `${slotItems.length} DUE`)}</span>
-                          )}
-                          {slotItems.length > 0 && (
-                            <div className="mt-1 flex flex-col items-center gap-0.5 w-full">
-                              {slotItems.map(item => (
-                                <span
-                                  key={item.id}
-                                  title={item.name}
-                                  className={`text-[9px] font-bold leading-tight text-center w-full truncate ${isCrowded ? 'text-rose-700 dark:text-rose-300' : 'text-sky-700 dark:text-sky-300'}`}
-                                >
-                                  ● {item.name}
-                                </span>
-                              ))}
+              ) : (() => {
+                // 依到期月份由近到遠排序(yearMonth是YYYY-MM字串，字典序排序即為時間序)
+                const sortedDeadlineItems = [...upcomingDeadlineItems].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
+                const nowForAxis = new Date();
+                const nowMonthIndexForAxis = nowForAxis.getFullYear() * 12 + nowForAxis.getMonth();
+                // 橫槓終點位置：該月份是「現在起算第幾個月」(0-indexed) + 1，取當月區間右緣，
+                // 呼應X軸12格刻度的相對位置，不是重新算到期月份本身(那是upcomingDeadlineItems
+                // 既有算好的yearMonth，這裡只是把字串轉回offset供畫橫槓寬度百分比用)
+                const monthOffsetOf = (yearMonth) => {
+                  const [yy, mm] = yearMonth.split('-').map(s => parseInt(s, 10));
+                  return (yy * 12 + (mm - 1)) - nowMonthIndexForAxis;
+                };
+                const barColorFor = (category, isCrowded) => {
+                  if (isCrowded) return 'bg-rose-500';
+                  if (category === DEBT_CATEGORY_DEFAULT) return 'bg-sky-500';
+                  if (category === DEBT_CATEGORY_CREDIT_CARD) return 'bg-violet-500';
+                  return 'bg-emerald-500'; // 保險
+                };
+                return (
+                  <div className="overflow-x-auto pb-2 -mx-1 px-1">
+                    <div style={{ minWidth: '640px' }}>
+                      {/* X軸月份刻度，範圍/寬度計算跟下面橫槓共用同一套12個月刻度系統 */}
+                      <div className="relative h-5 mb-3 ml-28">
+                        {Array.from({ length: UPCOMING_DEADLINE_MONTHS }).map((_, i) => {
+                          const d = new Date(nowForAxis.getFullYear(), nowForAxis.getMonth() + i, 1);
+                          const y = d.getFullYear();
+                          const m = d.getMonth() + 1;
+                          const slotKey = `${y}-${String(m).padStart(2, '0')}`;
+                          const slotCount = (upcomingDeadlineGroups[slotKey] || []).length;
+                          const isCrowdedTick = slotCount >= 2;
+                          const leftPct = (i / UPCOMING_DEADLINE_MONTHS) * 100;
+                          return (
+                            <div key={slotKey} className="absolute top-0 whitespace-nowrap" style={{ left: `${leftPct}%` }}>
+                              <span className={`text-[10px] font-mono font-bold ${isCrowdedTick ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400 dark:text-slate-500'}`}>
+                                {isCrowdedTick && '⚠️'}{String(y).slice(2)}/{String(m).padStart(2, '0')}
+                              </span>
                             </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                          );
+                        })}
+                      </div>
+                      {/* 橫槓列表：由近到遠排序，每行一個項目 */}
+                      <div className="space-y-2">
+                        {sortedDeadlineItems.map(item => {
+                          const offset = monthOffsetOf(item.yearMonth);
+                          const widthPct = Math.min(100, Math.max(4, ((offset + 1) / UPCOMING_DEADLINE_MONTHS) * 100));
+                          const isCrowded = (upcomingDeadlineGroups[item.yearMonth] || []).length >= 2;
+                          return (
+                            <div key={item.id} className="flex items-center gap-2">
+                              <span
+                                title={item.name}
+                                className="w-24 shrink-0 text-[10px] font-bold truncate text-slate-600 dark:text-slate-300"
+                              >
+                                {item.name}
+                              </span>
+                              <div className="flex-grow relative h-3 bg-slate-100 dark:bg-slate-800/60 rounded-full overflow-hidden">
+                                <div
+                                  className={`absolute inset-y-0 left-0 rounded-full transition-all duration-500 ${barColorFor(item.category, isCrowded)} ${isCrowded ? 'ring-2 ring-rose-300 dark:ring-rose-700' : ''}`}
+                                  style={{ width: `${widthPct}%` }}
+                                ></div>
+                              </div>
+                              <span className={`w-12 shrink-0 text-[9px] font-mono text-right ${isCrowded ? 'text-rose-600 dark:text-rose-400 font-black' : 'text-slate-400 dark:text-slate-500'}`}>
+                                {item.yearMonth.slice(2)}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
 
             {/* v14.3 — 訂閱常駐清單：獨立於上面的到期時間軸之外，訂閱沒有「到期」概念，
