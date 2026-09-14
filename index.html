@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/14 16:25';
+    const APP_VERSION = '2026/09/14 16:53';
 
     /* ===================================================================
        共用工具
@@ -4795,24 +4795,40 @@ Build the wall first. Attack second.`)}
       const monthsOfRunway = (hasLiquidityBufferData && monthlyTotal > 0)
         ? (liquidityBufferFromAsset / monthlyTotal) : null;
 
-      // D. 到期時程時間軸：貸款+保險兩類(信用卡是分期次數概念，沒有日曆到期日，不列入)，
-      // 沿用既有effectiveEndDate概念逐字重現(貸款用r.endDate，保險用note隱藏標記解析出的
-      // insuranceEndDate，跟renderLoanRow內既有寫法/正規表示式一致，不重新發明)。
-      // 只留「現在起算，未來24個月內」有設定到期日的記錄，呼應ERG閘門2既有的24個月概念，
-      // 這裡不做成可調參數，先寫死。offset<0代表已過期(排除)，offset在[0,23]內才算未來24個月。
-      const UPCOMING_DEADLINE_MONTHS = 24;
+      // D. 到期時程時間軸：貸款+信用卡+保險三類，訂閱另外獨立成常駐清單(見下方
+      // subscriptionItems，不受這裡的月份篩選影響)。
+      // v14.3 — 範圍從24個月改12個月；新增信用卡到期推算：信用卡沒有日曆到期日欄位，
+      // 用「剩餘期數(installmentTotal − getEffectiveInstallmentPaid既有函式算出的已繳期數)
+      // 往後推算N個月」當到期時間點，installmentTotal為null(沒有分期計畫)的信用卡記錄不納入。
+      // 剩餘期數為0(已繳清但還沒手動標記結清)時，判斷為「當月」(offset 0)，不往過去推，
+      // 避免顯示已經過去的月份。月份加法沿用跟上一輪JSX時間軸格子生成同一套
+      // new Date(y, m+n, 1)技巧，不重新發明。
+      // 貸款/保險的effectiveEndDate概念逐字沿用renderLoanRow既有寫法/正規表示式，不重新發明。
+      // 集中到期警示統計(單月≥2筆)現在是貸款+信用卡+保險合併計算(訂閱不算，因為訂閱不在
+      // 這裡的月份定位裡)——這是同一份items陣列自然合併的結果，不需要額外邏輯。
+      const UPCOMING_DEADLINE_MONTHS = 12;
       const upcomingDeadlineItems = useMemo(() => {
         const now = new Date();
         const nowMonthIndex = now.getFullYear() * 12 + now.getMonth();
         const items = [];
         activeRecords.forEach(r => {
           const cat = r.category || DEBT_CATEGORY_DEFAULT;
-          if (cat !== DEBT_CATEGORY_DEFAULT && cat !== DEBT_CATEGORY_INSURANCE) return;
-          const isInsurance = cat === DEBT_CATEGORY_INSURANCE;
-          const effectiveEndDate = isInsurance ? getInsuranceEndDate(r.note) : r.endDate;
-          const match = /^(\d{4})-(\d{2})$/.exec(String(effectiveEndDate || '').trim());
-          if (!match) return;
-          const y = parseInt(match[1], 10), m = parseInt(match[2], 10);
+          if (cat !== DEBT_CATEGORY_DEFAULT && cat !== DEBT_CATEGORY_INSURANCE && cat !== DEBT_CATEGORY_CREDIT_CARD) return;
+          let y, m;
+          if (cat === DEBT_CATEGORY_CREDIT_CARD) {
+            if (r.installmentTotal == null) return;
+            const remainingCount = Math.max(0, r.installmentTotal - getEffectiveInstallmentPaid(r));
+            const projected = new Date(now.getFullYear(), now.getMonth() + remainingCount, 1);
+            y = projected.getFullYear();
+            m = projected.getMonth() + 1;
+          } else {
+            const isInsurance = cat === DEBT_CATEGORY_INSURANCE;
+            const effectiveEndDate = isInsurance ? getInsuranceEndDate(r.note) : r.endDate;
+            const match = /^(\d{4})-(\d{2})$/.exec(String(effectiveEndDate || '').trim());
+            if (!match) return;
+            y = parseInt(match[1], 10);
+            m = parseInt(match[2], 10);
+          }
           const offset = (y * 12 + (m - 1)) - nowMonthIndex;
           if (offset < 0 || offset >= UPCOMING_DEADLINE_MONTHS) return;
           items.push({ id: r.id, name: r.name, category: cat, yearMonth: `${y}-${String(m).padStart(2, '0')}` });
@@ -4827,6 +4843,12 @@ Build the wall first. Attack second.`)}
         });
         return groups;
       }, [upcomingDeadlineItems]);
+
+      // 訂閱常駐清單：獨立於上面的月份定位邏輯之外，不受UPCOMING_DEADLINE_MONTHS篩選，
+      // 永遠顯示目前全部執行中的訂閱記錄(訂閱沒有「到期」概念，只是單純現況提醒)
+      const subscriptionItems = useMemo(() => {
+        return activeRecords.filter(r => (r.category || DEBT_CATEGORY_DEFAULT) === DEBT_CATEGORY_SUBSCRIPTION);
+      }, [activeRecords]);
 
       const openNewModal = () => setEditingRecord({ ...emptyForm });
       const openEditModal = (r) => setEditingRecord({
@@ -5188,16 +5210,17 @@ Build the wall first. Attack second.`)}
               document.body
             )}
 
-            {/* v14.2 — 到期時程時間軸：貸款+保險未來24個月到期總覽，純視覺總覽卡，不可點擊、
-                不含互動跳轉，只讀upcomingDeadlineItems/upcomingDeadlineGroups(上面已算好)，
-                不改任何計算邏輯/資料流。集中到期(單月≥2筆)沿用今天稍早8張卡片danger等級的
-                紅色警示視覺語言(rose背景+邊框)，維持整體視覺一致性。 */}
+            {/* v14.3 — 到期時程時間軸：貸款+信用卡(用剩餘期數推算)+保險未來12個月到期總覽，
+                純視覺總覽卡，不可點擊、不含互動跳轉，只讀upcomingDeadlineItems/
+                upcomingDeadlineGroups(上面已算好)，不改任何計算邏輯/資料流。集中到期(單月≥2筆，
+                三類合併計算)沿用今天稍早8張卡片danger等級的紅色警示視覺語言(rose背景+邊框)，
+                維持整體視覺一致性。訂閱不在這裡，另外在下方獨立常駐清單呈現。 */}
             <div className="glass-card p-6 rounded-2xl border-t-[6px] border-violet-500 dark:border-violet-400 relative overflow-hidden shadow-lg">
               <div className="mb-4">
                 <span className="text-sm font-mono text-slate-600 dark:text-violet-400 font-bold uppercase tracking-widest">{t('到期時程 UPCOMING DEADLINES', 'UPCOMING DEADLINES')}</span>
               </div>
               {upcomingDeadlineItems.length === 0 ? (
-                <div className="text-sm font-mono font-bold text-slate-400 dark:text-slate-500 py-8 text-center">{t('未來24個月內無到期項目', 'No deadlines in the next 24 months')}</div>
+                <div className="text-sm font-mono font-bold text-slate-400 dark:text-slate-500 py-8 text-center">{t('未來12個月內無到期項目', 'No deadlines in the next 12 months')}</div>
               ) : (
                 <div className="overflow-x-auto pb-2 -mx-1 px-1">
                   <div className="flex gap-1.5">
@@ -5235,6 +5258,30 @@ Build the wall first. Attack second.`)}
                       );
                     })}
                   </div>
+                </div>
+              )}
+            </div>
+
+            {/* v14.3 — 訂閱常駐清單：獨立於上面的到期時間軸之外，訂閱沒有「到期」概念，
+                不受12個月篩選影響，永遠顯示目前全部執行中訂閱。標籤雲呈現，標題/配色都
+                刻意跟上面的時間軸做出區隔，避免混淆成同一份時程資訊。 */}
+            <div className="glass-card p-6 rounded-2xl border-t-[6px] border-amber-500 dark:border-amber-400 relative overflow-hidden shadow-lg">
+              <div className="mb-4">
+                <span className="text-sm font-mono text-slate-600 dark:text-amber-400 font-bold uppercase tracking-widest">{t('目前訂閱 ACTIVE SUBSCRIPTIONS', 'ACTIVE SUBSCRIPTIONS')}</span>
+              </div>
+              {subscriptionItems.length === 0 ? (
+                <div className="text-sm font-mono font-bold text-slate-400 dark:text-slate-500 py-4 text-center">{t('目前無訂閱項目', 'No active subscriptions')}</div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {subscriptionItems.map(r => (
+                    <span
+                      key={r.id}
+                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-xs font-bold"
+                    >
+                      <span className="text-slate-700 dark:text-slate-200">{r.name}</span>
+                      <span className="text-amber-600 dark:text-amber-400 font-mono">{formatNumber(toMonthlyEquivalent(r.monthlyPay, getPayFrequency(r.note)))}</span>
+                    </span>
+                  ))}
                 </div>
               )}
             </div>
