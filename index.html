@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/14 17:26';
+    const APP_VERSION = '2026/09/16 15:56';
 
     /* ===================================================================
        共用工具
@@ -886,15 +886,25 @@
 
       const [history, setHistory] = useState([]);
       const [radarRange, setRadarRange] = useState(safeGetStorage('fos_radarRange', '10'));
+      // v14.5 — 首頁快速載入：fetchHistory改抓近60筆(涵蓋雷達圖10/30/60三個選項需求)，
+      // 完整歷史延遲載入：fullHistory初始null代表「還沒抓過」，只在雷達圖選ALL或展開歷史矩陣
+      // 某一年份時才觸發fetchFullHistory，不動後端(getHistoryData本來就支援limit參數，只是
+      // 前端過去沒傳)。isFetchingFullHistory防止同時觸發兩次重複抓取。
+      const [fullHistory, setFullHistory] = useState(null);
+      const [isFetchingFullHistory, setIsFetchingFullHistory] = useState(false);
 
       // v12.7 — HISTORY MATRIX 分年份手風琴 + LOAD_MORE 漸進渲染（比照 AMBER 頁機制，純前端渲染節流，不動抓取方式）
       const [expandedYears, setExpandedYears] = useState({});
       const [visibleRows, setVisibleRows] = useState({});
 
       // 分組前濾掉樂觀更新塞入的暫存記錄（dateId 開頭 "(SYNC)"，非年份，避免冒出假年份分組）
+      // v14.5 — 優先讀fullHistory(如果已抓到)，沒抓到時維持用history(近60筆)分組。注意：
+      // 這裡本身不是「錯誤資料」的來源——真正需要防的是「使用者展開某一年份時，那一年的
+      // 資料在fullHistory抵達前是不完整的」，這個防呆下面在渲染年份內容時另外處理(見isYearOpen
+      // 那段)，不是在這個分組函式裡處理。
       const groupedHistory = useMemo(() => {
         const groups = {};
-        history.forEach(item => {
+        (fullHistory || history).forEach(item => {
           const dateStr = String(item.dateId || '');
           if (!/^\d{4}/.test(dateStr)) return; // 非純數字年份開頭（例如 "(SYNC) ..."）一律跳過
           const year = dateStr.substring(0, 4);
@@ -902,10 +912,14 @@
           groups[year].push(item);
         });
         return groups;
-      }, [history]);
+      }, [fullHistory, history]);
       const sortedHistoryYears = Object.keys(groupedHistory).sort((a, b) => b - a);
 
       const toggleHistoryYear = (year) => {
+        // v14.5 — 只在「收合→展開」時觸發完整歷史延遲載入(已抓過或抓取中則不重複觸發)，
+        // 收合不需要。展開後該年份的實際內容在fullHistory抵達前顯示loading，見下方JSX。
+        const opening = !expandedYears[year];
+        if (opening && fullHistory === null) fetchFullHistory();
         setExpandedYears(prev => ({ ...prev, [year]: !prev[year] }));
         if (!visibleRows[year]) setVisibleRows(prev => ({ ...prev, [year]: 30 }));
       };
@@ -1109,8 +1123,15 @@
 
       useEffect(() => {
         if (!chartRef.current || history.length === 0) return;
+        // v14.5 — ALL選項優先讀fullHistory；fullHistory還沒抓到時(null)不能拿history(近60筆)
+        // 冒充「全部」畫圖(會顯示不完整的假資料)，直接跳過建圖、銷毀既有chart實例，
+        // 畫面另外顯示loading文字(見下方JSX)，等fullHistory抵達後這個effect會重新觸發正確建圖。
+        if (radarRange === 'ALL' && fullHistory === null) {
+          if (chartInstance.current) { try { chartInstance.current.destroy(); } catch (e) {} chartInstance.current = null; }
+          return;
+        }
         // history[0] 是最新一筆（後端回傳順序：新→舊）。radarRange 為數字時取最新 N 筆再 reverse 成舊→新供 Chart.js 由左至右繪製。
-        const sliced = radarRange === 'ALL' ? history : history.slice(0, parseInt(radarRange, 10));
+        const sliced = radarRange === 'ALL' ? fullHistory : history.slice(0, parseInt(radarRange, 10));
         const chartData = [...sliced].reverse();
         const labels = chartData.map(item => item.dateId ? String(item.dateId).substring(0, 10) : 'N/A');
         const mrData = chartData.map(item => parseFloat(item.nominalMR || 0));
@@ -1154,11 +1175,13 @@
             }
           }
         });
-      }, [history, isEng, isDarkMode, radarRange]);
+      }, [history, fullHistory, isEng, isDarkMode, radarRange]);
 
+      // v14.5 — 首頁快速載入：只抓近60筆(涵蓋雷達圖10/30/60三個選項需求)，不動後端，
+      // getHistoryData(limit)本來就支援這個參數，前端過去沒傳
       const fetchHistory = async () => {
         try {
-          const res = await gasAPI('getHistoryData');
+          const res = await gasAPI('getHistoryData', 60);
           if (res.success && res.data.length > 0) {
             setHistory(res.data);
             const latest = res.data[0];
@@ -1175,6 +1198,23 @@
             });
           }
         } catch (err) {}
+      };
+
+      // v14.5 — 完整歷史延遲載入：只在雷達圖選ALL、或展開歷史矩陣某一年份且fullHistory
+      // 還沒抓過時才呼叫，不傳limit給後端(拿全部)。isFetchingFullHistory防止並發重複觸發
+      // (例如使用者先切ALL、緊接著又展開某一年，兩處都會呼叫這個函式)。
+      const fetchFullHistory = async () => {
+        if (fullHistory !== null || isFetchingFullHistory) return;
+        setIsFetchingFullHistory(true);
+        try {
+          const res = await gasAPI('getHistoryData');
+          if (res.success && Array.isArray(res.data)) {
+            setFullHistory(res.data);
+          }
+        } catch (err) {
+        } finally {
+          setIsFetchingFullHistory(false);
+        }
       };
 
       const fetchHistoryB = async () => {
@@ -2377,14 +2417,28 @@ Ask this box before you withdraw.`
                       <svg className="w-5 h-5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
                       {cardTitles.radar}
                     </h2>
-                    <select value={radarRange} onChange={(e) => setRadarRange(e.target.value)} className="bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm font-mono rounded-lg px-3 py-1.5 outline-none font-bold focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 transition-all cyber-select">
+                    <select
+                      value={radarRange}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setRadarRange(v);
+                        // v14.5 — 選ALL且fullHistory還沒抓過時才觸發延遲載入，已抓過不重複抓
+                        if (v === 'ALL' && fullHistory === null) fetchFullHistory();
+                      }}
+                      className="bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm font-mono rounded-lg px-3 py-1.5 outline-none font-bold focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 transition-all cyber-select"
+                    >
                       <option value="10">10</option>
                       <option value="30">30</option>
                       <option value="60">60</option>
                       <option value="ALL">ALL</option>
                     </select>
                   </div>
-                  <div className="w-full flex-1 relative"><canvas ref={chartRef}></canvas></div>
+                  <div className="w-full flex-1 relative">
+                    {radarRange === 'ALL' && fullHistory === null ? (
+                      <div className="absolute inset-0 flex items-center justify-center text-sm font-bold text-slate-400 dark:text-slate-500">{t('讀取中...', 'Loading...')}</div>
+                    ) : null}
+                    <canvas ref={chartRef}></canvas>
+                  </div>
                 </div>
               );
 
@@ -2406,7 +2460,13 @@ Ask this box before you withdraw.`
                             <span className="text-lg font-black text-slate-700 dark:text-slate-200 font-mono">{year}</span>
                             <span className="text-xs font-bold text-slate-400 dark:text-slate-500 tracking-wider">{yearData.length} {t('筆', 'RECORDS')} {isYearOpen ? '▲' : '▼'}</span>
                           </button>
-                          {isYearOpen && (
+                          {isYearOpen && fullHistory === null && (
+                            // v14.5 — 展開年份但fullHistory還沒抵達(展開觸發的抓取還在跑，或即將觸發)：
+                            // 顯示loading，不要用還沒抓完整的history(近60筆)算出的yearData/yearRendered
+                            // 冒充這個年份的完整內容
+                            <div className="p-6 text-center text-sm font-bold text-slate-400 dark:text-slate-500">{t('讀取中...', 'Loading...')}</div>
+                          )}
+                          {isYearOpen && fullHistory !== null && (
                             <div className="overflow-x-auto">
                               <table className="w-full text-left whitespace-nowrap text-sm font-mono">
                                 <thead>
