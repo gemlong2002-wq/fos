@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/27 20:10';
+    const APP_VERSION = '2026/09/27 20:30';
 
     /* ===================================================================
        共用工具
@@ -1028,7 +1028,10 @@
       // 之後有真實殖利率/生活費資料或要接後端排程時再逐步精修
       const [ergExtraInputs, setErgExtraInputs] = useState(() => ({
         monthlyLiving: safeGetStorage('fos_erg_monthlyLiving', ''),
-        gate4HasUpcomingSpike: safeGetStorage('fos_erg_gate4HasUpcomingSpike', 'false') === 'true'
+        gate4HasUpcomingSpike: safeGetStorage('fos_erg_gate4HasUpcomingSpike', 'false') === 'true',
+        // v14.3 — 閘門5「腰斬後提領率」門檻%，沿用同一組 ergExtraInputs/handleErgExtraChange
+        // 存取機制（handleErgExtraChange 會自動存成 'fos_erg_' + name）
+        gate5ThresholdPct: safeGetStorage('fos_erg_gate5ThresholdPct', '')
       }));
       const handleErgExtraChange = (e) => {
         const { name, value, type, checked } = e.target;
@@ -1513,6 +1516,34 @@
       // 沿用閘門2的N=24；未勾選視為通過，之後若要接後端排程結構再升級
       const ergGate4Pass = !ergExtraInputs.gate4HasUpcomingSpike;
 
+      // 閘門5「腰斬後提領率」— 報酬順序風險（sequence-of-returns risk）：
+      // 假設轉職當年就遇上大熊市、資產直接腰斬，一年的「月付+生活費」會吃掉
+      // 腰斬後「還能動用」的資產多少%。閘門1測斷頭、閘門2測緩衝月數，都沒有涵蓋這一塊。
+      // Boss 拍板兩個口徑：(1) 可用資產要扣掉質押借款 L（腰斬後得先還得起 L，剩下的才算數）
+      //                   (2) 年支出不含質押利息（利息另計，這裡只看月付+生活費）
+      // 資料全部沿用既有變數，不新增資料來源：
+      //   月付   = debtMonthlyTotal（與閘門2 ergMonthlyDebtEffective 同一個來源）
+      //   生活費 = ergMonthlyLiving（與閘門3 共用同一個輸入欄）
+      //   總資產 = totalAssetsFromAsset（FosTerminal 既有 prop，ASSET 頁最新一筆）
+      //   借款   = L（FosTerminal 既有變數）
+      const ERG_GATE5_DEFAULT_THRESHOLD_PCT = 8;
+      const ergGate5ThresholdRaw = parseFloat(ergExtraInputs.gate5ThresholdPct);
+      // 空值或非數字一律視為預設 8
+      const ergGate5ThresholdPct = Number.isFinite(ergGate5ThresholdRaw) ? ergGate5ThresholdRaw : ERG_GATE5_DEFAULT_THRESHOLD_PCT;
+      const ergGate5HasData = totalAssetsFromAsset != null && totalAssetsFromAsset > 0
+        && debtMonthlyTotal != null && ergMonthlyLiving > 0;
+      const ergGate5AnnualSpend = ((debtMonthlyTotal || 0) + ergMonthlyLiving) * 12;
+      const ergGate5AssetsAfterCrash = (totalAssetsFromAsset || 0) * 0.5;
+      const ergGate5Investable = ergGate5AssetsAfterCrash - L;
+      // 腰斬後連質押借款都還不起（可用資產 ≤ 0）→ 直接判定 fail，不去算出負數/無限大提領率
+      const ergGate5CannotCoverLoan = ergGate5HasData && ergGate5Investable <= 0;
+      const ergGate5WithdrawalPct = (ergGate5HasData && ergGate5Investable > 0)
+        ? (ergGate5AnnualSpend / ergGate5Investable * 100) : null;
+      // 對照值：不扣質押借款的提領率，只顯示、不參與判定
+      const ergGate5WithdrawalPctNoLoan = (ergGate5HasData && ergGate5AssetsAfterCrash > 0)
+        ? (ergGate5AnnualSpend / ergGate5AssetsAfterCrash * 100) : null;
+      const ergGate5Pass = ergGate5WithdrawalPct != null && ergGate5WithdrawalPct <= ergGate5ThresholdPct;
+
       // status: 'pass'(✅達標) / 'fail'(⬜未達標，已建置但未過門檻) / 'pending'(🔲尚未建置，或已建置但缺資料無法判定)
       const ergGates = [
         {
@@ -1546,6 +1577,18 @@
           display: ergGate4Pass
             ? t(`近 ${ERG_GATE2_THRESHOLD_MONTHS} 個月內無已知月付變動（簡化版手動勾選，尚未接後端排程）`, `No known payment change in next ${ERG_GATE2_THRESHOLD_MONTHS}mo (simplified manual flag, no backend schedule yet)`)
             : t(`⚠️ 已勾選：近 ${ERG_GATE2_THRESHOLD_MONTHS} 個月內有已知月付變動`, `⚠️ Flagged: known payment change within ${ERG_GATE2_THRESHOLD_MONTHS}mo`)
+        },
+        {
+          id: 5,
+          name: t('腰斬後提領率', 'WITHDRAWAL RATE AFTER -50%'),
+          status: !ergGate5HasData ? 'pending' : ((ergGate5CannotCoverLoan || !ergGate5Pass) ? 'fail' : 'pass'),
+          display: !ergGate5HasData
+            ? t('資料未就緒（總資產、月付或月生活費未就緒）', 'DATA NOT READY (total assets, monthly debt or living cost unset)')
+            : ergGate5CannotCoverLoan
+            ? t('腰斬後資產不足以償還質押借款', 'Assets after -50% cannot cover the pledged loan')
+            : ergGate5Pass
+            ? t(`腰斬後提領率 ${ergGate5WithdrawalPct.toFixed(1)}%（門檻 ≤ ${ergGate5ThresholdPct}%）（不扣借款對照 ${ergGate5WithdrawalPctNoLoan.toFixed(1)}%）`, `Withdrawal rate after -50% ${ergGate5WithdrawalPct.toFixed(1)}% (threshold ≤ ${ergGate5ThresholdPct}%) (excl. loan deduction: ${ergGate5WithdrawalPctNoLoan.toFixed(1)}%)`)
+            : t(`若轉職當年腰斬，提領率 ${ergGate5WithdrawalPct.toFixed(1)}%（門檻 ≤ ${ergGate5ThresholdPct}%），建議延後轉職（不扣借款對照 ${ergGate5WithdrawalPctNoLoan.toFixed(1)}%）`, `If assets halve in the switch year, withdrawal rate ${ergGate5WithdrawalPct.toFixed(1)}% (threshold ≤ ${ergGate5ThresholdPct}%) — consider delaying the switch (excl. loan deduction: ${ergGate5WithdrawalPctNoLoan.toFixed(1)}%)`)
         }
       ];
       // 2026/08/21 Boss拍板 — 每道閘門的白話說明，點該閘門列會彈出小視窗顯示
@@ -1573,6 +1616,12 @@
           what: t('未來24個月內，月付有沒有已知會跳增的狀況（例如房貸寬限期到期）。', 'Whether there is a known monthly-payment increase coming in the next 24 months (e.g. a mortgage grace period ending).'),
           formula: t('純手動勾選，不是系統自動判讀。', 'A manual flag — not auto-detected by the system.'),
           howTo: t('有已知變動就勾選上方的勾選框（變紅燈提醒）；沒有就不勾（維持綠燈）。', 'Check the box above if you know of a change coming (turns red); leave unchecked if not (stays green).')
+        },
+        5: {
+          title: t('閘門5・腰斬後提領率', 'GATE 5 · WITHDRAWAL RATE AFTER -50%'),
+          what: t('假設轉職當年資產腰斬，一年的月付+生活費，佔腰斬後扣掉質押借款、還能動用的資產多少%。', 'Assumes your assets halve in the year you switch careers — what share of the still-usable assets (after -50% and after deducting the pledged loan) does one year of monthly payments plus living costs consume.'),
+          formula: t('（月付總額 + 月生活費）× 12 ÷（總資產 × 50% − 質押借款），要 ≤ 門檻（預設 8%）。', '(Monthly debt + monthly living) × 12 ÷ (Total assets × 50% − Pledged loan), must be ≤ threshold (default 8%).'),
+          howTo: t('增加資產、降低質押借款，或降低月付／生活費；未達標代表轉職時機可能要往後延。月生活費請只填生活開銷，不要包含貸款月付（月付已由債務頁自動加總）。', 'Increase assets, reduce the pledged loan, or lower monthly payments/living costs. Failing this gate suggests delaying the career switch. Enter living expenses only in "Monthly Living" — do not include loan payments (those are auto-summed from the Debt page).')
         }
       };
       const ergIcon = (status) => status === 'pass' ? '✅' : status === 'fail' ? '⬜' : '🔲';
@@ -1749,7 +1798,7 @@
                       <span className="text-sm font-black uppercase text-slate-500 dark:text-slate-400 flex items-center gap-2">
                         <span className="w-2 h-2 rounded-full bg-violet-500"></span> {cardTitles.erg}
                       </span>
-                      <span className="text-sm font-bold text-slate-400 uppercase tracking-widest">{t(`${ergPassCount}/4 達標`, `${ergPassCount}/4 PASSED`)}</span>
+                      <span className="text-sm font-bold text-slate-400 uppercase tracking-widest">{t(`${ergPassCount}/${ergGates.length} 達標`, `${ergPassCount}/${ergGates.length} PASSED`)}</span>
                     </div>
                     <div className="flex flex-wrap gap-2 mb-3">
                       {ergGates.map(g => (
@@ -2758,8 +2807,8 @@ Build the wall first. Attack second.`)}
                     {cardTitles.erg}
                   </h2>
 
-                  {/* 閘門3/4 粗略模型輸入 — 純前端local state，不動後端，2026/08/20 Boss拍板先求有再求好 */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                  {/* 閘門3/4/5 粗略模型輸入 — 純前端local state，不動後端，2026/08/20 Boss拍板先求有再求好 */}
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                     <div>
                       <label className="block text-sm font-bold uppercase tracking-widest text-slate-400 mb-1">{t('殖利率% (稅前,年化,固定參考值)', 'YIELD % (pre-tax, annualized, fixed reference)')}</label>
                       <div className="w-full tech-input text-sm py-2 px-3 opacity-70 cursor-default select-none">{ERG_GATE3_YIELD_PCT}%</div>
@@ -2767,6 +2816,10 @@ Build the wall first. Attack second.`)}
                     <div>
                       <label className="block text-sm font-bold uppercase tracking-widest text-slate-400 mb-1">{t('月生活費 (TWD)', 'MONTHLY LIVING (TWD)')}</label>
                       <input type="number" inputMode="decimal" name="monthlyLiving" value={ergExtraInputs.monthlyLiving} onChange={handleErgExtraChange} className="w-full tech-input text-lg py-2 px-3" placeholder="0" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-bold uppercase tracking-widest text-slate-400 mb-1">{t('腰斬後提領率門檻%', 'WITHDRAWAL RATE THRESHOLD %')}</label>
+                      <input type="number" inputMode="decimal" name="gate5ThresholdPct" value={ergExtraInputs.gate5ThresholdPct} onChange={handleErgExtraChange} className="w-full tech-input text-lg py-2 px-3" placeholder={String(ERG_GATE5_DEFAULT_THRESHOLD_PCT)} />
                     </div>
                     <div className="flex flex-col justify-end">
                       <label className="flex items-center gap-2 text-sm font-bold uppercase tracking-widest text-slate-400 mb-1 cursor-pointer">
@@ -2793,7 +2846,7 @@ Build the wall first. Attack second.`)}
                     ))}
                   </div>
                   <div className="mt-6 pt-4 border-t border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                    <span className="text-sm font-bold uppercase tracking-widest text-slate-400">{t(`${ergPassCount} / 4 達標`, `${ergPassCount} / 4 PASSED`)}</span>
+                    <span className="text-sm font-bold uppercase tracking-widest text-slate-400">{t(`${ergPassCount} / ${ergGates.length} 達標`, `${ergPassCount} / ${ergGates.length} PASSED`)}</span>
                     <span className={`text-sm font-black ${ergVerdict.color}`}>{ergVerdict.text}</span>
                   </div>
                   <div className="text-sm text-slate-400 mt-3">{t('粗略模型階段（2026/08/20）：閘門1/2已接真實計算；閘門3為壓縮係數/殖利率簡化估算；閘門4為手動勾選簡化版，尚未接後端變動排程，之後逐步精修', 'Rough-model stage (2026/08/20): Gates 1/2 wired to real calculations; Gate 3 uses a simplified compression/yield estimate; Gate 4 is a manual-flag simplification without a backend change schedule yet — to be refined incrementally')}</div>
