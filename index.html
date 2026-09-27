@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/16 15:56';
+    const APP_VERSION = '2026/09/27 20:10';
 
     /* ===================================================================
        共用工具
@@ -543,6 +543,42 @@
     };
 
     /* ===================================================================
+       v14.2 — 讀取類請求逾時（只套讀取，寫入一律不套）
+
+       【為什麼寫入類不能加逾時】前端逾時放棄不代表 GAS 那邊沒寫完。使用者看到
+       失敗再按一次，就會造成重複寫入——addEntry / saveFOSData / saveLoanRecord
+       這些 action 每次呼叫都是「新增一列」，重複按等於多出一筆假資料。
+       所以這裡用「白名單」而不是「黑名單」：只有明確列在 READ_ONLY_ACTIONS 裡的
+       讀取類 action 會套逾時，任何沒列到的 action（含未來新增的）一律維持原本
+       無逾時行為，寧可轉圈也不要冒重複寫入的風險。
+
+       google.script.run 那條分支（GAS 原生環境）不走 fetch，不受此影響。
+    =================================================================== */
+    const READ_REQUEST_TIMEOUT_MS = 15000;
+    const READ_ONLY_ACTIONS = new Set([
+      // AMBER（fetchMatrix）
+      'getMarketStatus', 'getDashboardData', 'getMarketBenchmarks',
+      // FOS（gasAPI）
+      'getHistoryData', 'getHistoryDataB', 'getCryptoMatrix', 'getCashMoat',
+      // DEBT（gasDebtAPI）
+      'getLoanRecords'
+      // 刻意不含 recognizeScreenshot：它走 AI 辨識、天生就慢，且不是單純讀取，
+      // 套 15 秒逾時只會誤殺正常請求
+    ]);
+    const fetchWithReadTimeout = (url, options, action) => {
+      if (!READ_ONLY_ACTIONS.has(action)) return fetch(url, options);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), READ_REQUEST_TIMEOUT_MS);
+      return fetch(url, { ...options, signal: controller.signal })
+        .then(res => { clearTimeout(timer); return res; })
+        .catch(err => {
+          clearTimeout(timer);
+          if (err && err.name === 'AbortError') throw new Error('REQUEST_TIMEOUT');
+          throw err;
+        });
+    };
+
+    /* ===================================================================
        FOS (Boss) 後端路由
     =================================================================== */
     const GAS_URL_FOS = 'https://script.google.com/macros/s/AKfycbxWnT6COS2NuL5LmtRZql5UmvEHcFDEtdha2SY5-NI3RBjHxV5xz0oUWlQL1M7P-0GN/exec';
@@ -551,12 +587,12 @@
         if (typeof google !== 'undefined' && google.script && google.script.run) {
           google.script.run.withSuccessHandler((data) => { resetAuthFailCount(); resolve(data); }).withFailureHandler(reject)[serverFunction](...args);
         } else {
-          fetch(GAS_URL_FOS, {
+          fetchWithReadTimeout(GAS_URL_FOS, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
             redirect: 'follow',
             body: JSON.stringify({ action: serverFunction, args: args, token: getAccessToken() })
-          }).then(res => res.json()).then(data => {
+          }, serverFunction).then(res => res.json()).then(data => {
             if (data && (data.status === 'unauthorized' || data.status === 'locked')) {
               reject(handleAuthStatus(data.status));
               return;
@@ -574,12 +610,12 @@
     const GAS_URL_DEBT = 'https://script.google.com/macros/s/AKfycbwqH8ovq8_PgjN20IiAGMq3Y0Hwf_qhAyU2VI594c_RhJlU6A-RZT9z-2GQTsnaF36z/exec';
     const gasDebtAPI = (serverFunction, ...args) => {
       return new Promise((resolve, reject) => {
-        fetch(GAS_URL_DEBT, {
+        fetchWithReadTimeout(GAS_URL_DEBT, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
           redirect: 'follow',
           body: JSON.stringify({ action: serverFunction, args: args, token: getAccessToken() })
-        }).then(res => res.json()).then(data => {
+        }, serverFunction).then(res => res.json()).then(data => {
           if (data && (data.status === 'unauthorized' || data.status === 'locked')) {
             reject(handleAuthStatus(data.status));
             return;
@@ -604,12 +640,12 @@
         });
       }
       const finalPayload = { ...payload, token: getAccessToken() };
-      const response = await fetch(API_GATEWAY_AMBER, {
+      const response = await fetchWithReadTimeout(API_GATEWAY_AMBER, {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
         body: JSON.stringify({ action, payload: finalPayload }),
         redirect: "follow"
-      });
+      }, action);
       if (!response.ok) throw new Error("HTTP " + response.status);
       const data = await response.json();
       if (data && (data.status === 'unauthorized' || data.status === 'locked')) {
@@ -4472,7 +4508,11 @@ Build the wall first. Attack second.`)}
         setError('');
         sessionStorage.setItem(ACCESS_TOKEN_KEY, candidate.trim());
         try {
-          const res = await fetchMatrix('getDashboardData');
+          // v14.2 — 驗證密碼改用輕量 action：AMBER 的 doPost 對「所有」action 都會先跑
+          // checkAccessAuth，所以密碼錯誤/鎖定/成功三種判斷完全不變；但 getMarketStatus
+          // 只回固定值，不像 getDashboardData 要把整張 Sheet 的歷史讀出來再丟掉
+          //（進 ASSET 頁時本來就會再抓一次 getDashboardData，驗證這次純屬浪費）
+          const res = await fetchMatrix('getMarketStatus');
           if (res && (res.status === 'unauthorized' || res.status === 'locked')) {
             setError(res.status === 'locked' ? '已鎖定，請稍後再試' : '密碼錯誤');
             sessionStorage.removeItem(ACCESS_TOKEN_KEY);
@@ -4482,6 +4522,7 @@ Build the wall first. Attack second.`)}
         } catch (err) {
           if (err.message === 'ACCESS_LOCKED') setError('已鎖定，請稍後再試');
           else if (err.message === 'ACCESS_UNAUTHORIZED') setError('密碼錯誤');
+          else if (err.message === 'REQUEST_TIMEOUT') setError('連線逾時，請重試');
           else setError('NETWORK ERROR');
         } finally {
           setVerifying(false);
