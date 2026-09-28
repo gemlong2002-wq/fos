@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/28 14:05';
+    const APP_VERSION = '2026/09/28 14:50';
 
     /* ===================================================================
        共用工具
@@ -2010,28 +2010,34 @@
                       <button onClick={() => setShowIpoModal(false)} className="text-slate-400 hover:text-rose-500 text-xl leading-none">✕</button>
                     </div>
 
-                    {/* 申購輸入 — 每次開窗重設，不存檔 */}
+                    {/* 申購輸入 — 每次開窗重設，不存檔。
+                        v14.6 — 每格下面補一行小字說明（Boss 偶爾才開一次，怕忘記欄位意義） */}
                     <div className="space-y-3 mb-5">
                       <div>
                         <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('股票名稱／代號', 'NAME / TICKER')}</label>
                         <input type="text" name="name" value={ipoInputs.name} onChange={handleIpoInputChange} className="w-full tech-input text-base py-2 px-3" placeholder={t('例：1234 某某', 'e.g. 1234 ACME')} />
+                        <p className="text-[11px] leading-tight text-slate-400 mt-1">{t('僅供自己辨識，不參與任何計算', 'For your own reference only — not used in any calculation')}</p>
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('申購價', 'SUB PRICE')}</label>
                           <input type="number" inputMode="decimal" name="subPrice" value={ipoInputs.subPrice} onChange={handleIpoInputChange} className="w-full tech-input text-base py-2 px-3" placeholder="0" />
+                          <p className="text-[11px] leading-tight text-slate-400 mt-1">{t('抽籤的承銷價，中籤後用這個價格買進', 'The offering price — what you pay per share if you win')}</p>
                         </div>
                         <div>
                           <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('市價', 'MARKET PRICE')}</label>
                           <input type="number" inputMode="decimal" name="mktPrice" value={ipoInputs.mktPrice} onChange={handleIpoInputChange} className="w-full tech-input text-base py-2 px-3" placeholder="0" />
+                          <p className="text-[11px] leading-tight text-slate-400 mt-1">{t('目前市場成交價，用來估中籤後賣掉的價差', 'Current market price — used to estimate the spread on selling')}</p>
                         </div>
                         <div>
                           <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('申購股數', 'SHARES')}</label>
                           <input type="number" inputMode="decimal" name="shares" value={ipoInputs.shares} onChange={handleIpoInputChange} className="w-full tech-input text-base py-2 px-3" placeholder="1000" />
+                          <p className="text-[11px] leading-tight text-slate-400 mt-1">{t('台股一張＝1000股，依券商公告填', 'One TW lot = 1,000 shares; follow the broker notice')}</p>
                         </div>
                         <div>
                           <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('預估中籤率 %', 'WIN RATE %')}</label>
                           <input type="number" inputMode="decimal" name="winRatePct" value={ipoInputs.winRatePct} onChange={handleIpoInputChange} className="w-full tech-input text-base py-2 px-3" placeholder="1" />
+                          <p className="text-[11px] leading-tight text-slate-400 mt-1">{t('填 1 就是 1%；抽籤結束後可用「撥券張數÷申購件數」回推', 'Enter 1 for 1%; after the draw, lots ÷ applications gives the real rate')}</p>
                         </div>
                       </div>
                     </div>
@@ -2070,22 +2076,39 @@
                         <span>{showIpoParams ? '▲' : '▼'}</span>
                       </button>
                       {showIpoParams && (
-                        <div className="grid grid-cols-2 gap-3 mt-3">
-                          {[
-                            { key: 'mustPickGap', label: t('必抽價差門檻', 'MUST-APPLY SPREAD') },
-                            { key: 'canPickGap', label: t('可抽價差門檻', 'OPTIONAL SPREAD') },
-                            { key: 'gapRatePct', label: t('價差率門檻 %', 'SPREAD RATE %') },
-                            { key: 'freezeCap', label: t('可凍結上限', 'FREEZE CAP') },
-                            { key: 'reserveCash', label: t('保留現金', 'RESERVE CASH') },
-                            { key: 'feeDiscount', label: t('手續費折扣', 'FEE DISCOUNT') }
-                          ].map(p => (
-                            <div key={p.key}>
-                              <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{p.label}</label>
-                              <input type="number" inputMode="decimal" name={p.key} value={ipoParams[p.key]} onChange={handleIpoParamChange} className="w-full tech-input text-base py-2 px-3" placeholder={String(IPO_PARAM_DEFAULTS[p.key])} />
-                            </div>
-                          ))}
-                        </div>
+                        <React.Fragment>
+                          <p className="text-[11px] leading-snug text-slate-400 mt-3">
+                            {t('留空就用預設值（灰字提示的那個數字）。這組設定會記住，下次打開還在。', 'Leave blank to use the default (shown in grey). These settings are remembered for next time.')}
+                          </p>
+                          <div className="grid grid-cols-2 gap-3 mt-3">
+                            {[
+                              { key: 'mustPickGap', label: t('必抽價差門檻', 'MUST-APPLY SPREAD'), hint: t('淨價差高到這個金額才算「必抽」', 'Net spread at or above this counts as MUST APPLY') },
+                              { key: 'canPickGap', label: t('可抽價差門檻', 'OPTIONAL SPREAD'), hint: t('淨價差至少要有這麼多才值得抽', 'Minimum net spread still worth applying for') },
+                              { key: 'gapRatePct', label: t('價差率門檻 %', 'SPREAD RATE %'), hint: t('市價比申購價高出的％，要達標才過關', 'How much % above the offer price is required') },
+                              { key: 'freezeCap', label: t('可凍結上限', 'FREEZE CAP'), hint: t('單檔最多願意被凍結多少錢', 'Most cash you are willing to have frozen on one IPO') },
+                              { key: 'reserveCash', label: t('保留現金', 'RESERVE CASH'), hint: t('不想動用的現金底線，會先從現金扣掉', 'Cash floor you never touch — deducted from CASH first') },
+                              { key: 'feeDiscount', label: t('手續費折扣', 'FEE DISCOUNT'), hint: t('1＝不打折；2.8折填 0.28，影響賣出成本', '1 = no discount; e.g. enter 0.28 for a 28% rate — affects sell cost') }
+                            ].map(p => (
+                              <div key={p.key}>
+                                <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{p.label}</label>
+                                <input type="number" inputMode="decimal" name={p.key} value={ipoParams[p.key]} onChange={handleIpoParamChange} className="w-full tech-input text-base py-2 px-3" placeholder={String(IPO_PARAM_DEFAULTS[p.key])} />
+                                <p className="text-[11px] leading-tight text-slate-400 mt-1">{p.hint}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </React.Fragment>
                       )}
+                    </div>
+
+                    {/* v14.6 — 判定邏輯與內建費用說明：這些數字寫死在程式裡、畫面上看不到，
+                        不寫出來的話使用者無從得知判定是怎麼來的 */}
+                    <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700 text-[11px] leading-snug text-slate-400 space-y-1">
+                      <p className="font-bold text-slate-500 dark:text-slate-300">{t('判定怎麼來的（三關依序，第一個沒過的就是理由）', 'How the verdict works (three gates in order)')}</p>
+                      <p>{t('① 預扣關：預扣金額要 ≤ 可凍結上限（可凍結上限 = 可凍結上限參數 與「現金－保留現金」取小的那個）', '1) Frozen gate: frozen amount ≤ freeze ceiling (= min of the cap parameter and CASH − reserve)')}</p>
+                      <p>{t('② 價差關：淨價差與價差率都要達門檻，否則跳過', '2) Spread gate: both net spread and spread rate must clear their thresholds')}</p>
+                      <p>{t('③ 期望值關：期望值要 > 0（期望值 = 淨價差 × 中籤率 − 申購處理費）', '3) EV gate: expected value must be > 0 (= net spread × win rate − subscription fee)')}</p>
+                      <p className="pt-1">{t(`內建費用（不用自己填）：申購處理費 ${IPO_SUBSCRIBE_FEE} 元、中籤通知郵寄費 ${IPO_MAIL_FEE} 元、賣出手續費 ${(IPO_BROKER_FEE_RATE * 100).toFixed(4)}%×折扣、證交稅 ${(IPO_SELL_TAX_RATE * 100).toFixed(1)}%`, `Built-in fees: subscription ${IPO_SUBSCRIBE_FEE}, mail ${IPO_MAIL_FEE}, sell commission ${(IPO_BROKER_FEE_RATE * 100).toFixed(4)}% × discount, tax ${(IPO_SELL_TAX_RATE * 100).toFixed(1)}%`)}</p>
+                      <p>{t('現金來自「現金護城河」卡片的 CASH 欄位，這裡不會改到它', 'CASH comes from the Cash Moat card — this screener never modifies it')}</p>
                     </div>
                   </div>
                 </React.Fragment>,
