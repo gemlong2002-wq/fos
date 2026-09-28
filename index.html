@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/28 11:50';
+    const APP_VERSION = '2026/09/28 14:05';
 
     /* ===================================================================
        共用工具
@@ -1524,6 +1524,12 @@
         const v = parseFloat(ipoParams[key]);
         return Number.isFinite(v) ? v : IPO_PARAM_DEFAULTS[key];
       };
+      /* v14.5 — 取整後落在 (-0.5, 0) 的負數，formatNumber 會吐出字串 "-0"（例如期望值 -0.36），
+         畫面上看起來像壞掉。這裡只在「輸出字串剛好是 -0」時換成 "0"，刻意不用
+         Math.round(v) || 0 之類的寫法去攔截，因為那樣連 -0.5 都會變成 0，會偷改 formatNumber
+         既有的四捨五入規則（-0.5 照 Intl 規則本來就該顯示 -1）。
+         純顯示層處理：判定邏輯完全不動，期望值 ≤ 0 仍然判「期望值不為正」。 */
+      const ipoFmt = (v) => { const s = formatNumber(v); return s === '-0' ? '0' : s; };
       const ipoSubPrice = parseFloat(ipoInputs.subPrice) || 0;
       const ipoMktPrice = parseFloat(ipoInputs.mktPrice) || 0;
       const ipoShares = parseFloat(ipoInputs.shares) || 0;
@@ -1548,7 +1554,7 @@
           return {
             level: 'skip',
             label: t('❌ 跳過', '❌ SKIP'),
-            reason: t(`預扣過高，會凍結護城河（目前現金 ${formatNumber(cmCash)}，保留 ${formatNumber(ipoParamNum('reserveCash'))} 後可凍結 ${formatNumber(ipoFreezeCeiling)}）`, `Frozen amount too high — would lock up the moat (cash ${formatNumber(cmCash)}, after reserving ${formatNumber(ipoParamNum('reserveCash'))} only ${formatNumber(ipoFreezeCeiling)} is freezable)`)
+            reason: t(`預扣過高，會凍結護城河（目前現金 ${ipoFmt(cmCash)}，保留 ${ipoFmt(ipoParamNum('reserveCash'))} 後可凍結 ${ipoFmt(ipoFreezeCeiling)}）`, `Frozen amount too high — would lock up the moat (cash ${ipoFmt(cmCash)}, after reserving ${ipoFmt(ipoParamNum('reserveCash'))} only ${ipoFmt(ipoFreezeCeiling)} is freezable)`)
           };
         }
         // 第二關 價差關（用淨價差判斷）
@@ -1564,7 +1570,7 @@
         return {
           level: tier,
           label: tier === 'must' ? t('✅ 必抽', '✅ MUST APPLY') : t('🟡 可抽', '🟡 OPTIONAL'),
-          reason: t(`淨價差 ${formatNumber(ipoNetGap)}、價差率 ${ipoGapRatePct.toFixed(1)}%、期望值 ${formatNumber(ipoExpectedValue)}`, `Net spread ${formatNumber(ipoNetGap)}, rate ${ipoGapRatePct.toFixed(1)}%, EV ${formatNumber(ipoExpectedValue)}`)
+          reason: t(`淨價差 ${ipoFmt(ipoNetGap)}、價差率 ${ipoGapRatePct.toFixed(1)}%、期望值 ${ipoFmt(ipoExpectedValue)}`, `Net spread ${ipoFmt(ipoNetGap)}, rate ${ipoGapRatePct.toFixed(1)}%, EV ${ipoFmt(ipoExpectedValue)}`)
         };
       })();
       const ipoVerdictColor = !ipoVerdict ? 'text-slate-400'
@@ -1838,8 +1844,16 @@
           <div className="max-w-[1600px] mx-auto px-4 md:px-10 space-y-10 pb-24 relative tracking-wide">
 
             {/* v13.7 — 改垂直置中在螢幕右側（原本疊在右下角，中段捲動時不順手）；
-                與AppShell的回到頂部按鈕(-translate-y-16)搭配，兩者以螢幕垂直中心對稱排列 */}
-            <div className="fixed top-1/2 right-8 z-[9999]">
+                與AppShell的回到頂部按鈕(-translate-y-16)搭配，兩者以螢幕垂直中心對稱排列
+                v14.5 — z-index 9999→45：原本浮在所有彈窗之上（遮罩z-999/本體z-1000），
+                改到 45 讓任何彈窗開啟時都會蓋住它。45 這個值的上下界：
+                  上界 — 要低於全站最低的彈窗圖層，也就是卡片展開視窗(expandedCardContent)的
+                         fixed inset-0 z-50（現金護城河/穿透曝險/壓力測試/流動性防禦都走這層），
+                         其餘彈窗更高(destiny z-100、alpha popover z-119、遮罩 z-999)，自然也蓋得住
+                  下界 — 要高於一般內容的最高層 z-40（ASSET卡片 hoveredAsset 懸浮明細），
+                         以及 CSS 的 holo-card hover z-20、mini卡角標 z-30
+                  另：頂部分頁列 .app-tabbar 是 sticky z-300，本來就該壓在按鈕之上 */}
+            <div className="fixed top-1/2 right-8 z-[45]">
               <button onClick={handleCopyReport} className="tech-btn w-16 h-16 rounded-full bg-sky-500 text-white flex items-center justify-center text-2xl shadow-lg hover:bg-sky-400">📋</button>
             </div>
 
@@ -2031,16 +2045,16 @@
                       <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 space-y-3">
                         <div className="flex justify-between items-end gap-2">
                           <span className="text-xs font-bold uppercase tracking-widest text-slate-400">{t('淨價差', 'NET SPREAD')}</span>
-                          <span className={`text-2xl font-mono font-black ${ipoNetGap >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{formatNumber(ipoNetGap)}</span>
+                          <span className={`text-2xl font-mono font-black ${ipoNetGap >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{ipoFmt(ipoNetGap)}</span>
                         </div>
                         <div className="text-xs font-mono text-slate-400 -mt-2">
-                          {t(`毛價差 ${formatNumber(ipoGrossGap)}，已扣郵寄費 ${IPO_MAIL_FEE} 與賣出成本 ${formatNumber(ipoSellCost)}`, `Gross ${formatNumber(ipoGrossGap)}, less mail fee ${IPO_MAIL_FEE} and sell cost ${formatNumber(ipoSellCost)}`)}
+                          {t(`毛價差 ${ipoFmt(ipoGrossGap)}，已扣郵寄費 ${IPO_MAIL_FEE} 與賣出成本 ${ipoFmt(ipoSellCost)}`, `Gross ${ipoFmt(ipoGrossGap)}, less mail fee ${IPO_MAIL_FEE} and sell cost ${ipoFmt(ipoSellCost)}`)}
                         </div>
                         <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm font-mono pt-1 border-t border-slate-200 dark:border-slate-700">
                           <div className="flex justify-between"><span className="text-slate-400">{t('價差率', 'RATE')}</span><span className="font-bold text-slate-700 dark:text-slate-200">{ipoGapRatePct.toFixed(1)}%</span></div>
-                          <div className="flex justify-between"><span className="text-slate-400">{t('預扣', 'FROZEN')}</span><span className="font-bold text-slate-700 dark:text-slate-200">{formatNumber(ipoFrozenAmount)}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-400">{t('期望值', 'EV')}</span><span className={`font-bold ${ipoExpectedValue > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{formatNumber(ipoExpectedValue)}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-400">{t('可凍結上限', 'FREEZE CAP')}</span><span className={`font-bold ${ipoFreezeCeiling >= 0 ? 'text-slate-700 dark:text-slate-200' : 'text-rose-600 dark:text-rose-400'}`}>{formatNumber(ipoFreezeCeiling)}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-400">{t('預扣', 'FROZEN')}</span><span className="font-bold text-slate-700 dark:text-slate-200">{ipoFmt(ipoFrozenAmount)}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-400">{t('期望值', 'EV')}</span><span className={`font-bold ${ipoExpectedValue > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{ipoFmt(ipoExpectedValue)}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-400">{t('可凍結上限', 'FREEZE CAP')}</span><span className={`font-bold ${ipoFreezeCeiling >= 0 ? 'text-slate-700 dark:text-slate-200' : 'text-rose-600 dark:text-rose-400'}`}>{ipoFmt(ipoFreezeCeiling)}</span></div>
                         </div>
                         <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
                           <div className={`text-xl font-black ${ipoVerdictColor}`}>{ipoVerdict.label}</div>
@@ -6033,7 +6047,9 @@ Build the wall first. Attack second.`)}
           {showBackToTop && (
             // v13.7 — 改垂直置中在螢幕右側，與FosTerminal的複製報告按鈕(top-1/2)搭配，
             // 兩者以螢幕垂直中心對稱排列(回到頂部在上方、複製報告在下方，維持原本相對順序)
-            <div className="fixed top-1/2 -translate-y-16 right-8 z-[9998]">
+            // v14.5 — z-index 9998→44：理由同複製報告鈕(那邊有完整上下界說明)，
+            // 維持比它低 1 的原本相對順序（兩顆位置不重疊，純粹保持一致性）
+            <div className="fixed top-1/2 -translate-y-16 right-8 z-[44]">
               <button
                 onClick={handleBackToTop}
                 title={t('回到頂部', 'Back to top')}
