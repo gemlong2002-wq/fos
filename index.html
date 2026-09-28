@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/28 16:12';
+    const APP_VERSION = '2026/09/28 23:45';
 
     /* ===================================================================
        共用工具
@@ -1978,30 +1978,30 @@
                         v14.6 — 每格下面補一行小字說明（Boss 偶爾才開一次，怕忘記欄位意義） */}
                     <div className="space-y-3 mb-5">
                       <div>
-                        <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('股票名稱／代號', 'NAME / TICKER')}</label>
+                        <label className="block text-sm font-bold uppercase tracking-widest text-slate-400 mb-1">{t('股票名稱／代號', 'NAME / TICKER')}</label>
                         <input type="text" name="name" value={ipoInputs.name} onChange={handleIpoInputChange} className="w-full tech-input text-base py-2 px-3" placeholder={t('例：1234 某某', 'e.g. 1234 ACME')} />
-                        <p className="text-[11px] leading-tight text-slate-400 mt-1">{t('僅供自己辨識，不參與任何計算', 'For your own reference only — not used in any calculation')}</p>
+                        <p className="text-sm leading-snug text-slate-400 mt-1">{t('僅供自己辨識，不參與任何計算', 'For your own reference only — not used in any calculation')}</p>
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('申購價', 'SUB PRICE')}</label>
+                          <label className="block text-sm font-bold uppercase tracking-widest text-slate-400 mb-1">{t('申購價', 'SUB PRICE')}</label>
                           <input type="number" inputMode="decimal" name="subPrice" value={ipoInputs.subPrice} onChange={handleIpoInputChange} className="w-full tech-input text-base py-2 px-3" placeholder="0" />
-                          <p className="text-[11px] leading-tight text-slate-400 mt-1">{t('抽籤的承銷價，中籤後用這個價格買進', 'The offering price — what you pay per share if you win')}</p>
+                          <p className="text-sm leading-snug text-slate-400 mt-1">{t('抽籤的承銷價，中籤後用這個價格買進', 'The offering price — what you pay per share if you win')}</p>
                         </div>
                         <div>
-                          <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('市價', 'MARKET PRICE')}</label>
+                          <label className="block text-sm font-bold uppercase tracking-widest text-slate-400 mb-1">{t('市價', 'MARKET PRICE')}</label>
                           <input type="number" inputMode="decimal" name="mktPrice" value={ipoInputs.mktPrice} onChange={handleIpoInputChange} className="w-full tech-input text-base py-2 px-3" placeholder="0" />
-                          <p className="text-[11px] leading-tight text-slate-400 mt-1">{t('目前市場成交價，用來估中籤後賣掉的價差', 'Current market price — used to estimate the spread on selling')}</p>
+                          <p className="text-sm leading-snug text-slate-400 mt-1">{t('目前市場成交價，用來估中籤後賣掉的價差', 'Current market price — used to estimate the spread on selling')}</p>
                         </div>
                         <div>
-                          <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('申購股數', 'SHARES')}</label>
+                          <label className="block text-sm font-bold uppercase tracking-widest text-slate-400 mb-1">{t('申購股數', 'SHARES')}</label>
                           <input type="number" inputMode="decimal" name="shares" value={ipoInputs.shares} onChange={handleIpoInputChange} className="w-full tech-input text-base py-2 px-3" placeholder="1000" />
-                          <p className="text-[11px] leading-tight text-slate-400 mt-1">{t('台股一張＝1000股，依券商公告填', 'One TW lot = 1,000 shares; follow the broker notice')}</p>
+                          <p className="text-sm leading-snug text-slate-400 mt-1">{t('台股一張＝1000股，依券商公告填', 'One TW lot = 1,000 shares; follow the broker notice')}</p>
                         </div>
                         <div>
-                          <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('預估中籤率 %', 'WIN RATE %')}</label>
+                          <label className="block text-sm font-bold uppercase tracking-widest text-slate-400 mb-1">{t('預估中籤率 %', 'WIN RATE %')}</label>
                           <input type="number" inputMode="decimal" name="winRatePct" value={ipoInputs.winRatePct} onChange={handleIpoInputChange} className="w-full tech-input text-base py-2 px-3" placeholder="1" />
-                          <p className="text-[11px] leading-tight text-slate-400 mt-1">{t('填 1 就是 1%；抽籤結束後可用「撥券張數÷申購件數」回推', 'Enter 1 for 1%; after the draw, lots ÷ applications gives the real rate')}</p>
+                          <p className="text-sm leading-snug text-slate-400 mt-1">{t('填 1 就是 1%；抽籤結束後可用「撥券張數÷申購件數」回推', 'Enter 1 for 1%; after the draw, lots ÷ applications gives the real rate')}</p>
                         </div>
                       </div>
                     </div>
@@ -2014,34 +2014,34 @@
                     ) : (
                       <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 space-y-3">
                         <div className="flex justify-between items-end gap-2">
-                          <span className="text-xs font-bold uppercase tracking-widest text-slate-400">{t('淨價差', 'NET SPREAD')}</span>
+                          <span className="text-sm font-bold uppercase tracking-widest text-slate-400">{t('淨價差', 'NET SPREAD')}</span>
                           <span className={`text-2xl font-mono font-black ${ipoNetGap >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{ipoFmt(ipoNetGap)}</span>
                         </div>
-                        <div className="text-xs font-mono text-slate-400 -mt-2">
+                        <div className="text-sm font-mono text-slate-400 -mt-2">
                           {t(`毛價差 ${ipoFmt(ipoGrossGap)}，已扣郵寄費 ${IPO_MAIL_FEE} 與賣出成本 ${ipoFmt(ipoSellCost)}`, `Gross ${ipoFmt(ipoGrossGap)}, less mail fee ${IPO_MAIL_FEE} and sell cost ${ipoFmt(ipoSellCost)}`)}
                         </div>
                         <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm font-mono pt-1 border-t border-slate-200 dark:border-slate-700">
-                          <div className="flex justify-between"><span className="text-slate-400">{t('價差率', 'RATE')}</span><span className="font-bold text-slate-700 dark:text-slate-200">{ipoGapRatePct.toFixed(1)}%</span></div>
-                          <div className="flex justify-between"><span className="text-slate-400">{t('預扣', 'FROZEN')}</span><span className="font-bold text-slate-700 dark:text-slate-200">{ipoFmt(ipoFrozenAmount)}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-400">{t('期望值', 'EV')}</span><span className={`font-bold ${ipoExpectedValue > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{ipoFmt(ipoExpectedValue)}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-400">{t('可凍結上限', 'FREEZE CAP')}</span><span className={`font-bold ${ipoFreezeCeiling >= 0 ? 'text-slate-700 dark:text-slate-200' : 'text-rose-600 dark:text-rose-400'}`}>{ipoFmt(ipoFreezeCeiling)}</span></div>
+                          <div className="flex justify-between items-baseline gap-2"><span className="text-slate-400 whitespace-nowrap">{t('價差率', 'RATE')}</span><span className="font-bold text-slate-700 dark:text-slate-200">{ipoGapRatePct.toFixed(1)}%</span></div>
+                          <div className="flex justify-between items-baseline gap-2"><span className="text-slate-400 whitespace-nowrap">{t('預扣', 'FROZEN')}</span><span className="font-bold text-slate-700 dark:text-slate-200">{ipoFmt(ipoFrozenAmount)}</span></div>
+                          <div className="flex justify-between items-baseline gap-2"><span className="text-slate-400 whitespace-nowrap">{t('期望值', 'EV')}</span><span className={`font-bold ${ipoExpectedValue > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{ipoFmt(ipoExpectedValue)}</span></div>
+                          <div className="flex justify-between items-baseline gap-2"><span className="text-slate-400 whitespace-nowrap">{t('可凍結上限', 'FREEZE CAP')}</span><span className={`font-bold ${ipoFreezeCeiling >= 0 ? 'text-slate-700 dark:text-slate-200' : 'text-rose-600 dark:text-rose-400'}`}>{ipoFmt(ipoFreezeCeiling)}</span></div>
                         </div>
                         <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
                           <div className={`text-xl font-black ${ipoVerdictColor}`}>{ipoVerdict.label}</div>
-                          <div className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-1">{ipoVerdict.reason}</div>
+                          <div className="text-sm font-bold text-slate-500 dark:text-slate-400 mt-1">{ipoVerdict.reason}</div>
                         </div>
                       </div>
                     )}
 
                     {/* 參數設定（可收合，存 localStorage） */}
                     <div className="mt-5 pt-4 border-t border-slate-200 dark:border-slate-700">
-                      <button type="button" onClick={() => setShowIpoParams(v => !v)} className="w-full flex items-center justify-between text-xs font-bold uppercase tracking-widest text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors">
+                      <button type="button" onClick={() => setShowIpoParams(v => !v)} className="w-full flex items-center justify-between text-sm font-bold uppercase tracking-widest text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors">
                         <span>{t('參數設定', 'PARAMETERS')}</span>
                         <span>{showIpoParams ? '▲' : '▼'}</span>
                       </button>
                       {showIpoParams && (
                         <React.Fragment>
-                          <p className="text-[11px] leading-snug text-slate-400 mt-3">
+                          <p className="text-sm leading-relaxed text-slate-400 mt-3">
                             {t('留空就用預設值（灰字提示的那個數字）。這組設定會記住，下次打開還在。', 'Leave blank to use the default (shown in grey). These settings are remembered for next time.')}
                           </p>
                           <div className="grid grid-cols-2 gap-3 mt-3">
@@ -2054,9 +2054,9 @@
                               { key: 'feeDiscount', label: t('手續費折扣', 'FEE DISCOUNT'), hint: t('1＝不打折；2.8折填 0.28，影響賣出成本', '1 = no discount; e.g. enter 0.28 for a 28% rate — affects sell cost') }
                             ].map(p => (
                               <div key={p.key}>
-                                <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{p.label}</label>
+                                <label className="block text-sm font-bold uppercase tracking-widest text-slate-400 mb-1">{p.label}</label>
                                 <input type="number" inputMode="decimal" name={p.key} value={ipoParams[p.key]} onChange={handleIpoParamChange} className="w-full tech-input text-base py-2 px-3" placeholder={String(IPO_PARAM_DEFAULTS[p.key])} />
-                                <p className="text-[11px] leading-tight text-slate-400 mt-1">{p.hint}</p>
+                                <p className="text-sm leading-snug text-slate-400 mt-1">{p.hint}</p>
                               </div>
                             ))}
                           </div>
@@ -2066,7 +2066,7 @@
 
                     {/* v14.6 — 判定邏輯與內建費用說明：這些數字寫死在程式裡、畫面上看不到，
                         不寫出來的話使用者無從得知判定是怎麼來的 */}
-                    <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700 text-[11px] leading-snug text-slate-400 space-y-1">
+                    <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700 text-sm leading-relaxed text-slate-400 space-y-1">
                       <p className="font-bold text-slate-500 dark:text-slate-300">{t('判定怎麼來的（三關依序，第一個沒過的就是理由）', 'How the verdict works (three gates in order)')}</p>
                       <p>{t('① 預扣關：預扣金額要 ≤ 可凍結上限（可凍結上限 = 可凍結上限參數 與「現金－保留現金」取小的那個）', '1) Frozen gate: frozen amount ≤ freeze ceiling (= min of the cap parameter and CASH − reserve)')}</p>
                       <p>{t('② 價差關：淨價差與價差率都要達門檻，否則跳過', '2) Spread gate: both net spread and spread rate must clear their thresholds')}</p>
