@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/27 20:30';
+    const APP_VERSION = '2026/09/28 11:50';
 
     /* ===================================================================
        共用工具
@@ -992,6 +992,38 @@
       // 2026/08/21 Boss拍板 — 點單一閘門彈出說明小視窗，取代/補充獨立說明頁
       const [ergInfoGate, setErgInfoGate] = useState(null);
 
+      /* v14.4 — IPO 抽籤篩選器：純前端試算，不爬蟲、不動後端、不存申購資料。
+         視窗結構（portal + 遮罩 + ✕ + useDraggableOffset）比照既有 FIAT 注入視窗，不另創一套。
+         申購輸入每次開窗都重設為空白（只有股數/中籤率帶預設），所以刻意不存 localStorage；
+         「參數設定」那組門檻才會存檔（key 前綴 fos_ipo_，比照 ergExtraInputs 的存法）。 */
+      const IPO_INPUT_DEFAULTS = { name: '', subPrice: '', mktPrice: '', shares: '1000', winRatePct: '1' };
+      const [showIpoModal, setShowIpoModal] = useState(false);
+      const [showIpoParams, setShowIpoParams] = useState(false);
+      const ipoHeaderRef = useRef(null);
+      const ipoDragOffset = useDraggableOffset(ipoHeaderRef, showIpoModal);
+      const [ipoInputs, setIpoInputs] = useState({ ...IPO_INPUT_DEFAULTS });
+      const [ipoParams, setIpoParams] = useState(() => ({
+        mustPickGap: safeGetStorage('fos_ipo_mustPickGap', ''),
+        canPickGap: safeGetStorage('fos_ipo_canPickGap', ''),
+        gapRatePct: safeGetStorage('fos_ipo_gapRatePct', ''),
+        freezeCap: safeGetStorage('fos_ipo_freezeCap', ''),
+        reserveCash: safeGetStorage('fos_ipo_reserveCash', ''),
+        feeDiscount: safeGetStorage('fos_ipo_feeDiscount', '')
+      }));
+      const handleIpoInputChange = (e) => {
+        const { name, value } = e.target;
+        setIpoInputs(p => ({ ...p, [name]: value }));
+      };
+      const handleIpoParamChange = (e) => {
+        const { name, value } = e.target;
+        setIpoParams(p => {
+          const next = { ...p, [name]: value };
+          safeSetStorage('fos_ipo_' + name, value);
+          return next;
+        });
+      };
+      const openIpoModal = () => { setIpoInputs({ ...IPO_INPUT_DEFAULTS }); setShowIpoModal(true); };
+
       const [liveCrypto, setLiveCrypto] = useState({ BTC: 0, ETH: 0 });
       const [betaConfig, setBetaConfig] = useState({ b0050: '1.0', b00733: '1.35', mrLimit: '130' });
 
@@ -1479,6 +1511,67 @@
       const cmSurplus = cmCash - cmTarget;
       const cmTier = (cmCash < cmTarget) ? 'danger' : 'standard';
 
+      /* v14.4 — IPO 抽籤篩選器計算（Boss 拍板：納入中籤郵寄費 50 與賣出成本）
+         現金直接讀現金護城河卡片既有的 cmCash，不另外存一份、不動護城河任何邏輯。
+         宣告在這裡是因為要用到 cmCash；純被動衍生值，不影響上面任何計算。 */
+      const IPO_SUBSCRIBE_FEE = 20;      // 申購處理費（不論中籤與否都收）
+      const IPO_MAIL_FEE = 50;           // 中籤通知郵寄費（未中籤會退，故計入預扣、也計入中籤後成本）
+      const IPO_BROKER_FEE_RATE = 0.001425; // 券商手續費率（可被折扣參數打折）
+      const IPO_SELL_TAX_RATE = 0.003;   // 證交稅
+      const IPO_PARAM_DEFAULTS = { mustPickGap: 10000, canPickGap: 5000, gapRatePct: 15, freezeCap: 100000, reserveCash: 50000, feeDiscount: 1 };
+      // 空值或非數字一律回退到預設值
+      const ipoParamNum = (key) => {
+        const v = parseFloat(ipoParams[key]);
+        return Number.isFinite(v) ? v : IPO_PARAM_DEFAULTS[key];
+      };
+      const ipoSubPrice = parseFloat(ipoInputs.subPrice) || 0;
+      const ipoMktPrice = parseFloat(ipoInputs.mktPrice) || 0;
+      const ipoShares = parseFloat(ipoInputs.shares) || 0;
+      const ipoWinRate = (parseFloat(ipoInputs.winRatePct) || 0) / 100;
+      const ipoHasPrices = ipoSubPrice > 0 && ipoMktPrice > 0;
+
+      const ipoFrozenAmount = ipoSubPrice * ipoShares + IPO_SUBSCRIBE_FEE + IPO_MAIL_FEE;
+      const ipoSellCost = ipoMktPrice * ipoShares * (IPO_BROKER_FEE_RATE * ipoParamNum('feeDiscount') + IPO_SELL_TAX_RATE);
+      const ipoGrossGap = (ipoMktPrice - ipoSubPrice) * ipoShares;
+      const ipoNetGap = ipoGrossGap - IPO_MAIL_FEE - ipoSellCost;
+      const ipoGapRatePct = ipoSubPrice > 0 ? ((ipoMktPrice / ipoSubPrice - 1) * 100) : 0;
+      const ipoExpectedValue = ipoNetGap * ipoWinRate - IPO_SUBSCRIBE_FEE;
+      // 可凍結上限 = min(參數上限, 現金 − 保留現金)；現金不足時會是負數，照樣拿去比較（判跳過），
+      // 顯示時直接顯示負數，不做絕對值、不顯示 NaN
+      const ipoFreezeCeiling = Math.min(ipoParamNum('freezeCap'), cmCash - ipoParamNum('reserveCash'));
+
+      // 三關依序判定，取第一個沒過的關卡當理由
+      const ipoVerdict = (() => {
+        if (!ipoHasPrices) return null;
+        // 第一關 預扣關
+        if (ipoFrozenAmount > ipoFreezeCeiling) {
+          return {
+            level: 'skip',
+            label: t('❌ 跳過', '❌ SKIP'),
+            reason: t(`預扣過高，會凍結護城河（目前現金 ${formatNumber(cmCash)}，保留 ${formatNumber(ipoParamNum('reserveCash'))} 後可凍結 ${formatNumber(ipoFreezeCeiling)}）`, `Frozen amount too high — would lock up the moat (cash ${formatNumber(cmCash)}, after reserving ${formatNumber(ipoParamNum('reserveCash'))} only ${formatNumber(ipoFreezeCeiling)} is freezable)`)
+          };
+        }
+        // 第二關 價差關（用淨價差判斷）
+        const rateOk = ipoGapRatePct >= ipoParamNum('gapRatePct');
+        const mustGap = ipoParamNum('mustPickGap');
+        const canGap = ipoParamNum('canPickGap');
+        let tier = null;
+        if (ipoNetGap >= mustGap && rateOk) tier = 'must';
+        else if (ipoNetGap >= canGap && ipoNetGap < mustGap && rateOk) tier = 'can';
+        if (!tier) return { level: 'skip', label: t('❌ 跳過', '❌ SKIP'), reason: t('價差或價差率不足', 'Spread or spread rate insufficient') };
+        // 第三關 期望值關
+        if (ipoExpectedValue <= 0) return { level: 'skip', label: t('❌ 跳過', '❌ SKIP'), reason: t('期望值不為正', 'Expected value is not positive') };
+        return {
+          level: tier,
+          label: tier === 'must' ? t('✅ 必抽', '✅ MUST APPLY') : t('🟡 可抽', '🟡 OPTIONAL'),
+          reason: t(`淨價差 ${formatNumber(ipoNetGap)}、價差率 ${ipoGapRatePct.toFixed(1)}%、期望值 ${formatNumber(ipoExpectedValue)}`, `Net spread ${formatNumber(ipoNetGap)}, rate ${ipoGapRatePct.toFixed(1)}%, EV ${formatNumber(ipoExpectedValue)}`)
+        };
+      })();
+      const ipoVerdictColor = !ipoVerdict ? 'text-slate-400'
+        : ipoVerdict.level === 'must' ? 'text-emerald-600 dark:text-emerald-400'
+        : ipoVerdict.level === 'can' ? 'text-amber-600 dark:text-amber-400'
+        : 'text-rose-600 dark:text-rose-400';
+
       // ERG離職放行閘門 — 檢查表骨架（本輪只接閘門2真實數字，閘門1/3/4先佔位）
       // 閘門2「緩衝存糧」呼叫共用函式 calcAvailableBuffer
       // v14.0 — cmMonthlyDebt(手動月付)已移除，月付來源純粹依賴debtMonthlyTotal(債務分頁自動加總)，
@@ -1778,6 +1871,10 @@
                       <span className="tech-slider"></span>
                     </label>
                   </div>
+                  {/* v14.4 — IPO 抽籤篩選器入口：常駐顯示，刻意不跟 isPart9 連動（與 FIAT 注入鈕不同） */}
+                  <button type="button" onClick={openIpoModal} className="tech-btn px-5 py-2.5 font-bold bg-cyan-500 text-white flex items-center gap-2">
+                    🎯 <span className="hidden sm:inline">{t('IPO 抽籤', 'IPO LOTTERY')}</span>
+                  </button>
                   {/* 2026/08/21 Boss拍板 — FIAT注入鈕改回跟著「離職放行閘門」(原PART9)開關連動，關閉時一併消失 */}
                   {isPart9 && (
                     <button type="button" onClick={() => setShowFiatModal(true)} className="tech-btn px-5 py-2.5 font-bold bg-violet-500 text-white flex items-center gap-2">
@@ -1879,6 +1976,103 @@
                         )}
                       </div>
                     )}
+                  </div>
+                </React.Fragment>,
+                document.body
+              )}
+
+              {/* v14.4 — IPO 抽籤篩選器浮動視窗：結構比照上方 FIAT 注入視窗（portal + 遮罩 + ✕ + 可拖曳標題列） */}
+              {showIpoModal && ReactDOM.createPortal(
+                <React.Fragment>
+                  <div className="fixed inset-0 z-[999] bg-black/40" onClick={() => setShowIpoModal(false)} />
+                  <div
+                    className="fixed top-1/2 left-1/2 z-[1000] w-[90vw] max-w-sm sm:max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-cyan-500/30 p-6 sm:p-8 max-h-[85vh] overflow-y-auto"
+                    style={{ transform: `translate(calc(-50% + ${ipoDragOffset.dx}px), calc(-50% + ${ipoDragOffset.dy}px))` }}
+                  >
+                    <div ref={ipoHeaderRef} className="flex items-center justify-between mb-4 cursor-grab active:cursor-grabbing select-none">
+                      <span className="text-xl font-black uppercase text-slate-700 dark:text-slate-300 flex items-center gap-3">
+                        <span className="w-2 h-2 rounded-full bg-cyan-500"></span> {t('IPO 抽籤篩選器', 'IPO SCREENER')}
+                      </span>
+                      <button onClick={() => setShowIpoModal(false)} className="text-slate-400 hover:text-rose-500 text-xl leading-none">✕</button>
+                    </div>
+
+                    {/* 申購輸入 — 每次開窗重設，不存檔 */}
+                    <div className="space-y-3 mb-5">
+                      <div>
+                        <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('股票名稱／代號', 'NAME / TICKER')}</label>
+                        <input type="text" name="name" value={ipoInputs.name} onChange={handleIpoInputChange} className="w-full tech-input text-base py-2 px-3" placeholder={t('例：1234 某某', 'e.g. 1234 ACME')} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('申購價', 'SUB PRICE')}</label>
+                          <input type="number" inputMode="decimal" name="subPrice" value={ipoInputs.subPrice} onChange={handleIpoInputChange} className="w-full tech-input text-base py-2 px-3" placeholder="0" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('市價', 'MARKET PRICE')}</label>
+                          <input type="number" inputMode="decimal" name="mktPrice" value={ipoInputs.mktPrice} onChange={handleIpoInputChange} className="w-full tech-input text-base py-2 px-3" placeholder="0" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('申購股數', 'SHARES')}</label>
+                          <input type="number" inputMode="decimal" name="shares" value={ipoInputs.shares} onChange={handleIpoInputChange} className="w-full tech-input text-base py-2 px-3" placeholder="1000" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('預估中籤率 %', 'WIN RATE %')}</label>
+                          <input type="number" inputMode="decimal" name="winRatePct" value={ipoInputs.winRatePct} onChange={handleIpoInputChange} className="w-full tech-input text-base py-2 px-3" placeholder="1" />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 結果區 */}
+                    {!ipoHasPrices ? (
+                      <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 text-center text-sm font-bold text-slate-400">
+                        {t('請輸入申購價與市價', 'Enter subscription price and market price')}
+                      </div>
+                    ) : (
+                      <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 space-y-3">
+                        <div className="flex justify-between items-end gap-2">
+                          <span className="text-xs font-bold uppercase tracking-widest text-slate-400">{t('淨價差', 'NET SPREAD')}</span>
+                          <span className={`text-2xl font-mono font-black ${ipoNetGap >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{formatNumber(ipoNetGap)}</span>
+                        </div>
+                        <div className="text-xs font-mono text-slate-400 -mt-2">
+                          {t(`毛價差 ${formatNumber(ipoGrossGap)}，已扣郵寄費 ${IPO_MAIL_FEE} 與賣出成本 ${formatNumber(ipoSellCost)}`, `Gross ${formatNumber(ipoGrossGap)}, less mail fee ${IPO_MAIL_FEE} and sell cost ${formatNumber(ipoSellCost)}`)}
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm font-mono pt-1 border-t border-slate-200 dark:border-slate-700">
+                          <div className="flex justify-between"><span className="text-slate-400">{t('價差率', 'RATE')}</span><span className="font-bold text-slate-700 dark:text-slate-200">{ipoGapRatePct.toFixed(1)}%</span></div>
+                          <div className="flex justify-between"><span className="text-slate-400">{t('預扣', 'FROZEN')}</span><span className="font-bold text-slate-700 dark:text-slate-200">{formatNumber(ipoFrozenAmount)}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-400">{t('期望值', 'EV')}</span><span className={`font-bold ${ipoExpectedValue > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{formatNumber(ipoExpectedValue)}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-400">{t('可凍結上限', 'FREEZE CAP')}</span><span className={`font-bold ${ipoFreezeCeiling >= 0 ? 'text-slate-700 dark:text-slate-200' : 'text-rose-600 dark:text-rose-400'}`}>{formatNumber(ipoFreezeCeiling)}</span></div>
+                        </div>
+                        <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+                          <div className={`text-xl font-black ${ipoVerdictColor}`}>{ipoVerdict.label}</div>
+                          <div className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-1">{ipoVerdict.reason}</div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 參數設定（可收合，存 localStorage） */}
+                    <div className="mt-5 pt-4 border-t border-slate-200 dark:border-slate-700">
+                      <button type="button" onClick={() => setShowIpoParams(v => !v)} className="w-full flex items-center justify-between text-xs font-bold uppercase tracking-widest text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors">
+                        <span>{t('參數設定', 'PARAMETERS')}</span>
+                        <span>{showIpoParams ? '▲' : '▼'}</span>
+                      </button>
+                      {showIpoParams && (
+                        <div className="grid grid-cols-2 gap-3 mt-3">
+                          {[
+                            { key: 'mustPickGap', label: t('必抽價差門檻', 'MUST-APPLY SPREAD') },
+                            { key: 'canPickGap', label: t('可抽價差門檻', 'OPTIONAL SPREAD') },
+                            { key: 'gapRatePct', label: t('價差率門檻 %', 'SPREAD RATE %') },
+                            { key: 'freezeCap', label: t('可凍結上限', 'FREEZE CAP') },
+                            { key: 'reserveCash', label: t('保留現金', 'RESERVE CASH') },
+                            { key: 'feeDiscount', label: t('手續費折扣', 'FEE DISCOUNT') }
+                          ].map(p => (
+                            <div key={p.key}>
+                              <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{p.label}</label>
+                              <input type="number" inputMode="decimal" name={p.key} value={ipoParams[p.key]} onChange={handleIpoParamChange} className="w-full tech-input text-base py-2 px-3" placeholder={String(IPO_PARAM_DEFAULTS[p.key])} />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </React.Fragment>,
                 document.body
