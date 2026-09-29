@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/29 12:44';
+    const APP_VERSION = '2026/09/29 13:13';
 
     /* ===================================================================
        共用工具
@@ -543,24 +543,37 @@
     };
 
     /* ===================================================================
-       讀取類請求斷線自動重試一次（2026-09-29）
-       - 只在 fetch 本身丟出網路層錯誤（TypeError，如 Failed to fetch）時觸發
-       - 收到任何 HTTP 回應（含 unauthorized/locked）一律不重試，直接照原流程處理
+       讀取類請求失敗自動重試（2026-09-29 建立；2026-09-29 擴大涵蓋範圍）
+       - 可重試：TypeError（網路層斷線）、SyntaxError（回應非 JSON）、
+         HTTP 404/408/429/500/502/503/504（Google 端偶發交付失敗，重送可恢復）
+       - 不可重試：handleAuthStatus 產生的 unauthorized/locked、
+         後端業務錯誤（data.error / success===false）
        - 只套用讀取類 action 白名單，寫入類 action 與 recognizeScreenshot 永不重試
+       - 最多重試 2 次，間隔 1500ms、3000ms（總計最多 3 次嘗試）
     =================================================================== */
     const READ_ONLY_ACTIONS = new Set([
       'getMarketStatus', 'getDashboardData', 'getMarketBenchmarks',
       'getHistoryData', 'getHistoryDataB', 'getCryptoMatrix', 'getCashMoat', 'getLoanRecords'
     ]);
+    const RETRYABLE_HTTP_STATUS = new Set([404, 408, 429, 500, 502, 503, 504]);
+    const isRetryableReadError = (err) => {
+      if (err instanceof TypeError) return true;
+      if (err instanceof SyntaxError) return true;
+      const m = err && typeof err.message === 'string' && /^HTTP (\d+)$/.exec(err.message);
+      return !!(m && RETRYABLE_HTTP_STATUS.has(Number(m[1])));
+    };
+    const READ_RETRY_DELAYS = [1500, 3000];
     const withReadRetry = (actionName, attemptFn) => {
       if (!READ_ONLY_ACTIONS.has(actionName)) return attemptFn();
-      return attemptFn().catch(err => {
-        if (!(err instanceof TypeError)) throw err;
-        console.warn(`[Retry] ${actionName} 第一次失敗，重試中`);
+      const tryOnce = (retryIndex) => attemptFn().catch(err => {
+        if (!isRetryableReadError(err) || retryIndex >= READ_RETRY_DELAYS.length) throw err;
+        const delay = READ_RETRY_DELAYS[retryIndex];
+        console.warn(`[Retry] ${actionName} 第${retryIndex + 1}次重試，原因：${err && err.message ? err.message : err}`);
         return new Promise((resolve, reject) => {
-          setTimeout(() => { attemptFn().then(resolve, reject); }, 1500);
+          setTimeout(() => { tryOnce(retryIndex + 1).then(resolve, reject); }, delay);
         });
       });
+      return tryOnce(0);
     };
 
     /* ===================================================================
@@ -577,7 +590,10 @@
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
             redirect: 'follow',
             body: JSON.stringify({ action: serverFunction, args: args, token: getAccessToken() })
-          }).then(res => res.json()).then(data => {
+          }).then(res => {
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return res.json();
+          }).then(data => {
             if (data && (data.status === 'unauthorized' || data.status === 'locked')) {
               reject(handleAuthStatus(data.status));
               return;
@@ -601,7 +617,10 @@
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
           redirect: 'follow',
           body: JSON.stringify({ action: serverFunction, args: args, token: getAccessToken() })
-        }).then(res => res.json()).then(data => {
+        }).then(res => {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return res.json();
+        }).then(data => {
           if (data && (data.status === 'unauthorized' || data.status === 'locked')) {
             reject(handleAuthStatus(data.status));
             return;
@@ -1261,7 +1280,7 @@
           }
           setLoadError('');
         } catch (err) {
-          setLoadError(err && err.message ? err.message : String(err));
+          setLoadError(`getHistoryData：${err && err.message ? err.message : String(err)}`);
         }
       };
 
@@ -1839,7 +1858,7 @@
 
             {loadError && (
               <div className="flex items-center justify-between gap-4 flex-wrap p-4 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30">
-                <span className="text-rose-500 font-bold">{t('部分資料讀取失敗', 'Some data failed to load')}</span>
+                <span className="text-rose-500 font-bold">{t(`讀取失敗（${loadError}）`, `Load failed (${loadError})`)}</span>
                 <button onClick={fetchHistory} className="px-4 py-1.5 rounded-lg bg-rose-500 hover:bg-rose-600 text-white text-sm font-bold transition-colors">{t('重試', 'Retry')}</button>
               </div>
             )}
@@ -3500,7 +3519,7 @@ Build the wall first. Attack second.`)}
                 })
                 .catch((err) => {
                     console.error("Data Fetch Error:", err);
-                    setLoadError(err && err.message ? err.message : String(err));
+                    setLoadError(`getDashboardData：${err && err.message ? err.message : String(err)}`);
                     setLoading(false);
                 });
 
@@ -4069,7 +4088,7 @@ Build the wall first. Attack second.`)}
 
                 {loadError && (
                     <div className="flex items-center justify-between gap-4 flex-wrap p-4 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30">
-                        <span className="text-rose-500 font-bold">部分資料讀取失敗</span>
+                        <span className="text-rose-500 font-bold">{`讀取失敗（${loadError}）`}</span>
                         <button onClick={loadTerminalData} className="px-4 py-1.5 rounded-lg bg-rose-500 hover:bg-rose-600 text-white text-sm font-bold transition-colors">重試</button>
                     </div>
                 )}
@@ -4983,7 +5002,7 @@ Build the wall first. Attack second.`)}
           setRecords(Array.isArray(res.data) ? res.data : []);
           setLoading(false);
         }).catch(err => {
-          setLoadError(err && err.message ? err.message : String(err));
+          setLoadError(`getLoanRecords：${err && err.message ? err.message : String(err)}`);
           setLoading(false);
         });
       };
@@ -5455,7 +5474,10 @@ Build the wall first. Attack second.`)}
               {loading ? (
                 <div className="text-2xl font-black text-slate-300 dark:text-slate-600">{t('讀取中...', 'Loading...')}</div>
               ) : loadError ? (
-                <div className="text-rose-500 font-bold">{t('讀取失敗：', 'Load failed: ')}{loadError}</div>
+                <div className="flex items-center gap-4 flex-wrap">
+                  <span className="text-rose-500 font-bold">{t(`讀取失敗（${loadError}）`, `Load failed (${loadError})`)}</span>
+                  <button onClick={loadRecords} className="px-4 py-1.5 rounded-lg bg-rose-500 hover:bg-rose-600 text-white text-sm font-bold transition-colors">{t('重試', 'Retry')}</button>
+                </div>
               ) : (
                 <div className="flex items-baseline gap-4 flex-wrap mb-2">
                   <span className="text-4xl sm:text-6xl md:text-7xl lg:text-8xl font-black font-mono tracking-tight glass-text-premium-rose">
