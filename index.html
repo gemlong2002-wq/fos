@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/28 23:45';
+    const APP_VERSION = '2026/09/29 12:44';
 
     /* ===================================================================
        共用工具
@@ -543,11 +543,32 @@
     };
 
     /* ===================================================================
+       讀取類請求斷線自動重試一次（2026-09-29）
+       - 只在 fetch 本身丟出網路層錯誤（TypeError，如 Failed to fetch）時觸發
+       - 收到任何 HTTP 回應（含 unauthorized/locked）一律不重試，直接照原流程處理
+       - 只套用讀取類 action 白名單，寫入類 action 與 recognizeScreenshot 永不重試
+    =================================================================== */
+    const READ_ONLY_ACTIONS = new Set([
+      'getMarketStatus', 'getDashboardData', 'getMarketBenchmarks',
+      'getHistoryData', 'getHistoryDataB', 'getCryptoMatrix', 'getCashMoat', 'getLoanRecords'
+    ]);
+    const withReadRetry = (actionName, attemptFn) => {
+      if (!READ_ONLY_ACTIONS.has(actionName)) return attemptFn();
+      return attemptFn().catch(err => {
+        if (!(err instanceof TypeError)) throw err;
+        console.warn(`[Retry] ${actionName} 第一次失敗，重試中`);
+        return new Promise((resolve, reject) => {
+          setTimeout(() => { attemptFn().then(resolve, reject); }, 1500);
+        });
+      });
+    };
+
+    /* ===================================================================
        FOS (Boss) 後端路由
     =================================================================== */
     const GAS_URL_FOS = 'https://script.google.com/macros/s/AKfycbxWnT6COS2NuL5LmtRZql5UmvEHcFDEtdha2SY5-NI3RBjHxV5xz0oUWlQL1M7P-0GN/exec';
     const gasAPI = (serverFunction, ...args) => {
-      return new Promise((resolve, reject) => {
+      const attempt = () => new Promise((resolve, reject) => {
         if (typeof google !== 'undefined' && google.script && google.script.run) {
           google.script.run.withSuccessHandler((data) => { resetAuthFailCount(); resolve(data); }).withFailureHandler(reject)[serverFunction](...args);
         } else {
@@ -565,6 +586,7 @@
           }).catch(err => reject(err));
         }
       });
+      return withReadRetry(serverFunction, attempt);
     };
 
     /* ===================================================================
@@ -573,7 +595,7 @@
     =================================================================== */
     const GAS_URL_DEBT = 'https://script.google.com/macros/s/AKfycbwqH8ovq8_PgjN20IiAGMq3Y0Hwf_qhAyU2VI594c_RhJlU6A-RZT9z-2GQTsnaF36z/exec';
     const gasDebtAPI = (serverFunction, ...args) => {
-      return new Promise((resolve, reject) => {
+      const attempt = () => new Promise((resolve, reject) => {
         fetch(GAS_URL_DEBT, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -587,6 +609,7 @@
           if (data && data.success === false) { reject(new Error(data.message || 'Debt API error')); } else { resetAuthFailCount(); resolve(data); }
         }).catch(err => reject(err));
       });
+      return withReadRetry(serverFunction, attempt);
     };
 
     /* ===================================================================
@@ -594,29 +617,32 @@
     =================================================================== */
     const API_GATEWAY_AMBER = "https://script.google.com/macros/s/AKfycbzO5re091AtpL1WrsCu2P9X6c09-4yfxxg6lnbWWPMCvPL0IMU-VN7ruVrYqxe72vwmiQ/exec";
 
-    const fetchMatrix = async (action, payload = {}) => {
-      if (typeof google !== 'undefined' && google.script && google.script.run) {
-        return new Promise((resolve, reject) => {
-          google.script.run
-            .withSuccessHandler((res) => { resetAuthFailCount(); try { resolve(JSON.parse(res)); } catch(e) { resolve(res); } })
-            .withFailureHandler(reject)
-            .gasRouter(action, payload);
+    const fetchMatrix = (action, payload = {}) => {
+      const attempt = async () => {
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+          return new Promise((resolve, reject) => {
+            google.script.run
+              .withSuccessHandler((res) => { resetAuthFailCount(); try { resolve(JSON.parse(res)); } catch(e) { resolve(res); } })
+              .withFailureHandler(reject)
+              .gasRouter(action, payload);
+          });
+        }
+        const finalPayload = { ...payload, token: getAccessToken() };
+        const response = await fetch(API_GATEWAY_AMBER, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify({ action, payload: finalPayload }),
+          redirect: "follow"
         });
-      }
-      const finalPayload = { ...payload, token: getAccessToken() };
-      const response = await fetch(API_GATEWAY_AMBER, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action, payload: finalPayload }),
-        redirect: "follow"
-      });
-      if (!response.ok) throw new Error("HTTP " + response.status);
-      const data = await response.json();
-      if (data && (data.status === 'unauthorized' || data.status === 'locked')) {
-        throw handleAuthStatus(data.status);
-      }
-      resetAuthFailCount();
-      return data;
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        const data = await response.json();
+        if (data && (data.status === 'unauthorized' || data.status === 'locked')) {
+          throw handleAuthStatus(data.status);
+        }
+        resetAuthFailCount();
+        return data;
+      };
+      return withReadRetry(action, attempt);
     };
 
     /* ===================================================================
@@ -869,6 +895,7 @@
 
       const t = (zh, en) => isEng ? en : zh;
 
+      const [loadError, setLoadError] = useState('');
       const [inputTab, setInputTab] = useState('A');
       const [formDataB, setFormDataB] = useState({ tsla: '', qld: '', spcx: '', eth: '', btc: '', usdRate: safeGetStorage('fos_usdRate', '32.5') });
 
@@ -1074,7 +1101,7 @@
         fetch(GAS_URL_FOS + '?action=marketIndex')
           .then(res => res.json())
           .then(data => { if (data && data.success) setCrashIndexInput(String(data.index)); })
-          .catch(() => {})
+          .catch(err => console.warn('[MarketIndex] 讀取失敗:', err))
           .finally(() => setIsFetchingIndex(false));
       };
       useEffect(() => { fetchMarketIndex(); }, []);
@@ -1232,7 +1259,10 @@
               };
             });
           }
-        } catch (err) {}
+          setLoadError('');
+        } catch (err) {
+          setLoadError(err && err.message ? err.message : String(err));
+        }
       };
 
       // v14.5 — 完整歷史延遲載入：只在雷達圖選ALL、或展開歷史矩陣某一年份且fullHistory
@@ -1806,6 +1836,13 @@
       return (
         <div className="fos-scope clean-grid-bg min-h-screen text-slate-800 dark:text-slate-200 text-lg md:text-xl pt-8 pb-20 selection:bg-sky-200 dark:selection:bg-sky-900">
           <div className="max-w-[1600px] mx-auto px-4 md:px-10 space-y-10 pb-24 relative tracking-wide">
+
+            {loadError && (
+              <div className="flex items-center justify-between gap-4 flex-wrap p-4 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30">
+                <span className="text-rose-500 font-bold">{t('部分資料讀取失敗', 'Some data failed to load')}</span>
+                <button onClick={fetchHistory} className="px-4 py-1.5 rounded-lg bg-rose-500 hover:bg-rose-600 text-white text-sm font-bold transition-colors">{t('重試', 'Retry')}</button>
+              </div>
+            )}
 
             {/* v13.7 — 改垂直置中在螢幕右側（原本疊在右下角，中段捲動時不順手）；
                 與AppShell的回到頂部按鈕(-translate-y-16)搭配，兩者以螢幕垂直中心對稱排列
@@ -3379,6 +3416,7 @@ Build the wall first. Attack second.`)}
         const [data, setData] = useState([]);
         const [marketData, setMarketData] = useState(null);
         const [loading, setLoading] = useState(true);
+        const [loadError, setLoadError] = useState('');
         const [isSubmitting, setIsSubmitting] = useState(false);
         const [expandedYears, setExpandedYears] = useState({});
         const [visibleRows, setVisibleRows] = useState({});
@@ -3457,10 +3495,12 @@ Build the wall first. Attack second.`)}
                 .then((res) => {
                     const sortedData = [...res].sort((a, b) => String(a.日期).localeCompare(String(b.日期)));
                     setData(sortedData);
+                    setLoadError('');
                     setLoading(false);
                 })
                 .catch((err) => {
                     console.error("Data Fetch Error:", err);
+                    setLoadError(err && err.message ? err.message : String(err));
                     setLoading(false);
                 });
 
@@ -4026,6 +4066,13 @@ Build the wall first. Attack second.`)}
         return (
             <div className="amber-scope p-6 md:p-10 max-w-7xl mx-auto space-y-12 animate-in relative pb-24">
                 <div className="cyber-grid"></div>
+
+                {loadError && (
+                    <div className="flex items-center justify-between gap-4 flex-wrap p-4 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30">
+                        <span className="text-rose-500 font-bold">部分資料讀取失敗</span>
+                        <button onClick={loadTerminalData} className="px-4 py-1.5 rounded-lg bg-rose-500 hover:bg-rose-600 text-white text-sm font-bold transition-colors">重試</button>
+                    </div>
+                )}
 
                 {isFIRE && (
                     <div className="w-full fire-bg p-1 rounded-2xl mb-8 shadow-2xl animate-pulse">
