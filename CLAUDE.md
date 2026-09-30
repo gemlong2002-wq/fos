@@ -6,8 +6,8 @@
 <!-- 2026-09-30 校準：Boss 實跑 /model 與 /effort 截圖核實，見下方 Changelog -->
 - 可用模型（【實】2026-09-30 由 Boss 截圖 /model 選單核實；括號內舊 id 字串畫面未顯示，沿用先前記錄，標【推】）：
   - Sonnet 5（中／預設工作馬，目前使用中；`claude-sonnet-5`【推】）——選單另列 Sonnet 5.5 為可升級選項，本環境預設仍為 Sonnet 5
-  - Opus 5.5（大／難題除錯、架構決策、第二意見；`claude-opus-5-5`【推】）
-  - Fable 5.1（大／另一頂級選項，需 usage credits；`claude-fable-5-1`【推】）
+  - Opus 5.5（大／難題除錯、架構決策、第二意見；`claude-opus-5-5`【推】；大級預設一律用此，非 Fable 5.1）
+  - Fable 5.1（大／另一頂級選項，需額外 usage credits；`claude-fable-5-1`【推】；**未經 Boss 當次明確同意不得指定**，大級預設一律用 Opus 5.5）
   - Haiku 4.5（小／機械批次；`claude-haiku-4-5-20251001`【推】）
   - 選單另有「More models」子選單未展開，內容未知
 - effort 參數：【實】2026-09-30 Boss 截圖 /effort 核實，本環境**有**此參數（UI 為 Low↔Smarter 滑桿），先前版本記載為不支援，此為更新後的正確狀態；目前所在 session（Sonnet 5）預設值為 Low（標示 Recommended）。難題除錯、架構決策、第二意見（對應大級 Opus 5.5）調 high；機械批次（對應小級）可用 low；Opus 5.5 本身的預設值未實測（換模型會導致操作走位，Boss 已避免切換），沿用同一套「Low 為推薦預設」邏輯類推，標【推】。
@@ -86,3 +86,4 @@
 
 ## Changelog
 2026-09-30 Opus 5.5 校準模型表與 effort 參數（Opus 5.5 上線後更新）
+2026-09-30 補註 Fable 5.1 額度限制
