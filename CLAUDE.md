@@ -3,12 +3,14 @@
 ## 環境事實
 <!-- 安裝時由第一個 session 依 00-INSTALL.md 校準填入，禁止憑印象填 -->
 <!-- 校準時間：2026-07-06｜校準方式：見 ops/00-INSTALL.md 步驟 2 -->
-- 可用模型：
-  - `claude-sonnet-5`（Sonnet 5，中／預設工作馬）
-  - `claude-opus-4-8`（Opus 4.8，大／難題與第二意見）
-  - `claude-haiku-4-5-20251001`（Haiku 4.5，小／機械批次）
-  - `claude-fable-5`（Fable 5，大／最強家族之一）
-- effort/thinking 參數：本環境無此參數，派工時忽略相關指示
+<!-- 2026-09-30 校準：Boss 實跑 /model 與 /effort 截圖核實，見下方 Changelog -->
+- 可用模型（【實】2026-09-30 由 Boss 截圖 /model 選單核實；括號內舊 id 字串畫面未顯示，沿用先前記錄，標【推】）：
+  - Sonnet 5（中／預設工作馬，目前使用中；`claude-sonnet-5`【推】）——選單另列 Sonnet 5.5 為可升級選項，本環境預設仍為 Sonnet 5
+  - Opus 5.5（大／難題除錯、架構決策、第二意見；`claude-opus-5-5`【推】）
+  - Fable 5.1（大／另一頂級選項，需 usage credits；`claude-fable-5-1`【推】）
+  - Haiku 4.5（小／機械批次；`claude-haiku-4-5-20251001`【推】）
+  - 選單另有「More models」子選單未展開，內容未知
+- effort 參數：【實】2026-09-30 Boss 截圖 /effort 核實，本環境**有**此參數（UI 為 Low↔Smarter 滑桿），先前版本記載為不支援，此為更新後的正確狀態；目前所在 session（Sonnet 5）預設值為 Low（標示 Recommended）。難題除錯、架構決策、第二意見（對應大級 Opus 5.5）調 high；機械批次（對應小級）可用 low；Opus 5.5 本身的預設值未實測（換模型會導致操作走位，Boss 已避免切換），沿用同一套「Low 為推薦預設」邏輯類推，標【推】。
 - Subagent 機制：Agent 工具，`subagent_type` 參數指定類型，可用：`claude` / `general-purpose` / `Explore` / `Plan` / `claude-code-guide` / `statusline-setup`
 - 作業檔案根目錄：`.claude/ops/`
 
@@ -81,3 +83,6 @@
 
 ## 教訓登記
 踩坑後，一行式追加到 `ops/lessons.md`，格式見 `ops/F-maintenance.md`。開始高風險任務前先掃該檔標題。
+
+## Changelog
+2026-09-30 Opus 5.5 校準模型表與 effort 參數（Opus 5.5 上線後更新）

@@ -28,6 +28,8 @@
 
 - 使用者的 5 個開場問題（見對話）尚未回覆。回覆後應做：A 診斷比對實際踩坑升【實】；C 的模型表填真實清單；B 用真實 CLAUDE.md 執行遷移。
 - 收尾第 1 步（fresh-context 對抗審查）在建檔環境無 subagent 可用，只做了自審。**安裝後第一個 session 必須用真 subagent 補跑一次**，程序在 `00-INSTALL.md`。
+  - 【2026-09-30 補記】已於 2026-07-13 完成（見 `C-dispatch.md` changelog：Sonnet 5 依對抗審查步驟二拍板修正 Explore「唯讀」錯誤陳述），無須重跑。
 
 ## Changelog
 2026-07-06 建立/校準（安裝 session）
+2026-09-30 Opus 5.5 校準模型表與 effort 參數（Opus 5.5 上線後更新）；補記交接事項1已於2026-07-13完成
