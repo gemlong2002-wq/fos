@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/09/29 13:13';
+    const APP_VERSION = '2026/10/01 12:23';
 
     /* ===================================================================
        共用工具
@@ -421,12 +421,12 @@
     /* ===================================================================
        現金護城河 CASH MOAT — 資料持久化（v2: GAS 優先 + localStorage 雙寫/fallback）
        單一 JSON 物件 key（比照排序系統 CARD_ORDER_KEYS 一次序列化整包的作法）。
-       外部呼叫端只透過 loadCashMoat()/saveCashMoat()/fetchCashMoatFromGAS() 存取。
+       外部呼叫端只透過 loadCashMoat()/saveCashMoat()/parseCashMoatResponse() 存取。
        - loadCashMoat()：同步，只讀 localStorage，供 useState 初始值使用（避免白畫面）
-       - fetchCashMoatFromGAS()：非同步，掛載後由 useEffect 呼叫，成功才覆蓋畫面
+       - parseCashMoatResponse()：解析 getCashMoat 回應，掛載後由 FosTerminal 的讀取快取流程呼叫，成功才覆蓋畫面
        - saveCashMoat()：本地永遠先寫，同時非同步雙寫 GAS，GAS 失敗不影響本地
-       GAS 端尚未部署 getCashMoat/saveCashMoat 這兩個 action 之前，fetchCashMoatFromGAS
-       會 reject、saveCashMoat 的 GAS 呼叫會被吃掉，畫面照常用 localStorage 值運作。
+       GAS 端尚未部署 getCashMoat/saveCashMoat 這兩個 action 之前，parseCashMoatResponse
+       會 throw、saveCashMoat 的 GAS 呼叫會被吃掉，畫面照常用 localStorage 值運作。
     =================================================================== */
     const CASH_MOAT_KEY = 'fos:cashMoat';
     // v14.1 — 現金護城河簡化：拿掉MONTHLY_DEBT×MONTHS公式，改成手動「目標水位」(targetAmount)。
@@ -495,8 +495,7 @@
         }).catch(() => {});
       }, 600);
     }
-    async function fetchCashMoatFromGAS() {
-      const res = await gasAPI('getCashMoat');
+    function parseCashMoatResponse(res) {
       if (!res || res.success !== true) throw new Error('CashMoat GAS response invalid');
       // targetAmount 從既有monthlyDebt欄位位置讀回來(對稱於saveCashMoat的存法)
       return {
@@ -526,6 +525,7 @@
     const resetAuthFailCount = () => { authFailCount = 0; };
     // 收到 unauthorized/locked 狀態時呼叫；回傳應該拿去 reject/throw 的 Error
     const handleAuthStatus = (status) => {
+      clearAllReadCache();
       if (status === 'locked') {
         authFailCount = 0;
         sessionStorage.removeItem(ACCESS_TOKEN_KEY);
@@ -541,6 +541,131 @@
       }
       return new Error('ACCESS_UNAUTHORIZED');
     };
+
+    /* ===================================================================
+       讀取快取（stale-while-revalidate，2026-10-01）
+       - 只存在本機 localStorage，每台裝置各自一份，絕不送往任何後端
+       - key：fos_cache_v1_<action>[_<參數>]，值：{ ts, data: 原始回應 }
+       - 只在已登入（有 token、三個 Terminal 已掛載）後才讀；unauthorized/locked 時全部清除
+       - 某個 key 本次頁面已拿到過最新資料後，後續重新載入（例如寫入後的 reload）不再顯示快取，
+         避免剛寫入的資料被舊快取蓋回去
+    =================================================================== */
+    const READ_CACHE_PREFIX = 'fos_cache_v1_';
+    const READ_CACHE_STALE_MS = 24 * 60 * 60 * 1000;
+    const readCacheFreshKeys = new Set();
+    const readCacheGet = (key) => {
+      if (!getAccessToken()) return null;
+      try {
+        const raw = localStorage.getItem(READ_CACHE_PREFIX + key);
+        if (!raw) return null;
+        const obj = JSON.parse(raw);
+        return obj && typeof obj.ts === 'number' && 'data' in obj ? obj : null;
+      } catch (e) {
+        return null;
+      }
+    };
+    const readCacheSet = (key, data) => {
+      try {
+        localStorage.setItem(READ_CACHE_PREFIX + key, JSON.stringify({ ts: Date.now(), data }));
+      } catch (e) {
+        console.warn('[Cache] 寫入失敗，略過:', key, e && e.message);
+      }
+    };
+    const clearAllReadCache = () => {
+      readCacheFreshKeys.clear();
+      try {
+        const keys = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(READ_CACHE_PREFIX)) keys.push(k);
+        }
+        keys.forEach(k => localStorage.removeItem(k));
+      } catch (e) {
+        console.warn('[Cache] 清除失敗:', e && e.message);
+      }
+    };
+    const formatCacheTime = (ts) => {
+      const d = new Date(ts);
+      const p = (n) => String(n).padStart(2, '0');
+      return `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    };
+    // 先把快取原始回應餵進同一個 apply（與正式回應共用處理邏輯），再照常發正式請求；
+    // 失敗且有顯示快取時在 err 標記 cacheShown，讓呼叫端不要改顯示「讀取失敗」
+    const loadWithReadCache = (key, fetcher, apply, isValid, cacheCtl) => {
+      let shown = false;
+      if (!readCacheFreshKeys.has(key)) {
+        const cached = readCacheGet(key);
+        if (cached) {
+          try {
+            apply(cached.data, true);
+            shown = true;
+            cacheCtl.mark(key, cached.ts);
+          } catch (e) {
+            console.warn('[Cache] 快取內容無法套用，略過:', key, e && e.message);
+          }
+        }
+      }
+      return fetcher()
+        .then(res => {
+          apply(res, false);
+          if (isValid(res)) readCacheSet(key, res);
+          readCacheFreshKeys.add(key);
+          cacheCtl.clear(key);
+          return res;
+        })
+        .catch(err => {
+          if (shown) {
+            cacheCtl.fail(key);
+            if (err && typeof err === 'object') err.cacheShown = true;
+          }
+          throw err;
+        });
+    };
+    const useReadCacheStatus = () => {
+      const [entries, setEntries] = useState({});
+      const ctl = useMemo(() => ({
+        mark: (key, ts) => setEntries(p => ({ ...p, [key]: { ts, failed: false } })),
+        clear: (key) => setEntries(p => {
+          if (!(key in p)) return p;
+          const n = { ...p };
+          delete n[key];
+          return n;
+        }),
+        fail: (key) => setEntries(p => (key in p ? { ...p, [key]: { ...p[key], failed: true } } : p))
+      }), []);
+      const keys = Object.keys(entries);
+      return {
+        ctl,
+        showing: keys.length > 0,
+        failed: keys.some(k => entries[k].failed),
+        oldestTs: keys.length > 0 ? Math.min(...keys.map(k => entries[k].ts)) : null
+      };
+    };
+    const ReadCacheBanner = ({ status, onRetry, isEng }) => {
+      if (!status.showing) return null;
+      const time = formatCacheTime(status.oldestTs);
+      const stale = Date.now() - status.oldestTs > READ_CACHE_STALE_MS;
+      const tone = status.failed
+        ? 'border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30 text-rose-500'
+        : stale
+          ? 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400'
+          : 'border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400';
+      const msg = status.failed
+        ? (isEng ? `Unable to update — showing data from ${time}` : `無法更新，目前顯示 ${time} 的資料`)
+        : (isEng ? `Showing data from ${time}, updating…` : `顯示 ${time} 的資料，更新中…`);
+      return (
+        <div className={`flex items-center justify-between gap-4 flex-wrap p-4 rounded-xl border ${tone}`}>
+          <div className="flex flex-col gap-1 min-w-0">
+            <span className="font-bold break-words">{msg}</span>
+            <span className="text-xs font-bold tracking-widest opacity-80">{isEng ? 'Writes paused: waiting for latest data' : '寫入功能暫停：等待最新資料'}</span>
+          </div>
+          {status.failed && (
+            <button onClick={onRetry} className="px-4 py-1.5 rounded-lg bg-rose-500 hover:bg-rose-600 text-white text-sm font-bold transition-colors">{isEng ? 'Retry' : '重試'}</button>
+          )}
+        </div>
+      );
+    };
+    const WRITE_LOCK_HINT = '等待最新資料';
 
     /* ===================================================================
        讀取類請求失敗自動重試（2026-09-29 建立；2026-09-29 擴大涵蓋範圍）
@@ -915,6 +1040,9 @@
       const t = (zh, en) => isEng ? en : zh;
 
       const [loadError, setLoadError] = useState('');
+      const cacheStatus = useReadCacheStatus();
+      const writeLocked = cacheStatus.showing;
+      const historyCacheFilledRef = useRef({});
       const [inputTab, setInputTab] = useState('A');
       const [formDataB, setFormDataB] = useState({ tsla: '', qld: '', spcx: '', eth: '', btc: '', usdRate: safeGetStorage('fos_usdRate', '32.5') });
 
@@ -1046,18 +1174,21 @@
       // 成功才覆蓋；GAS 還沒部署新 action 或網路失敗都會被吃掉，維持目前畫面上的值，不 crash、不彈窗。
       // v14.1 — targetAmount 現在借用既有monthlyDebt欄位位置跨裝置同步，GAS回應成功時cash跟
       // targetAmount都採信、整包覆蓋本地畫面值(換裝置/清localStorage後也能讀回後端存的目標水位)。
-      useEffect(() => {
-        let cancelled = false;
-        fetchCashMoatFromGAS().then(d => {
-          if (cancelled) return;
+      const cashMoatMountedRef = useRef(true);
+      useEffect(() => () => { cashMoatMountedRef.current = false; }, []);
+      const fetchCashMoat = () => {
+        loadWithReadCache('getCashMoat', () => gasAPI('getCashMoat'), (raw) => {
+          const d = parseCashMoatResponse(raw);
+          if (!cashMoatMountedRef.current) return;
           setCashMoatInputs({ cash: String(d.cash), targetAmount: String(d.targetAmount) });
           persistCashMoatLocal(d);
-        }).catch(err => {
+        }, (res) => !!res && res.success === true, cacheStatus.ctl).catch(err => {
           console.warn('[CashMoat] GAS 讀取失敗，維持本地快取值:', err && err.message);
         });
-        return () => { cancelled = true; };
-      }, []);
+      };
+      useEffect(() => { fetchCashMoat(); }, []);
       const handleCashMoatChange = (e) => {
+        if (writeLocked) return;
         const { name, value } = e.target;
         setCashMoatInputs(p => {
           const next = { ...p, [name]: value };
@@ -1181,8 +1312,9 @@
 
       const fetchCryptoConfig = async () => {
         try {
-          const res = await gasAPI('getCryptoMatrix');
-          if (res.success) setFormData(p => ({ ...p, p2Usdt: res.p2Usdt, btcAth: res.btcAth, ethAth: res.ethAth }));
+          await loadWithReadCache('getCryptoMatrix', () => gasAPI('getCryptoMatrix'), (res) => {
+            if (res.success) setFormData(p => ({ ...p, p2Usdt: res.p2Usdt, btcAth: res.btcAth, ethAth: res.ethAth }));
+          }, (res) => !!res && !!res.success, cacheStatus.ctl);
         } catch (e) {}
       };
 
@@ -1260,27 +1392,43 @@
 
       // v14.5 — 首頁快速載入：只抓近60筆(涵蓋雷達圖10/30/60三個選項需求)，不動後端，
       // getHistoryData(limit)本來就支援這個參數，前端過去沒傳
+      // 快取填入的欄位值記在 historyCacheFilledRef；最新資料回來時，若該欄位仍是快取填入的原值
+      // (使用者沒動過)，視為空白、讓最新資料覆蓋，避免舊快取值卡住欄位
+      const applyHistoryResponse = (res, fromCache) => {
+        if (res.success && res.data.length > 0) {
+          setHistory(res.data);
+          const latest = res.data[0];
+          setFormData(p => {
+            const filled = historyCacheFilledRef.current;
+            const own = (f) => (filled[f] !== undefined && p[f] === filled[f]) ? '' : p[f];
+            let new675 = own('p1_00675L');
+            if (!own('p1_00675L') && !p.p1_00631L && latest.p1Value) new675 = latest.p1Value;
+            const next = {
+              ...p,
+              lAmount: own('lAmount') || latest.lAmount,
+              c0050: own('c0050') || latest.c0050,
+              c00733: own('c00733') || latest.c00733,
+              p1_00675L: new675
+            };
+            const nextFilled = {};
+            if (fromCache) {
+              ['lAmount', 'c0050', 'c00733', 'p1_00675L'].forEach(f => {
+                if (!own(f) && next[f] !== p[f]) nextFilled[f] = next[f];
+                else if (!own(f) && filled[f] !== undefined) nextFilled[f] = filled[f];
+              });
+            }
+            historyCacheFilledRef.current = nextFilled;
+            return next;
+          });
+        }
+      };
       const fetchHistory = async () => {
         try {
-          const res = await gasAPI('getHistoryData', 60);
-          if (res.success && res.data.length > 0) {
-            setHistory(res.data);
-            const latest = res.data[0];
-            setFormData(p => {
-              let new675 = p.p1_00675L;
-              if (!p.p1_00675L && !p.p1_00631L && latest.p1Value) new675 = latest.p1Value;
-              return {
-                ...p,
-                lAmount: p.lAmount || latest.lAmount,
-                c0050: p.c0050 || latest.c0050,
-                c00733: p.c00733 || latest.c00733,
-                p1_00675L: new675
-              };
-            });
-          }
+          await loadWithReadCache('getHistoryData_60', () => gasAPI('getHistoryData', 60), applyHistoryResponse,
+            (res) => !!res && !!res.success && Array.isArray(res.data), cacheStatus.ctl);
           setLoadError('');
         } catch (err) {
-          setLoadError(`getHistoryData：${err && err.message ? err.message : String(err)}`);
+          if (!(err && err.cacheShown)) setLoadError(`getHistoryData：${err && err.message ? err.message : String(err)}`);
         }
       };
 
@@ -1303,12 +1451,14 @@
 
       const fetchHistoryB = async () => {
         try {
-          const res = await gasAPI('getHistoryDataB');
-          if (res.success && res.data && Object.keys(res.data).length > 0) {
-            setFormDataB(p => ({ ...p, tsla: res.data.tsla ?? p.tsla, qld: res.data.qld ?? p.qld, spcx: res.data.spcx ?? p.spcx, eth: res.data.eth ?? p.eth, btc: res.data.btc ?? p.btc }));
-          }
+          await loadWithReadCache('getHistoryDataB', () => gasAPI('getHistoryDataB'), (res) => {
+            if (res.success && res.data && Object.keys(res.data).length > 0) {
+              setFormDataB(p => ({ ...p, tsla: res.data.tsla ?? p.tsla, qld: res.data.qld ?? p.qld, spcx: res.data.spcx ?? p.spcx, eth: res.data.eth ?? p.eth, btc: res.data.btc ?? p.btc }));
+            }
+          }, (res) => !!res && !!res.success, cacheStatus.ctl);
         } catch (err) {}
       };
+      const reloadFosData = () => { fetchHistory(); fetchHistoryB(); fetchCryptoConfig(); fetchCashMoat(); };
 
       const handleInputChange = (e) => {
         const { name, value } = e.target;
@@ -1385,6 +1535,7 @@
       };
 
       const handleSyncCrypto = async () => {
+        if (writeLocked) return;
         setIsSyncing(true); setTerminalMsg('>> SYNCING DATA...');
         try {
           const res = await gasAPI('saveCryptoMatrix', formData.p2Usdt, formData.btcAth, formData.ethAth);
@@ -1464,7 +1615,7 @@
       const splitResult = fixedRatioSplit(stockInject, mrZoneInfo.zone);
 
       const handleSave = async (e) => {
-        e.preventDefault(); if (L <= 0 || C <= 0) return;
+        e.preventDefault(); if (writeLocked || L <= 0 || C <= 0) return;
         const previousHistory = [...history];
         const timezoneOffset = (new Date()).getTimezoneOffset() * 60000;
         const localISOTime = (new Date(Date.now() - timezoneOffset)).toISOString().replace('T', ' ').slice(0, 19).replace(/-/g, '/');
@@ -1476,13 +1627,13 @@
       };
 
       const handleSaveB = async (e) => {
-        e.preventDefault(); setTerminalMsg('>> SYNCING B ACCOUNT...');
+        e.preventDefault(); if (writeLocked) return; setTerminalMsg('>> SYNCING B ACCOUNT...');
         try { const res = await gasAPI('saveFOSDataB', formDataB); if (res.success) { fetchHistoryB(); setTerminalMsg('>> DONE.'); } else throw new Error(); }
         catch (err) { setTerminalMsg('>> FAILED.'); }
       };
 
       const handleInjectAll = async () => {
-        if (isInjecting) return;
+        if (isInjecting || writeLocked) return;
         setIsInjecting(true);
         setTerminalMsg('>> INJECTING A + B...');
         try {
@@ -1506,6 +1657,7 @@
       };
 
       const handleDelete = async (dateId) => {
+        if (writeLocked) return;
         if (!window.confirm(`ERASE: ${dateId}?`)) return;
         const previousHistory = [...history]; setHistory(history.filter(item => item.dateId !== dateId)); setTerminalMsg('>> DELETING...');
         try { const res = await gasAPI('deleteFOSData', dateId); if (res.success) setTerminalMsg('>> DONE.'); else throw new Error(); }
@@ -1855,6 +2007,8 @@
       return (
         <div className="fos-scope clean-grid-bg min-h-screen text-slate-800 dark:text-slate-200 text-lg md:text-xl pt-8 pb-20 selection:bg-sky-200 dark:selection:bg-sky-900">
           <div className="max-w-[1600px] mx-auto px-4 md:px-10 space-y-10 pb-24 relative tracking-wide">
+
+            <ReadCacheBanner status={cacheStatus} onRetry={reloadFosData} isEng={isEng} />
 
             {loadError && (
               <div className="flex items-center justify-between gap-4 flex-wrap p-4 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30">
@@ -2233,7 +2387,7 @@
                       </div>
                     </div>
                   )}
-                  <button type="button" onClick={handleInjectAll} disabled={isInjecting} className={`w-full tech-btn text-white text-xl py-4 mt-6 shadow-lg ${isInjecting ? 'bg-slate-400 cursor-wait' : 'bg-gradient-to-r from-sky-600 to-violet-600 hover:from-sky-500 hover:to-violet-500'}`}>{isInjecting ? 'INJECTING...' : 'INJECT A + B'}</button>
+                  <button type="button" onClick={handleInjectAll} disabled={isInjecting || writeLocked} className={`w-full tech-btn text-white text-xl py-4 mt-6 shadow-lg ${isInjecting ? 'bg-slate-400 cursor-wait' : writeLocked ? 'bg-slate-400 cursor-not-allowed' : 'bg-gradient-to-r from-sky-600 to-violet-600 hover:from-sky-500 hover:to-violet-500'}`}>{isInjecting ? 'INJECTING...' : writeLocked ? WRITE_LOCK_HINT : 'INJECT A + B'}</button>
                 </div>
               );
 
@@ -2672,7 +2826,7 @@ Ask this box before you withdraw.`
                       {cardTitles.crypto}
                     </h2>
                     <div className="flex items-center gap-2">
-                      <button onClick={handleSyncCrypto} className="tech-btn bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-300 hover:text-violet-500 dark:hover:text-violet-400 px-4 py-1.5 text-sm shadow-sm">SYNC P2/ATH</button>
+                      <button onClick={handleSyncCrypto} disabled={writeLocked} title={writeLocked ? WRITE_LOCK_HINT : undefined} className="tech-btn bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-300 hover:text-violet-500 dark:hover:text-violet-400 px-4 py-1.5 text-sm shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">{writeLocked ? WRITE_LOCK_HINT : 'SYNC P2/ATH'}</button>
                       <button onClick={() => setShowCryptoDetail(!showCryptoDetail)} className={`px-4 py-1.5 rounded-full text-sm font-black border cursor-pointer transition-all hover:scale-105 ${consensusTarget === 'ETH' ? 'bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 border-sky-200 dark:border-sky-800' : ratioVal > 0.060 ? 'bg-yellow-50 dark:bg-yellow-950/40 text-yellow-600 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800' : ratioVal > 0 && ratioVal < 0.020 ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700'}`}>
                         {consensusTarget} {showCryptoDetail ? '◀' : '▶'}
                       </button>
@@ -2828,7 +2982,7 @@ Ask this box before you withdraw.`
                                       <td className="p-4 text-right text-emerald-500">{item.nominalMR}%</td>
                                       <td className="p-4 text-right text-violet-500 dark:text-violet-400">{item.p1Ratio}%</td>
                                       <td className="p-4 text-center">
-                                        <button onClick={() => handleDelete(item.dateId)} className="text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 px-3 py-1 rounded-full transition-colors text-xs font-bold">DEL</button>
+                                        <button onClick={() => handleDelete(item.dateId)} disabled={writeLocked} title={writeLocked ? WRITE_LOCK_HINT : undefined} className="text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 px-3 py-1 rounded-full transition-colors text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed">DEL</button>
                                       </td>
                                     </tr>
                                   ))}
@@ -2890,11 +3044,11 @@ Ask this box before you withdraw.`
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                     <div>
                       <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">CASH (TWD)</label>
-                      <input type="number" name="cash" value={cashMoatInputs.cash} onChange={handleCashMoatChange} className="w-full tech-input text-lg py-2 px-3" />
+                      <input type="number" name="cash" value={cashMoatInputs.cash} onChange={handleCashMoatChange} disabled={writeLocked} title={writeLocked ? WRITE_LOCK_HINT : undefined} className="w-full tech-input text-lg py-2 px-3 disabled:opacity-50 disabled:cursor-not-allowed" />
                     </div>
                     <div>
                       <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('目標水位 (TWD)', 'TARGET (TWD)')}</label>
-                      <input type="number" name="targetAmount" value={cashMoatInputs.targetAmount} onChange={handleCashMoatChange} className="w-full tech-input text-lg py-2 px-3" />
+                      <input type="number" name="targetAmount" value={cashMoatInputs.targetAmount} onChange={handleCashMoatChange} disabled={writeLocked} title={writeLocked ? WRITE_LOCK_HINT : undefined} className="w-full tech-input text-lg py-2 px-3 disabled:opacity-50 disabled:cursor-not-allowed" />
                     </div>
                     <div>
                       <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('佔總資產% (自動)', '% OF ASSETS (AUTO)')}</label>
@@ -3436,6 +3590,8 @@ Build the wall first. Attack second.`)}
         const [marketData, setMarketData] = useState(null);
         const [loading, setLoading] = useState(true);
         const [loadError, setLoadError] = useState('');
+        const cacheStatus = useReadCacheStatus();
+        const writeLocked = cacheStatus.showing;
         const [isSubmitting, setIsSubmitting] = useState(false);
         const [expandedYears, setExpandedYears] = useState({});
         const [visibleRows, setVisibleRows] = useState({});
@@ -3510,25 +3666,26 @@ Build the wall first. Attack second.`)}
         }, [assetPrefill]);
 
         const loadTerminalData = () => {
-            fetchMatrix('getDashboardData')
-                .then((res) => {
+            loadWithReadCache('getDashboardData', () => fetchMatrix('getDashboardData'), (res) => {
                     const sortedData = [...res].sort((a, b) => String(a.日期).localeCompare(String(b.日期)));
                     setData(sortedData);
-                    setLoadError('');
                     setLoading(false);
-                })
+                }, (res) => Array.isArray(res), cacheStatus.ctl)
+                .then(() => { setLoadError(''); })
                 .catch((err) => {
                     console.error("Data Fetch Error:", err);
-                    setLoadError(`getDashboardData：${err && err.message ? err.message : String(err)}`);
+                    if (!(err && err.cacheShown)) setLoadError(`getDashboardData：${err && err.message ? err.message : String(err)}`);
                     setLoading(false);
                 });
 
-            fetchMatrix('getMarketStatus')
-                .then((res) => { if(res.status === 'success') setMarketData(res); })
+            loadWithReadCache('getMarketStatus', () => fetchMatrix('getMarketStatus'),
+                (res) => { if(res.status === 'success') setMarketData(res); },
+                (res) => !!res && res.status === 'success', cacheStatus.ctl)
                 .catch(console.error);
 
-            fetchMatrix('getMarketBenchmarks')
-                .then((res) => { if(res.status === 'success') setBenchmarkData(res); })
+            loadWithReadCache('getMarketBenchmarks', () => fetchMatrix('getMarketBenchmarks'),
+                (res) => { if(res.status === 'success') setBenchmarkData(res); },
+                (res) => !!res && res.status === 'success', cacheStatus.ctl)
                 .catch(console.error);
         };
 
@@ -3783,6 +3940,7 @@ Build the wall first. Attack second.`)}
 
         const handleSubmit = async (e) => {
             e.preventDefault();
+            if (writeLocked) return;
             setIsSubmitting(true);
             const tw = Number(formData.twStock || 0);
             const usVal = Number(formData.usStock || 0);
@@ -3867,6 +4025,7 @@ Build the wall first. Attack second.`)}
         };
 
         const handleDelete = (rowIndex) => {
+            if (writeLocked) return;
             if(window.confirm("CONFIRM DELETE?")) {
                 const previousData = [...data];
                 setData(prev => prev.filter(item => item._rowIndex !== rowIndex));
@@ -3888,10 +4047,11 @@ Build the wall first. Attack second.`)}
             }
         };
 
-        const startEdit = (item) => { setEditingRow(item._rowIndex); setEditFormData({ date: formatYMD(item.日期).replace(/\//g, ''), twStock: item.台股, usStock: item.美股, crypto: item.加密貨幣, note: item.備註 || '' }); };
+        const startEdit = (item) => { if (writeLocked) return; setEditingRow(item._rowIndex); setEditFormData({ date: formatYMD(item.日期).replace(/\//g, ''), twStock: item.台股, usStock: item.美股, crypto: item.加密貨幣, note: item.備註 || '' }); };
         const handleEditChange = (e) => setEditFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
 
         const saveEdit = (rowIndex) => {
+            if (writeLocked) return;
             const total = Math.round(Number(editFormData.twStock || 0) + Number(editFormData.usStock || 0) + Number(editFormData.crypto || 0));
             const previousData = [...data];
             setData(prev => prev.map(item => item._rowIndex === rowIndex ? { ...item, 日期: editFormData.date, 台股: editFormData.twStock, 美股: editFormData.usStock, 加密貨幣: editFormData.crypto, 總資產: total, 備註: editFormData.note } : item).sort((a, b) => String(a.日期).localeCompare(String(b.日期))));
@@ -4085,6 +4245,8 @@ Build the wall first. Attack second.`)}
         return (
             <div className="amber-scope p-6 md:p-10 max-w-7xl mx-auto space-y-12 animate-in relative pb-24">
                 <div className="cyber-grid"></div>
+
+                <ReadCacheBanner status={cacheStatus} onRetry={loadTerminalData} isEng={false} />
 
                 {loadError && (
                     <div className="flex items-center justify-between gap-4 flex-wrap p-4 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30">
@@ -4561,7 +4723,7 @@ Build the wall first. Attack second.`)}
 
                             <div><label className="block text-lg font-mono text-slate-600 dark:text-amber-700 mb-2 font-bold vibe-hover-text">SYS_NOTE</label><input type="text" name="note" value={formData.note} onChange={handleInputChange} className="w-full px-5 py-4 text-xl rounded-lg font-bold shadow-sm" /></div>
                             {!benchmarkData && <div className="mt-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-center"><span className="text-xs font-bold text-amber-600 dark:text-amber-400">⚠️ 大盤資料未載入，本筆不含 vs大盤比較</span></div>}
-                            <button type="submit" disabled={isSubmitting} className="btn-glitch w-full mt-4 py-5 rounded-xl bg-slate-800 dark:bg-amber-600 hover:bg-slate-700 dark:hover:bg-amber-500 text-white font-mono text-2xl font-bold transition-all disabled:opacity-50 tracking-widest shadow-lg">{isSubmitting ? <span>COMMITTING...</span> : <span>COMMIT DATA</span>}</button>
+                            <button type="submit" disabled={isSubmitting || writeLocked} className="btn-glitch w-full mt-4 py-5 rounded-xl bg-slate-800 dark:bg-amber-600 hover:bg-slate-700 dark:hover:bg-amber-500 text-white font-mono text-2xl font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed tracking-widest shadow-lg">{isSubmitting ? <span>COMMITTING...</span> : writeLocked ? <span>{WRITE_LOCK_HINT}</span> : <span>COMMIT DATA</span>}</button>
                         </form>
                     </div>
 
@@ -4745,7 +4907,7 @@ Build the wall first. Attack second.`)}
                                                         return (
                                                             <tr key={item._rowIndex} className={"table-row-vibe border-b border-slate-100 dark:border-amber-500/10 " + (isEditing ? "bg-slate-100 dark:bg-amber-900/30" : "")}>
                                                                 {isEditing ? (
-                                                                    <React.Fragment><td className="p-4"><input name="date" value={editFormData.date} onChange={handleEditChange} className="w-40 px-4 py-3 text-xl rounded font-mono font-bold border-slate-300" /></td><td className="p-4"><input type="number" name="twStock" value={editFormData.twStock} onChange={handleEditChange} className="w-40 md:w-48 px-4 py-3 text-xl rounded font-mono font-bold border-slate-300" /></td><td className="p-4"><input type="number" name="usStock" value={editFormData.usStock} onChange={handleEditChange} className="w-40 md:w-48 px-4 py-3 text-xl rounded font-mono font-bold border-slate-300" /></td><td className="p-4"><input type="number" name="crypto" value={editFormData.crypto} onChange={handleEditChange} className="w-40 md:w-48 px-4 py-3 text-xl rounded font-mono font-bold border-slate-300" /></td><td className="p-4 text-xl text-slate-400 font-mono font-bold">--</td><td className="p-4 text-xl text-slate-400 font-mono font-bold">--</td><td className="p-4 text-xl text-slate-400 font-mono font-bold">--</td><td className="p-4 space-x-4"><button onClick={() => saveEdit(item._rowIndex)} className="text-xl px-4 py-2 bg-slate-800 text-white rounded font-mono font-bold hover:bg-slate-700 transition-colors shadow">SAVE</button><button onClick={() => setEditingRow(null)} className="text-xl px-4 py-2 border-2 border-slate-300 text-slate-600 rounded font-mono font-bold hover:bg-slate-100 transition-colors">CANCEL</button></td></React.Fragment>
+                                                                    <React.Fragment><td className="p-4"><input name="date" value={editFormData.date} onChange={handleEditChange} className="w-40 px-4 py-3 text-xl rounded font-mono font-bold border-slate-300" /></td><td className="p-4"><input type="number" name="twStock" value={editFormData.twStock} onChange={handleEditChange} className="w-40 md:w-48 px-4 py-3 text-xl rounded font-mono font-bold border-slate-300" /></td><td className="p-4"><input type="number" name="usStock" value={editFormData.usStock} onChange={handleEditChange} className="w-40 md:w-48 px-4 py-3 text-xl rounded font-mono font-bold border-slate-300" /></td><td className="p-4"><input type="number" name="crypto" value={editFormData.crypto} onChange={handleEditChange} className="w-40 md:w-48 px-4 py-3 text-xl rounded font-mono font-bold border-slate-300" /></td><td className="p-4 text-xl text-slate-400 font-mono font-bold">--</td><td className="p-4 text-xl text-slate-400 font-mono font-bold">--</td><td className="p-4 text-xl text-slate-400 font-mono font-bold">--</td><td className="p-4 space-x-4"><button onClick={() => saveEdit(item._rowIndex)} disabled={writeLocked} title={writeLocked ? WRITE_LOCK_HINT : undefined} className="text-xl px-4 py-2 bg-slate-800 text-white rounded font-mono font-bold hover:bg-slate-700 transition-colors shadow disabled:opacity-40 disabled:cursor-not-allowed">SAVE</button><button onClick={() => setEditingRow(null)} className="text-xl px-4 py-2 border-2 border-slate-300 text-slate-600 rounded font-mono font-bold hover:bg-slate-100 transition-colors">CANCEL</button></td></React.Fragment>
                                                                 ) : (
                                                                     <React.Fragment>
                                                                         <td className="p-6 text-2xl font-mono text-slate-800 dark:text-amber-600 font-bold">{formatYMD(item.日期)}</td>
@@ -4779,7 +4941,7 @@ Build the wall first. Attack second.`)}
                                                                             );
                                                                         })()}</td>
                                                                         <td className="p-6 text-3xl font-extrabold font-mono relative"><div className="flex items-center gap-5"><span className="text-slate-800 dark:text-amber-200">{Number(item.總資產).toLocaleString()}</span>{item.milestone === 'up' && <span className="text-lg px-3 py-1 rounded cyber-tag-up font-bold animate-pulse">▲ LVL {item.tier} UNLOCKED</span>}{item.milestone === 'down' && <span className="text-lg px-3 py-1 rounded cyber-tag-down font-bold animate-pulse">▼ LVL {item.prevTier} LOST</span>}</div></td>
-                                                                        <td className="p-6 space-x-6 relative z-10"><button onClick={() => startEdit(item)} className="text-xl text-cyan-600 dark:text-amber-400 font-mono font-extrabold hover:text-cyan-800 dark:hover:text-amber-300 transition-colors hover:scale-110 inline-block">EDIT</button><button onClick={() => handleDelete(item._rowIndex)} className="text-xl text-rose-500 dark:text-rose-400 font-mono font-extrabold hover:text-rose-700 dark:hover:text-rose-300 transition-colors hover:scale-110 inline-block">DEL</button></td>
+                                                                        <td className="p-6 space-x-6 relative z-10"><button onClick={() => startEdit(item)} disabled={writeLocked} title={writeLocked ? WRITE_LOCK_HINT : undefined} className="text-xl text-cyan-600 dark:text-amber-400 font-mono font-extrabold hover:text-cyan-800 dark:hover:text-amber-300 transition-colors hover:scale-110 inline-block disabled:opacity-40 disabled:cursor-not-allowed">EDIT</button><button onClick={() => handleDelete(item._rowIndex)} disabled={writeLocked} title={writeLocked ? WRITE_LOCK_HINT : undefined} className="text-xl text-rose-500 dark:text-rose-400 font-mono font-extrabold hover:text-rose-700 dark:hover:text-rose-300 transition-colors hover:scale-110 inline-block disabled:opacity-40 disabled:cursor-not-allowed">DEL</button></td>
                                                                     </React.Fragment>
                                                                 )}
                                                             </tr>
@@ -4962,6 +5124,8 @@ Build the wall first. Attack second.`)}
       const [records, setRecords] = useState([]);
       const [loading, setLoading] = useState(true);
       const [loadError, setLoadError] = useState('');
+      const cacheStatus = useReadCacheStatus();
+      const writeLocked = cacheStatus.showing;
       const [saving, setSaving] = useState(false);
       const [editingRecord, setEditingRecord] = useState(null); // null=關閉；物件=開啟(有id為編輯，無id為新增)
       const [deleteTarget, setDeleteTarget] = useState(null);
@@ -4998,11 +5162,11 @@ Build the wall first. Attack second.`)}
       const loadRecords = () => {
         setLoading(true);
         setLoadError('');
-        gasDebtAPI('getLoanRecords').then(res => {
+        loadWithReadCache('getLoanRecords', () => gasDebtAPI('getLoanRecords'), (res) => {
           setRecords(Array.isArray(res.data) ? res.data : []);
           setLoading(false);
-        }).catch(err => {
-          setLoadError(`getLoanRecords：${err && err.message ? err.message : String(err)}`);
+        }, (res) => !!res && Array.isArray(res.data), cacheStatus.ctl).catch(err => {
+          if (!(err && err.cacheShown)) setLoadError(`getLoanRecords：${err && err.message ? err.message : String(err)}`);
           setLoading(false);
         });
       };
@@ -5260,8 +5424,8 @@ Build the wall first. Attack second.`)}
         return activeRecords.filter(r => (r.category || DEBT_CATEGORY_DEFAULT) === DEBT_CATEGORY_SUBSCRIPTION);
       }, [activeRecords]);
 
-      const openNewModal = () => setEditingRecord({ ...emptyForm });
-      const openEditModal = (r) => setEditingRecord({
+      const openNewModal = () => { if (!writeLocked) setEditingRecord({ ...emptyForm }); };
+      const openEditModal = (r) => !writeLocked && setEditingRecord({
         ...r,
         category: r.category || DEBT_CATEGORY_DEFAULT,
         payFrequency: getPayFrequency(r.note),
@@ -5290,6 +5454,7 @@ Build the wall first. Attack second.`)}
       const parseInstallmentInput = (v) => (v === '' || v === null || v === undefined) ? null : (parseInt(v, 10) || 0);
 
       const handleSave = () => {
+        if (writeLocked) return;
         if (!editingRecord.name) { setMsg(t('請輸入貸款名稱', 'Loan name is required')); return; }
         setSaving(true);
         setMsg('');
@@ -5326,7 +5491,7 @@ Build the wall first. Attack second.`)}
       };
 
       const handleDelete = () => {
-        if (!deleteTarget) return;
+        if (!deleteTarget || writeLocked) return;
         gasDebtAPI('deleteLoanRecord', deleteTarget).then(res => {
           setDeleteTarget(null);
           if (res.success) { loadRecords(); }
@@ -5449,10 +5614,10 @@ Build the wall first. Attack second.`)}
               )}
             </div>
             <div className="flex md:flex-col gap-2 shrink-0">
-              <button onClick={() => openEditModal(r)} className="tech-btn px-4 py-2 text-sm font-bold bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800">{t('編輯', 'EDIT')}</button>
+              <button onClick={() => openEditModal(r)} disabled={writeLocked} title={writeLocked ? WRITE_LOCK_HINT : undefined} className="tech-btn px-4 py-2 text-sm font-bold bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800 disabled:opacity-40 disabled:cursor-not-allowed">{t('編輯', 'EDIT')}</button>
               {/* v1.4 — isPaidOff 時把同一顆刪除按鈕(同一個 onClick/confirm流程)放大變色顯眼化，
                   不是另外發明新的刪除機制，只是視覺上更醒目、文字改成「清除」提示使用者可以處理了 */}
-              <button onClick={() => setDeleteTarget(r.id)} className={isPaidOff ? "tech-btn px-4 py-2.5 text-sm font-black bg-rose-500 hover:bg-rose-600 text-white border-2 border-rose-600 shadow-lg animate-pulse" : "tech-btn px-4 py-2 text-sm font-bold bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800"}>{isPaidOff ? t('🗑️ 清除', '🗑️ CLEAR') : t('刪除', 'DELETE')}</button>
+              <button onClick={() => { if (!writeLocked) setDeleteTarget(r.id); }} disabled={writeLocked} title={writeLocked ? WRITE_LOCK_HINT : undefined} style={writeLocked ? { opacity: 0.4, cursor: 'not-allowed' } : undefined} className={isPaidOff ? "tech-btn px-4 py-2.5 text-sm font-black bg-rose-500 hover:bg-rose-600 text-white border-2 border-rose-600 shadow-lg animate-pulse" : "tech-btn px-4 py-2 text-sm font-bold bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800"}>{isPaidOff ? t('🗑️ 清除', '🗑️ CLEAR') : t('刪除', 'DELETE')}</button>
             </div>
           </div>
           {stripEndTag(stripFreqTag(r.note)) && (
@@ -5471,6 +5636,7 @@ Build the wall first. Attack second.`)}
 
             <div className="mb-4">
               <h1 className="text-3xl font-bold tracking-widest text-slate-800 dark:text-rose-500 font-mono mb-4 vibe-hover-text"><ScrambleText text="DEBT_ RADAR [LOAN_CORE]" /></h1>
+              {cacheStatus.showing && <div className="mb-4"><ReadCacheBanner status={cacheStatus} onRetry={loadRecords} isEng={isEng} /></div>}
               {loading ? (
                 <div className="text-2xl font-black text-slate-300 dark:text-slate-600">{t('讀取中...', 'Loading...')}</div>
               ) : loadError ? (
@@ -5735,7 +5901,7 @@ Build the wall first. Attack second.`)}
 
             <div className="flex justify-between items-center">
               <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200">{t('貸款列表', 'LOAN LIST')}</h2>
-              <button onClick={openNewModal} className="tech-btn px-5 py-2.5 font-bold bg-sky-500 text-white">+ {t('新增貸款', 'ADD LOAN')}</button>
+              <button onClick={openNewModal} disabled={writeLocked} className="tech-btn px-5 py-2.5 font-bold bg-sky-500 text-white disabled:opacity-50 disabled:cursor-not-allowed">{writeLocked ? WRITE_LOCK_HINT : <>+ {t('新增貸款', 'ADD LOAN')}</>}</button>
             </div>
 
             {!loading && !loadError && (
@@ -5889,7 +6055,7 @@ Build the wall first. Attack second.`)}
                   {msg && <div className="text-rose-500 font-bold text-sm mt-4">{msg}</div>}
                   <div className="flex justify-end gap-3 mt-6">
                     <button onClick={closeModal} className="tech-btn px-5 py-2.5 font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">{t('取消', 'CANCEL')}</button>
-                    <button onClick={handleSave} disabled={saving} className={`tech-btn px-5 py-2.5 font-bold text-white ${saving ? 'bg-slate-400' : 'bg-sky-500'}`}>{saving ? t('儲存中...', 'SAVING...') : t('儲存', 'SAVE')}</button>
+                    <button onClick={handleSave} disabled={saving || writeLocked} className={`tech-btn px-5 py-2.5 font-bold text-white ${saving || writeLocked ? 'bg-slate-400' : 'bg-sky-500'}`}>{saving ? t('儲存中...', 'SAVING...') : writeLocked ? WRITE_LOCK_HINT : t('儲存', 'SAVE')}</button>
                   </div>
                 </div>
               </div>
@@ -5902,7 +6068,7 @@ Build the wall first. Attack second.`)}
                   <div className="text-sm text-slate-400 mb-6">{t('此操作無法復原。', 'This cannot be undone.')}</div>
                   <div className="flex justify-end gap-3">
                     <button onClick={() => setDeleteTarget(null)} className="tech-btn px-5 py-2.5 font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">{t('取消', 'CANCEL')}</button>
-                    <button onClick={handleDelete} className="tech-btn px-5 py-2.5 font-bold bg-rose-500 text-white">{t('確認刪除', 'DELETE')}</button>
+                    <button onClick={handleDelete} disabled={writeLocked} className="tech-btn px-5 py-2.5 font-bold bg-rose-500 text-white disabled:opacity-50 disabled:cursor-not-allowed">{writeLocked ? WRITE_LOCK_HINT : t('確認刪除', 'DELETE')}</button>
                   </div>
                 </div>
               </div>
