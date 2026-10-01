@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/10/01 12:23';
+    const APP_VERSION = '2026/10/01 12:44';
 
     /* ===================================================================
        共用工具
@@ -1144,8 +1144,6 @@
         mustPickGap: safeGetStorage('fos_ipo_mustPickGap', ''),
         canPickGap: safeGetStorage('fos_ipo_canPickGap', ''),
         gapRatePct: safeGetStorage('fos_ipo_gapRatePct', ''),
-        freezeCap: safeGetStorage('fos_ipo_freezeCap', ''),
-        reserveCash: safeGetStorage('fos_ipo_reserveCash', ''),
         feeDiscount: safeGetStorage('fos_ipo_feeDiscount', '')
       }));
       const handleIpoInputChange = (e) => {
@@ -1677,13 +1675,12 @@
       const cmTier = (cmCash < cmTarget) ? 'danger' : 'standard';
 
       /* v14.4 — IPO 抽籤篩選器計算（Boss 拍板：納入中籤郵寄費 50 與賣出成本）
-         現金直接讀現金護城河卡片既有的 cmCash，不另外存一份、不動護城河任何邏輯。
-         宣告在這裡是因為要用到 cmCash；純被動衍生值，不影響上面任何計算。 */
+         2026-10-01 — 移除預扣關，判定只看價差與期望值，不再讀取現金護城河。 */
       const IPO_SUBSCRIBE_FEE = 20;      // 申購處理費（不論中籤與否都收）
-      const IPO_MAIL_FEE = 50;           // 中籤通知郵寄費（未中籤會退，故計入預扣、也計入中籤後成本）
+      const IPO_MAIL_FEE = 50;           // 中籤通知郵寄費（未中籤會退，計入中籤後成本）
       const IPO_BROKER_FEE_RATE = 0.001425; // 券商手續費率（可被折扣參數打折）
       const IPO_SELL_TAX_RATE = 0.003;   // 證交稅
-      const IPO_PARAM_DEFAULTS = { mustPickGap: 10000, canPickGap: 5000, gapRatePct: 15, freezeCap: 100000, reserveCash: 50000, feeDiscount: 1 };
+      const IPO_PARAM_DEFAULTS = { mustPickGap: 10000, canPickGap: 5000, gapRatePct: 15, feeDiscount: 1 };
       // 空值或非數字一律回退到預設值
       const ipoParamNum = (key) => {
         const v = parseFloat(ipoParams[key]);
@@ -1701,28 +1698,16 @@
       const ipoWinRate = (parseFloat(ipoInputs.winRatePct) || 0) / 100;
       const ipoHasPrices = ipoSubPrice > 0 && ipoMktPrice > 0;
 
-      const ipoFrozenAmount = ipoSubPrice * ipoShares + IPO_SUBSCRIBE_FEE + IPO_MAIL_FEE;
       const ipoSellCost = ipoMktPrice * ipoShares * (IPO_BROKER_FEE_RATE * ipoParamNum('feeDiscount') + IPO_SELL_TAX_RATE);
       const ipoGrossGap = (ipoMktPrice - ipoSubPrice) * ipoShares;
       const ipoNetGap = ipoGrossGap - IPO_MAIL_FEE - ipoSellCost;
       const ipoGapRatePct = ipoSubPrice > 0 ? ((ipoMktPrice / ipoSubPrice - 1) * 100) : 0;
       const ipoExpectedValue = ipoNetGap * ipoWinRate - IPO_SUBSCRIBE_FEE;
-      // 可凍結上限 = min(參數上限, 現金 − 保留現金)；現金不足時會是負數，照樣拿去比較（判跳過），
-      // 顯示時直接顯示負數，不做絕對值、不顯示 NaN
-      const ipoFreezeCeiling = Math.min(ipoParamNum('freezeCap'), cmCash - ipoParamNum('reserveCash'));
 
-      // 三關依序判定，取第一個沒過的關卡當理由
+      // 兩關依序判定，取第一個沒過的關卡當理由
       const ipoVerdict = (() => {
         if (!ipoHasPrices) return null;
-        // 第一關 預扣關
-        if (ipoFrozenAmount > ipoFreezeCeiling) {
-          return {
-            level: 'skip',
-            label: t('❌ 跳過', '❌ SKIP'),
-            reason: t(`預扣過高，會凍結護城河（目前現金 ${ipoFmt(cmCash)}，保留 ${ipoFmt(ipoParamNum('reserveCash'))} 後可凍結 ${ipoFmt(ipoFreezeCeiling)}）`, `Frozen amount too high — would lock up the moat (cash ${ipoFmt(cmCash)}, after reserving ${ipoFmt(ipoParamNum('reserveCash'))} only ${ipoFmt(ipoFreezeCeiling)} is freezable)`)
-          };
-        }
-        // 第二關 價差關（用淨價差判斷）
+        // 第一關 價差關（用淨價差判斷）
         const rateOk = ipoGapRatePct >= ipoParamNum('gapRatePct');
         const mustGap = ipoParamNum('mustPickGap');
         const canGap = ipoParamNum('canPickGap');
@@ -1730,7 +1715,7 @@
         if (ipoNetGap >= mustGap && rateOk) tier = 'must';
         else if (ipoNetGap >= canGap && ipoNetGap < mustGap && rateOk) tier = 'can';
         if (!tier) return { level: 'skip', label: t('❌ 跳過', '❌ SKIP'), reason: t('價差或價差率不足', 'Spread or spread rate insufficient') };
-        // 第三關 期望值關
+        // 第二關 期望值關
         if (ipoExpectedValue <= 0) return { level: 'skip', label: t('❌ 跳過', '❌ SKIP'), reason: t('期望值不為正', 'Expected value is not positive') };
         return {
           level: tier,
@@ -2232,9 +2217,7 @@
                         </div>
                         <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm font-mono pt-1 border-t border-slate-200 dark:border-slate-700">
                           <div className="flex justify-between items-baseline gap-2"><span className="text-slate-400 whitespace-nowrap">{t('價差率', 'RATE')}</span><span className="font-bold text-slate-700 dark:text-slate-200">{ipoGapRatePct.toFixed(1)}%</span></div>
-                          <div className="flex justify-between items-baseline gap-2"><span className="text-slate-400 whitespace-nowrap">{t('預扣', 'FROZEN')}</span><span className="font-bold text-slate-700 dark:text-slate-200">{ipoFmt(ipoFrozenAmount)}</span></div>
                           <div className="flex justify-between items-baseline gap-2"><span className="text-slate-400 whitespace-nowrap">{t('期望值', 'EV')}</span><span className={`font-bold ${ipoExpectedValue > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{ipoFmt(ipoExpectedValue)}</span></div>
-                          <div className="flex justify-between items-baseline gap-2"><span className="text-slate-400 whitespace-nowrap">{t('可凍結上限', 'FREEZE CAP')}</span><span className={`font-bold ${ipoFreezeCeiling >= 0 ? 'text-slate-700 dark:text-slate-200' : 'text-rose-600 dark:text-rose-400'}`}>{ipoFmt(ipoFreezeCeiling)}</span></div>
                         </div>
                         <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
                           <div className={`text-xl font-black ${ipoVerdictColor}`}>{ipoVerdict.label}</div>
@@ -2259,8 +2242,6 @@
                               { key: 'mustPickGap', label: t('必抽價差門檻', 'MUST-APPLY SPREAD'), hint: t('淨價差高到這個金額才算「必抽」', 'Net spread at or above this counts as MUST APPLY') },
                               { key: 'canPickGap', label: t('可抽價差門檻', 'OPTIONAL SPREAD'), hint: t('淨價差至少要有這麼多才值得抽', 'Minimum net spread still worth applying for') },
                               { key: 'gapRatePct', label: t('價差率門檻 %', 'SPREAD RATE %'), hint: t('市價比申購價高出的％，要達標才過關', 'How much % above the offer price is required') },
-                              { key: 'freezeCap', label: t('可凍結上限', 'FREEZE CAP'), hint: t('單檔最多願意被凍結多少錢', 'Most cash you are willing to have frozen on one IPO') },
-                              { key: 'reserveCash', label: t('保留現金', 'RESERVE CASH'), hint: t('不想動用的現金底線，會先從現金扣掉', 'Cash floor you never touch — deducted from CASH first') },
                               { key: 'feeDiscount', label: t('手續費折扣', 'FEE DISCOUNT'), hint: t('1＝不打折；2.8折填 0.28，影響賣出成本', '1 = no discount; e.g. enter 0.28 for a 28% rate — affects sell cost') }
                             ].map(p => (
                               <div key={p.key}>
@@ -2277,12 +2258,10 @@
                     {/* v14.6 — 判定邏輯與內建費用說明：這些數字寫死在程式裡、畫面上看不到，
                         不寫出來的話使用者無從得知判定是怎麼來的 */}
                     <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700 text-sm leading-relaxed text-slate-400 space-y-1">
-                      <p className="font-bold text-slate-500 dark:text-slate-300">{t('判定怎麼來的（三關依序，第一個沒過的就是理由）', 'How the verdict works (three gates in order)')}</p>
-                      <p>{t('① 預扣關：預扣金額要 ≤ 可凍結上限（可凍結上限 = 可凍結上限參數 與「現金－保留現金」取小的那個）', '1) Frozen gate: frozen amount ≤ freeze ceiling (= min of the cap parameter and CASH − reserve)')}</p>
-                      <p>{t('② 價差關：淨價差與價差率都要達門檻，否則跳過', '2) Spread gate: both net spread and spread rate must clear their thresholds')}</p>
-                      <p>{t('③ 期望值關：期望值要 > 0（期望值 = 淨價差 × 中籤率 − 申購處理費）', '3) EV gate: expected value must be > 0 (= net spread × win rate − subscription fee)')}</p>
+                      <p className="font-bold text-slate-500 dark:text-slate-300">{t('判定怎麼來的（兩關依序，第一個沒過的就是理由）', 'How the verdict works (two gates in order)')}</p>
+                      <p>{t('① 價差關：淨價差與價差率都要達門檻，否則跳過', '1) Spread gate: both net spread and spread rate must clear their thresholds')}</p>
+                      <p>{t('② 期望值關：期望值要 > 0（期望值 = 淨價差 × 中籤率 − 申購處理費）', '2) EV gate: expected value must be > 0 (= net spread × win rate − subscription fee)')}</p>
                       <p className="pt-1">{t(`內建費用（不用自己填）：申購處理費 ${IPO_SUBSCRIBE_FEE} 元、中籤通知郵寄費 ${IPO_MAIL_FEE} 元、賣出手續費 ${(IPO_BROKER_FEE_RATE * 100).toFixed(4)}%×折扣、證交稅 ${(IPO_SELL_TAX_RATE * 100).toFixed(1)}%`, `Built-in fees: subscription ${IPO_SUBSCRIBE_FEE}, mail ${IPO_MAIL_FEE}, sell commission ${(IPO_BROKER_FEE_RATE * 100).toFixed(4)}% × discount, tax ${(IPO_SELL_TAX_RATE * 100).toFixed(1)}%`)}</p>
-                      <p>{t('現金來自「現金護城河」卡片的 CASH 欄位，這裡不會改到它', 'CASH comes from the Cash Moat card — this screener never modifies it')}</p>
                     </div>
                   </div>
                 </React.Fragment>,
