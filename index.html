@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/10/05 21:25';
+    const APP_VERSION = '2026/10/05 21:45';
 
     /* ===================================================================
        共用工具
@@ -414,6 +414,90 @@
       const p1Available = Math.max(0, P1 - deathLine);
       const totalLiquid = p1Available + cash;
       return { deathLine, p1Available, totalLiquid };
+    }
+
+    /* ===================================================================
+       v15.0 — FOS 歷史 MR 取樣層（§4.2 回復帶 / §4.9 快速下降的共同資料來源）
+
+       放在模組層而非元件內，是為了保持純函式、可獨立測試：輸入歷史陣列，
+       輸出判定結果，不碰 state、不碰網路。門檻一律由呼叫端傳入，不在此寫死。
+
+       重要前提：FOS 歷史紀錄是 Boss 手動 COMMIT／INJECT 時才產生，並非每日自動記錄，
+       因此「30 日前的 MR」幾乎不會剛好有當天紀錄 → 採 Boss 裁定③的區間取樣。
+    =================================================================== */
+    const QUICK_DROP_LOOKBACK_DAYS = 30;   // 回看天數
+    const QUICK_DROP_WINDOW_LO = 37;       // 可接受區間下界（T-37）
+    const QUICK_DROP_WINDOW_HI = 23;       // 可接受區間上界（T-23）
+    const QUICK_DROP_PCT_POINTS = 30;      // 觸發門檻：下降 ≥ 30 個百分點
+    const ONE_DAY_MS = 86400000;
+
+    /* dateId 是以「當地日期」字串儲存（YYYY/MM/DD），parseMrHistory 以 Date.parse 解析成
+       該日 UTC 零時。若拿帶有時刻的 Date.now() 去算區間邊界，會讓「日期正好等於 T-37」
+       的紀錄因為差了幾小時而落在區間外，使 [T-37, T-23] 實際變成 (T-37, T-23]。
+       故把今天同樣正規化成「當地日期的 UTC 零時」，確保邊界以『天』為單位且含端點。 */
+    function startOfLocalDayUTC(ts) {
+      const d = new Date(ts);
+      return Date.parse(new Date(ts - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10));
+    }
+
+    // 歷史紀錄 → [{time, mr}]，新→舊排序。排除樂觀更新的 "(SYNC) ..." 暫存筆與無效值
+    function parseMrHistory(records) {
+      if (!Array.isArray(records)) return [];
+      return records.map(r => {
+        const raw = String((r && r.dateId) || '');
+        if (!/^\d{4}/.test(raw)) return null;   // "(SYNC) ..." 等非年份開頭一律跳過
+        const time = Date.parse(raw.substring(0, 10).replace(/\//g, '-'));
+        const mr = parseFloat(r && r.nominalMR);
+        if (!Number.isFinite(time) || !Number.isFinite(mr)) return null;
+        return { time, mr };
+      }).filter(Boolean).sort((a, b) => b.time - a.time);
+    }
+
+    // 取日期落在 [T-lo, T-hi] 區間內、且最接近 T-target 的一筆（Boss 裁定③）
+    function findMrNearDaysAgo(sortedDesc, nowTime, lo, hi, target) {
+      const loT = nowTime - lo * ONE_DAY_MS;
+      const hiT = nowTime - hi * ONE_DAY_MS;
+      const tgtT = nowTime - target * ONE_DAY_MS;
+      let best = null;
+      sortedDesc.forEach(r => {
+        if (r.time < loT || r.time > hiT) return;
+        if (!best || Math.abs(r.time - tgtT) < Math.abs(best.time - tgtT)) best = r;
+      });
+      return best;
+    }
+
+    /* 回復帶判定：「最近一次 MR < redCeiling 之後，尚無 ≥ exitLine 的紀錄」。
+       由新往舊掃，先遇到哪個條件就決定結果：
+         先遇到 ≥280 → 那次破底後已回到出場線以上 → 已出場（false）
+         先遇到 <260 → 自那次破底後未曾回到 280 → 仍在回升途中（true） */
+    function isMrRecoveryActive(sortedDesc, redCeiling, exitLine) {
+      for (let i = 0; i < sortedDesc.length; i++) {
+        if (sortedDesc[i].mr >= exitLine) return false;
+        if (sortedDesc[i].mr < redCeiling) return true;
+      }
+      return false;   // 歷史中從未低於 260
+    }
+
+    /* §4.9 快速下降。回傳 { status, prevMr, drop }，status: 'unknown' | 'active' | 'clear'
+       觸發：當日 MR 較 30 日前下降 ≥ 30 個百分點
+       取樣區間：[T-37, T-23] 內最接近 T-30 的一筆（Boss 裁定③）；區間內無紀錄 → 'unknown'，
+       依裁定視為未觸發。MR 為 0（L 未輸入，燈號為 STANDBY）時同樣回 'unknown'，
+       否則 drop 會算成 prev.mr - 0 的極大正值而誤判觸發。
+       刻意不收 floor 參數：判定既然只看跌幅，收一個不會被讀取的門檻參數，只會讓呼叫端
+       誤以為解除門檻有生效（上一版即如此，已移除）。
+
+       【刻意偏離規格字面，需留意】規格的解除條件是「跌幅 < 30 且 MR ≥ floor」，屬於
+       latch 語意（觸發後需符合解除條件才解除），真正實作需要持久化「曾觸發」狀態，
+       不在本輪範圍。這裡只以跌幅判定，不把 MR < floor 也視為 active——否則「從未急跌、
+       只是 MR 長期偏低」會被誤標成 4.9，且跌幅為 0 或負值時會顯示 −-5.0 這種雙負號。
+       MR < floor 本來就會落入 🔴，其分流處置與 4.9 相同（§6.3.1 皆為全數還本金），
+       因此只保留急跌判定不會造成處置落差，只是標籤更誠實。 */
+    function evalQuickDrop(sortedDesc, currentMr, nowTime) {
+      if (!Number.isFinite(currentMr) || currentMr <= 0) return { status: 'unknown', reason: 'no-mr', prevMr: null, drop: null };
+      const prev = findMrNearDaysAgo(sortedDesc, startOfLocalDayUTC(nowTime), QUICK_DROP_WINDOW_LO, QUICK_DROP_WINDOW_HI, QUICK_DROP_LOOKBACK_DAYS);
+      if (!prev) return { status: 'unknown', reason: 'no-record', prevMr: null, drop: null };
+      const drop = prev.mr - currentMr;
+      return { status: drop >= QUICK_DROP_PCT_POINTS ? 'active' : 'clear', reason: null, prevMr: prev.mr, drop };
     }
 
     // 質押利息月額 = L × 質押年利率 ÷ 12。pledgeRatePercent 是「百分比數字」（4 代表 4%，
@@ -1590,9 +1674,37 @@
       const nominalMR = L > 0 ? ((C / L) * 100).toFixed(2) : '0.00';
       const p1Ratio = L > 0 ? ((P1 / L) * 100).toFixed(2) : '0.00';
       const mrBaseZoneInfo = getMRZone(nominalMR);
-      // v15.0 — 回復帶判定需要歷史 MR，commit④ 接上；此處先固定 false，行為等同純三段制
-      const mrRecoveryActive = false;
+      /* v15.0 §4.2／§4.9 — 以 FOS 歷史紀錄判定回復帶與快速下降。
+         優先用 fullHistory（完整），尚未抓到時退回近 60 筆的 history；
+         下方另有 effect 在近 60 筆涵蓋不到取樣區間時自動補抓完整歷史。 */
+      const mrHistorySorted = useMemo(
+        () => parseMrHistory(fullHistory || history),
+        [fullHistory, history]
+      );
+      const mrNowTime = Date.now();
+      const mrRecoveryActive = isMrRecoveryActive(mrHistorySorted, MR_RED_CEILING, MR_RECOVERY_EXIT);
       const mrZoneInfo = getEffectiveMRZone(mrBaseZoneInfo, nominalMR, mrRecoveryActive);
+      const mrQuickDrop = evalQuickDrop(mrHistorySorted, parseFloat(nominalMR), mrNowTime);
+      const quickDropActive = mrQuickDrop.status === 'active';
+
+      /* 近 60 筆若最舊一筆仍晚於取樣區間下界（T-37），代表 60 筆涵蓋不到 30 日前，
+         此時補抓完整歷史，避免 4.9 誤報「無法判定」。fetchFullHistory 自身有
+         fullHistory!==null / isFetchingFullHistory 雙重防呆，不會重複打。 */
+      /* 只嘗試一次：fetchFullHistory 失敗時會吞掉錯誤並把 isFetchingFullHistory 重設回
+         false，而 fullHistory 仍是 null；若本 effect 的依賴含該旗標又不設限，後端持續失敗
+         就會變成無上限連打。用 ref 記住「已自動嘗試過」，失敗就安靜放棄（4.9 退回
+         「無法判定」），使用者仍可透過雷達圖選 ALL／展開歷史年份手動觸發完整載入。 */
+      const fullHistoryAutoTriedRef = useRef(false);
+      useEffect(() => {
+        if (fullHistoryAutoTriedRef.current) return;
+        if (fullHistory !== null || isFetchingFullHistory) return;
+        if (mrHistorySorted.length === 0) return;
+        const oldest = mrHistorySorted[mrHistorySorted.length - 1].time;
+        if (oldest > startOfLocalDayUTC(Date.now()) - QUICK_DROP_WINDOW_LO * ONE_DAY_MS) {
+          fullHistoryAutoTriedRef.current = true;
+          fetchFullHistory();
+        }
+      }, [mrHistorySorted, fullHistory, isFetchingFullHistory]);
 
       const b0050Val = parseFloat(betaConfig.b0050) || 1.0;
       const b00733Val = parseFloat(betaConfig.b00733) || 1.35;
@@ -2563,6 +2675,19 @@ Ask this box before you withdraw.`
                     <div className={`absolute inset-0 isolate px-5 pb-4 flex flex-col justify-center border-l-[6px] ${mrBorderClass} bg-slate-50/50 dark:bg-slate-900/50 transition-all duration-300 group-hover:opacity-0 group-hover:scale-95 ${mrTier === 'danger' ? 'mini-card-danger' : 'mini-card-core'}`}>
                       <span className={`text-3xl sm:text-4xl md:text-5xl font-black font-mono tracking-tight data-text break-words vibe-hover-text tabular-nums mini-card-num ${mrZoneInfo.text}`}>{nominalMR}%</span>
                       <span className={`text-sm font-black uppercase mt-1 ${mrZoneInfo.text}`}>{mrZoneInfo.label}</span>
+                      {/* v15.0 §4.9 快速下降狀態：active 赤字警示、unknown 灰字標註無法判定（視為未觸發） */}
+                      {quickDropActive && (
+                        <span className="text-xs font-black text-rose-600 dark:text-rose-400 mt-1 leading-tight">
+                          ⚡ {t(`4.9 快速下降（${mrQuickDrop.prevMr.toFixed(0)} → ${parseFloat(nominalMR).toFixed(0)}，近 30 日 −${mrQuickDrop.drop.toFixed(1)}）`, `4.9 QUICK DROP (${mrQuickDrop.prevMr.toFixed(0)} → ${parseFloat(nominalMR).toFixed(0)}, 30d −${mrQuickDrop.drop.toFixed(1)})`)}
+                        </span>
+                      )}
+                      {mrQuickDrop.status === 'unknown' && (
+                        <span className="text-xs font-bold text-slate-400 mt-1 leading-tight">
+                          {mrQuickDrop.reason === 'no-mr'
+                            ? t('4.9 無法判定（尚未輸入 L）', '4.9 undetermined (L not entered)')
+                            : t('4.9 無法判定（30 日前後無紀錄）', '4.9 undetermined (no record around 30d ago)')}
+                        </span>
+                      )}
                     </div>
                     <div className="absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 border-sky-500 dark:border-amber-500/30 flex flex-col justify-start opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl overflow-y-auto">
                       <span className="text-sky-600 dark:text-amber-400 text-sm font-bold tracking-widest mb-1">[MR_ZONES]</span>
