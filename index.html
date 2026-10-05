@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/10/05 21:12';
+    const APP_VERSION = '2026/10/05 21:25';
 
     /* ===================================================================
        共用工具
@@ -997,13 +997,31 @@
        FOS 子元件 (Boss Terminal v12.2)  — isDarkMode / isEng 由 AppShell 注入
     =================================================================== */
     function FosTerminal({ isDarkMode, isEng, onInjectPrefill, onLAmountChange, onPledgeRateChange, debtMonthlyTotal, totalAssetsFromAsset, onLiquidityBufferChange }) {
+      /* v15.0 §4.2 — 燈號三段制（原 ZONE1/2/3/DANGER 四段作廢，🟠 310~330 撤銷）：
+           🟢 GREEN  MR ≥ 350
+           🟡 YELLOW 260 ≤ MR < 350
+           🔴 RED    MR < 260
+         回復帶（260 ≤ MR < 280 且僅限自 🔴 回升途中，維持 🔴 處置直到 MR ≥ 280）需要
+         歷史紀錄才能判定，刻意**不**寫進這個純函式，由 getEffectiveMRZone 疊加，
+         避免同一個函式同時依賴即時值與歷史狀態而難以測試。 */
+      const MR_GREEN_FLOOR = 350;
+      const MR_RED_CEILING = 260;   // 低於此值 → 🔴（4.3 觸發線）
+      const MR_RECOVERY_EXIT = 280; // 回復帶出場線（4.3 拉回目標）
       function getMRZone(mr) {
         const val = parseFloat(mr);
         if (val === 0) return { dot: 'bg-slate-300 dark:bg-slate-600', text: 'text-slate-400', label: 'STANDBY', zone: 'STANDBY' };
-        if (val >= 350) return { dot: 'bg-emerald-500 shadow-[0_0_10px_#10b981]', text: 'text-emerald-500 dark:text-emerald-400', label: 'ZONE 1', zone: 'ZONE1' };
-        if (val >= 330) return { dot: 'bg-yellow-500 shadow-[0_0_10px_#eab308]', text: 'text-yellow-600 dark:text-yellow-400', label: 'ZONE 2', zone: 'ZONE2' };
-        if (val >= 310) return { dot: 'bg-orange-500 shadow-[0_0_10px_#f97316]', text: 'text-orange-500 dark:text-orange-400', label: 'ZONE 3', zone: 'ZONE3' };
-        return { dot: 'bg-rose-500 shadow-[0_0_10px_#f43f5e] animate-pulse', text: 'text-rose-500 dark:text-rose-400', label: 'DANGER', zone: 'DANGER' };
+        if (val >= MR_GREEN_FLOOR) return { dot: 'bg-emerald-500 shadow-[0_0_10px_#10b981]', text: 'text-emerald-500 dark:text-emerald-400', label: 'GREEN', zone: 'GREEN' };
+        if (val >= MR_RED_CEILING) return { dot: 'bg-yellow-500 shadow-[0_0_10px_#eab308]', text: 'text-yellow-600 dark:text-yellow-400', label: 'YELLOW', zone: 'YELLOW' };
+        return { dot: 'bg-rose-500 shadow-[0_0_10px_#f43f5e] animate-pulse', text: 'text-rose-500 dark:text-rose-400', label: 'RED', zone: 'RED' };
+      }
+
+      /* 疊加回復帶：recoveryActive 由歷史紀錄算出（commit④ 接上，本 commit 先建框架，
+         傳入 false 時行為等同純三段制）。在回復帶內一律沿用 🔴 的處置與視覺。 */
+      function getEffectiveMRZone(baseZoneInfo, mr, recoveryActive) {
+        const val = parseFloat(mr);
+        if (!recoveryActive) return baseZoneInfo;
+        if (baseZoneInfo.zone !== 'YELLOW' || val >= MR_RECOVERY_EXIT) return baseZoneInfo;
+        return { dot: 'bg-rose-500 shadow-[0_0_10px_#f43f5e] animate-pulse', text: 'text-rose-500 dark:text-rose-400', label: 'RED (RECOVERY)', zone: 'RED', recoveryBand: true };
       }
 
       function getCryptoAction(asset, currentPrice, athPrice, drawdown, ethBtcRatio) {
@@ -1032,8 +1050,9 @@
       }
 
       function fixedRatioSplit(amount, mrZone) {
-        if (mrZone === 'ZONE3' || mrZone === 'DANGER') {
-          return { frozen: true, msg: mrZone === 'DANGER' ? '凍結提現，依4.3強制去槓桿' : '凍結注資，活水截留A帳戶', tsla: 0, spcx: 0, qld: 0 };
+        if (mrZone === 'RED') {
+          // v15.0 R11 — 凍結改綁 🔴（含回復帶）／4.9，訊息統一；美股與加密同步凍結
+          return { frozen: true, msg: '凍結注資，資金償還質押本金', tsla: 0, spcx: 0, qld: 0 };
         }
         const releasable = amount;
         return { frozen: false, tsla: releasable * US_EQUITY_RATIO.TSLA, spcx: releasable * US_EQUITY_RATIO.SPCX, qld: releasable * US_EQUITY_RATIO.QLD };
@@ -1353,7 +1372,7 @@
         const labels = chartData.map(item => item.dateId ? String(item.dateId).substring(0, 10) : 'N/A');
         const mrData = chartData.map(item => parseFloat(item.nominalMR || 0));
         const p1Data = chartData.map(item => parseFloat(item.p1Ratio || 0));
-        const MR_DANGER_THRESHOLD = 310;
+        const MR_DANGER_THRESHOLD = MR_RED_CEILING; // v15.0 §4.3 觸發線
         const mrRefLineData = labels.map(() => MR_DANGER_THRESHOLD);
 
         if (chartInstance.current) chartInstance.current.destroy();
@@ -1570,7 +1589,10 @@
 
       const nominalMR = L > 0 ? ((C / L) * 100).toFixed(2) : '0.00';
       const p1Ratio = L > 0 ? ((P1 / L) * 100).toFixed(2) : '0.00';
-      const mrZoneInfo = getMRZone(nominalMR);
+      const mrBaseZoneInfo = getMRZone(nominalMR);
+      // v15.0 — 回復帶判定需要歷史 MR，commit④ 接上；此處先固定 false，行為等同純三段制
+      const mrRecoveryActive = false;
+      const mrZoneInfo = getEffectiveMRZone(mrBaseZoneInfo, nominalMR, mrRecoveryActive);
 
       const b0050Val = parseFloat(betaConfig.b0050) || 1.0;
       const b00733Val = parseFloat(betaConfig.b00733) || 1.35;
@@ -1952,7 +1974,7 @@
       const fiatGap1 = Math.max(0, cmTarget - cmCash);
       const fiatCashGapTriggered = (cmCash < cmTarget) || (ergHasDebt && ergBufferMonths < ERG_GATE2_THRESHOLD_MONTHS);
       const fiatGap2 = Math.max(0, 0.30 * L - P1);
-      const fiatIsFrozen = mrZoneInfo.zone === 'ZONE3' || mrZoneInfo.zone === 'DANGER';
+      const fiatIsFrozen = mrZoneInfo.zone === 'RED';
 
       let fiatRemaining = escapeVal;
       let fiatCashAlloc = 0, fiatP1Alloc = 0, fiatStockAlloc = 0, fiatCryptoAlloc = 0;
@@ -2526,8 +2548,8 @@ Ask this box before you withdraw.`
               const leftCards = { input: cardInput };
 
               // v12.12 — mini卡版型(比照AMBER h-44 glass-card + hover翻面)：計算邏輯不動，只改外層容器與排版
-              const mrBorderClass = { STANDBY: 'border-slate-300 dark:border-slate-600', ZONE1: 'border-emerald-500', ZONE2: 'border-yellow-500', ZONE3: 'border-orange-500', DANGER: 'border-rose-500' }[mrZoneInfo.zone];
-              const mrTier = mrZoneInfo.zone === 'DANGER' ? 'danger' : 'core';
+              const mrBorderClass = { STANDBY: 'border-slate-300 dark:border-slate-600', GREEN: 'border-emerald-500', YELLOW: 'border-yellow-500', RED: 'border-rose-500' }[mrZoneInfo.zone];
+              const mrTier = mrZoneInfo.zone === 'RED' ? 'danger' : 'core';
               const cardMr = (
                 <div className={`relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card mini-card-frost mini-card-corners`} onMouseMove={handleMouseMove}>
                   <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
@@ -2546,10 +2568,10 @@ Ask this box before you withdraw.`
                       <span className="text-sky-600 dark:text-amber-400 text-sm font-bold tracking-widest mb-1">[MR_ZONES]</span>
                       <span className="text-slate-600 dark:text-slate-300 text-sm font-semibold leading-tight">
                         <div className="space-y-1">
-                          <div>{t('≥ 350：ZONE 1（安全）', '≥ 350: ZONE 1 (safe)')}</div>
-                          <div>{t('330 ~ 349：ZONE 2（注資僅限股息）', '330–349: ZONE 2 (injection dividends-only)')}</div>
-                          <div>{t('310 ~ 329：ZONE 3（注資凍結）', '310–329: ZONE 3 (injection frozen)')}</div>
-                          <div>{t('< 310：DANGER（強制去槓桿）', '< 310: DANGER (forced deleverage)')}</div>
+                          <div>{t('≥ 350：🟢 GREEN（安全）', '≥ 350: 🟢 GREEN (safe)')}</div>
+                          <div>{t('260 ~ 349：🟡 YELLOW', '260–349: 🟡 YELLOW')}</div>
+                          <div>{t('< 260：🔴 RED（4.3 強制去槓桿）', '< 260: 🔴 RED (4.3 forced deleverage)')}</div>
+                          <div>{t('260 ~ 279：回復帶——僅自 🔴 回升途中，維持 🔴 處置至 MR ≥ 280', '260–279: recovery band — only while climbing back from 🔴, stays 🔴 until MR ≥ 280')}</div>
                           <div className="text-sm font-normal opacity-60 mt-1">{t('目前狀態：', 'Current: ')}{mrZoneInfo.label}</div>
                         </div>
                       </span>
@@ -2657,32 +2679,27 @@ Ask this box before you withdraw.`
                         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                         {cardTitles.usEngine} <span className="text-sm opacity-60 ml-2">v12.2</span>
                       </h2>
-                      <button onClick={() => setShowUsDetail(!showUsDetail)} className={`px-4 py-1.5 rounded-full text-sm font-black border cursor-pointer transition-all hover:scale-105 ${mrZoneInfo.zone === 'ZONE1' ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800' : mrZoneInfo.zone === 'ZONE2' ? 'bg-yellow-50 dark:bg-yellow-950/40 text-yellow-600 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800' : mrZoneInfo.zone === 'ZONE3' ? 'bg-orange-50 dark:bg-orange-950/40 text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800' : mrZoneInfo.zone === 'DANGER' ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700'}`}>
+                      <button onClick={() => setShowUsDetail(!showUsDetail)} className={`px-4 py-1.5 rounded-full text-sm font-black border cursor-pointer transition-all hover:scale-105 ${mrZoneInfo.zone === 'GREEN' ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800' : mrZoneInfo.zone === 'YELLOW' ? 'bg-yellow-50 dark:bg-yellow-950/40 text-yellow-600 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800' : mrZoneInfo.zone === 'RED' ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700'}`}>
                         {mrZoneInfo.label} {showUsDetail ? '◀' : '▶'}
                       </button>
                     </div>
                     <div className="text-xs font-normal normal-case text-slate-400 dark:text-slate-500 mt-1">{t(`匯率手動維護（NT$/USD ${formDataB.usdRate}），記得定期更新`, `Exchange rate is manually maintained (NT$/USD ${formDataB.usdRate}) — remember to update it periodically`)}</div>
                   </div>
 
-                  {(!showUsDetail && (mrZoneInfo.zone === 'ZONE3' || mrZoneInfo.zone === 'DANGER')) ? (
+                  {(!showUsDetail && mrZoneInfo.zone === 'RED') ? (
                     <div className="p-12 text-center bg-rose-50 dark:bg-rose-950/20">
                       <div className="text-6xl mb-4">❄️</div>
                       <div className="text-2xl font-black text-rose-600 dark:text-rose-400 uppercase">
-                        {mrZoneInfo.zone === 'DANGER' ? t('凍結提現，依4.3強制去槓桿', 'FROZEN: Forced Deleverage per 4.3') : t('注資凍結，活水截留 A 帳戶', 'INJECTION FROZEN: Funds Retained in A')}
+                        {t('凍結注資，資金償還質押本金', 'INJECTION FROZEN: Funds Repay Pledged Principal')}
                       </div>
                       <div className="text-sm text-rose-500/70 mt-2 font-bold">{t('鐵律 10-3: Part 10 服從 9.4 維持率燈號', 'Iron Law 10-3: Part 10 obeys 9.4 MR Signal')}</div>
                       <div className="mt-4 text-xs text-slate-400 font-bold">{t('點擊燈號標籤查看持倉狀態 →', 'Click zone badge to view holdings →')}</div>
                     </div>
                   ) : (
                     <div className="p-6 md:p-8 bg-white dark:bg-slate-900">
-                      {(mrZoneInfo.zone === 'ZONE3' || mrZoneInfo.zone === 'DANGER') && (
+                      {mrZoneInfo.zone === 'RED' && (
                         <div className="mb-4 p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-center">
                           <span className="text-sm font-bold text-rose-500">❄️ {t('注資凍結中 — 以下僅為持倉現況，非買入指令', 'FROZEN — below shows current holdings, NOT buy orders')}</span>
-                        </div>
-                      )}
-                      {mrZoneInfo.zone === 'ZONE2' && (
-                        <div className="mb-4 p-3 rounded-xl bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800 text-center">
-                          <span className="text-sm font-bold text-yellow-600 dark:text-yellow-400">⚠️ ZONE2: {t('理論上僅股息應注入，請自行確認此筆活水來源（系統不強制區分股息/增貸，全額放行）', 'Theoretically dividends-only — verify this inflow source yourself (system does not enforce; full release)')}</span>
                         </div>
                       )}
                       {(() => {
@@ -3193,7 +3210,7 @@ Build the wall first. Attack second.`)}
                             ))}
                           </div>
                           <div>{t('以 P1 佔比（P1/L）為觸發器，不看市場漲跌方向，已內含市場資訊（被侵蝕=下跌段、自行升高=上升段），避免落入擇時', 'Triggered by the P1 ratio (P1/L), not market direction — it already encodes market info (erosion=downtrend, self-rising=uptrend), avoiding market timing')}</div>
-                          <div className="text-sm opacity-70">{t('註：本指令只管新資金往哪去，不改變 P1 的 1/3 目標水位、7.14% 死線、350/330/310 燈號等既有條文', 'Note: this only governs where new money goes — it does not change the 1/3 P1 target, the 7.14% death line, or the 350/330/310 signal rules')}</div>
+                          <div className="text-sm opacity-70">{t('註：本指令只管新資金往哪去，不改變 P1 的 1/3 目標水位、7.14% 死線、350/260 燈號等既有條文', 'Note: this only governs where new money goes — it does not change the 1/3 P1 target, the 7.14% death line, or the 350/260 signal rules')}</div>
                         </div>
                       </span>
                     </div>
