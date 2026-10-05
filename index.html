@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/10/05 15:43';
+    const APP_VERSION = '2026/10/05 16:03';
 
     /* ===================================================================
        共用工具
@@ -3571,7 +3571,13 @@ Build the wall first. Attack second.`)}
         const [loading, setLoading] = useState(true);
         const [loadError, setLoadError] = useState('');
         const cacheStatus = useReadCacheStatus();
-        const writeLocked = cacheStatus.showing;
+        const [rowSyncLock, setRowSyncLock] = useState(false);
+        // 只有「上鎖之後才發出」的重新載入成功才能解鎖，避免上鎖前就在途中的舊載入帶回過期列號卻提早解鎖
+        const loadSeqRef = useRef(0);
+        const rowSyncLockSeqRef = useRef(0);
+        const appliedLoadSeqRef = useRef(0);
+        const lockRowSync = () => { rowSyncLockSeqRef.current = loadSeqRef.current; setRowSyncLock(true); };
+        const writeLocked = cacheStatus.showing || rowSyncLock;
         const [isSubmitting, setIsSubmitting] = useState(false);
         const [expandedYears, setExpandedYears] = useState({});
         const [visibleRows, setVisibleRows] = useState({});
@@ -3646,12 +3652,18 @@ Build the wall first. Attack second.`)}
         }, [assetPrefill]);
 
         const loadTerminalData = () => {
-            loadWithReadCache('getDashboardData', () => fetchMatrix('getDashboardData'), (res) => {
+            const loadSeq = ++loadSeqRef.current;
+            loadWithReadCache('getDashboardData', () => fetchMatrix('getDashboardData'), (res, fromCache) => {
+                    // 比較新的載入已套用過時，較舊的回應不得再蓋回畫面（避免舊列號）
+                    if (!fromCache) {
+                        if (loadSeq < appliedLoadSeqRef.current) return;
+                        appliedLoadSeqRef.current = loadSeq;
+                    }
                     const sortedData = [...res].sort((a, b) => String(a.日期).localeCompare(String(b.日期)));
                     setData(sortedData);
                     setLoading(false);
                 }, (res) => Array.isArray(res), cacheStatus.ctl)
-                .then(() => { setLoadError(''); })
+                .then(() => { setLoadError(''); if (loadSeq > rowSyncLockSeqRef.current) setRowSyncLock(false); })
                 .catch((err) => {
                     console.error("Data Fetch Error:", err);
                     if (!(err && err.cacheShown)) setLoadError(`getDashboardData：${err && err.message ? err.message : String(err)}`);
@@ -4004,16 +4016,24 @@ Build the wall first. Attack second.`)}
             }
         };
 
+        // _rowIndex 是試算表實體列號；新增中尚未拿到後端列號的暫時代號不可送出
+        const isTempRowIndex = (rowIndex) => String(rowIndex).startsWith('temp-');
+        const ROW_SYNCING_MSG = '資料同步中，請稍候';
+
         const handleDelete = (rowIndex) => {
             if (writeLocked) return;
+            if (isTempRowIndex(rowIndex)) { alert(ROW_SYNCING_MSG); return; }
             if(window.confirm("CONFIRM DELETE?")) {
                 const previousData = [...data];
                 setData(prev => prev.filter(item => item._rowIndex !== rowIndex));
+                // 刪除會讓下方列號全部上移，送出起到重新載入成功前鎖住寫入，解鎖在 loadTerminalData 成功時
+                lockRowSync();
 
                 fetchMatrix('deleteEntry', { rowIndex })
                     .then((res) => {
                         if(res.status !== 'success') {
                             setData(previousData);
+                            setRowSyncLock(false);
                             alert("DELETE ERROR");
                         } else {
                             loadTerminalData();
@@ -4021,17 +4041,20 @@ Build the wall first. Attack second.`)}
                     })
                     .catch((err) => {
                         setData(previousData);
-                        if (err && err.message === 'ACCESS_UNAUTHORIZED') alert("密碼錯誤，請重新輸入");
-                        else if (err && err.message === 'ACCESS_LOCKED') alert("已鎖定，請稍後再試");
+                        if (err && err.message === 'ACCESS_UNAUTHORIZED') { setRowSyncLock(false); alert("密碼錯誤，請重新輸入"); }
+                        else if (err && err.message === 'ACCESS_LOCKED') { setRowSyncLock(false); alert("已鎖定，請稍後再試"); }
+                        // 網路層失敗無法確定後端是否已刪除，重新載入確認，成功前維持鎖定
+                        else loadTerminalData();
                     });
             }
         };
 
-        const startEdit = (item) => { if (writeLocked) return; setEditingRow(item._rowIndex); setEditFormData({ date: formatYMD(item.日期).replace(/\//g, ''), twStock: item.台股, usStock: item.美股, crypto: item.加密貨幣, note: item.備註 || '' }); };
+        const startEdit = (item) => { if (writeLocked) return; if (isTempRowIndex(item._rowIndex)) { alert(ROW_SYNCING_MSG); return; } setEditingRow(item._rowIndex); setEditFormData({ date: formatYMD(item.日期).replace(/\//g, ''), twStock: item.台股, usStock: item.美股, crypto: item.加密貨幣, note: item.備註 || '' }); };
         const handleEditChange = (e) => setEditFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
 
         const saveEdit = (rowIndex) => {
             if (writeLocked) return;
+            if (isTempRowIndex(rowIndex)) { alert(ROW_SYNCING_MSG); return; }
             const total = Math.round(Number(editFormData.twStock || 0) + Number(editFormData.usStock || 0) + Number(editFormData.crypto || 0));
             const previousData = [...data];
             setData(prev => prev.map(item => item._rowIndex === rowIndex ? { ...item, 日期: editFormData.date, 台股: editFormData.twStock, 美股: editFormData.usStock, 加密貨幣: editFormData.crypto, 總資產: total, 備註: editFormData.note } : item).sort((a, b) => String(a.日期).localeCompare(String(b.日期))));
