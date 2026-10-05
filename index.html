@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/10/01 12:44';
+    const APP_VERSION = '2026/10/05 15:43';
 
     /* ===================================================================
        共用工具
@@ -2545,7 +2545,8 @@ Ask this box before you withdraw.`
               );
 
               const currentIndexVal = parseFloat(crashIndexInput) || 0;
-              const marketDropPct = (isCrashSafe && portfolioBeta > 0) ? (maxMarketDrop / portfolioBeta) : 0;
+              // maxMarketDrop 已是擔保品跌幅 ÷ β 後的指數跌幅，不可再除一次 β
+              const marketDropPct = isCrashSafe ? maxMarketDrop : 0;
               const crashIndexValue = currentIndexVal * (1 - marketDropPct / 100);
 
               const cardCrash = (
@@ -4971,6 +4972,7 @@ Build the wall first. Attack second.`)}
             onUnlock();
           }
         } catch (err) {
+          sessionStorage.removeItem(ACCESS_TOKEN_KEY);
           if (err.message === 'ACCESS_LOCKED') setError('已鎖定，請稍後再試');
           else if (err.message === 'ACCESS_UNAUTHORIZED') setError('密碼錯誤');
           else setError('NETWORK ERROR');
@@ -5154,6 +5156,39 @@ Build the wall first. Attack second.`)}
 
       const activeRecords = records.filter(r => r.status !== DEBT_STATUS_CLOSED);
 
+      // v1.3 — 信用卡「有效已繳期數」：用後端存檔時戳記的 installmentAsOf 錨點日期跟今天的年月差，
+      // 自動把多過去的月數加回 installmentPaid，不用每月手動+1。純年月字串解析(跟 getRemainingInfo
+      // 對 endDate 的手法一致)，刻意不用 new Date(installmentAsOf) 直接轉，避免時區解析造成的日期偏移。
+      // 舊資料(還沒被存過一次、沒有 installmentAsOf)維持原樣顯示 installmentPaid，不強迫遷移。
+      // (宣告位置需在 recordsByCategory/monthlyTotal 之前：兩者在 render 期間同步呼叫 isMonthlyPayEnded)
+      const getEffectiveInstallmentPaid = (r) => {
+        if (r.installmentTotal == null || r.installmentPaid == null) return r.installmentPaid;
+        if (!r.installmentAsOf) return r.installmentPaid;
+        const match = /^(\d{4})-(\d{2})/.exec(String(r.installmentAsOf));
+        if (!match) return r.installmentPaid;
+        const y = parseInt(match[1], 10), m = parseInt(match[2], 10);
+        const now = new Date();
+        let elapsed = (now.getFullYear() - y) * 12 + (now.getMonth() + 1 - m);
+        if (elapsed < 0) elapsed = 0;
+        return Math.min(r.installmentTotal, r.installmentPaid + elapsed);
+      };
+
+      // 月付是否已結束（不計入月付總額與分類小計，畫面照常顯示）：
+      // 信用卡分期有效已繳期數 ≥ 總期數；貸款／保險到期月早於本月（等於本月仍計入）
+      const isMonthlyPayEnded = (r) => {
+        const category = r.category || DEBT_CATEGORY_DEFAULT;
+        if (category === DEBT_CATEGORY_CREDIT_CARD) {
+          return r.installmentTotal != null && getEffectiveInstallmentPaid(r) >= r.installmentTotal;
+        }
+        let endDate = null;
+        if (category === DEBT_CATEGORY_DEFAULT) endDate = r.endDate;
+        else if (category === DEBT_CATEGORY_INSURANCE) endDate = getInsuranceEndDate(r.note);
+        const match = /^(\d{4})-(\d{2})$/.exec(String(endDate || '').trim());
+        if (!match) return false;
+        const now = new Date();
+        return parseInt(match[1], 10) * 12 + parseInt(match[2], 10) < now.getFullYear() * 12 + (now.getMonth() + 1);
+      };
+
       // v1.5 — 按類型分組，組內拆成「執行中」/「已結清」兩個子陣列（已結清改為次級收合，不再混在同一份列表裡）。
       // 固定顯示 DEBT_CATEGORIES 四組（即使 0 筆），未知/舊資料的 category 值另外附加在後面，不讓資料憑空消失。
       // 每組同時算好 activeMonthlyTotal（僅執行中的月付總和，換算後），供表頭大字顯示用。
@@ -5167,7 +5202,7 @@ Build the wall first. Attack second.`)}
             groups[cat].closed.push(r);
           } else {
             groups[cat].active.push(r);
-            groups[cat].activeMonthlyTotal += toMonthlyEquivalent(r.monthlyPay, getPayFrequency(r.note));
+            if (!isMonthlyPayEnded(r)) groups[cat].activeMonthlyTotal += toMonthlyEquivalent(r.monthlyPay, getPayFrequency(r.note));
           }
         });
         return groups;
@@ -5175,7 +5210,7 @@ Build the wall first. Attack second.`)}
       const categoryOrder = [...DEBT_CATEGORIES, ...Object.keys(recordsByCategory).filter(c => !DEBT_CATEGORIES.includes(c))];
 
       const monthlyTotal = useMemo(() => {
-        return activeRecords.reduce((sum, r) => sum + toMonthlyEquivalent(r.monthlyPay, getPayFrequency(r.note)), 0);
+        return activeRecords.reduce((sum, r) => isMonthlyPayEnded(r) ? sum : sum + toMonthlyEquivalent(r.monthlyPay, getPayFrequency(r.note)), 0);
       }, [records]);
 
       // 未載入完成或載入失敗時回傳 null，讓 FOS 端的 LCM fallback 回手動輸入值，
@@ -5196,22 +5231,6 @@ Build the wall first. Attack second.`)}
         if (months < 0) months = 0;
         const pay = toMonthlyEquivalent(monthlyPay, freq);
         return { months, remainAmount: months * pay };
-      };
-
-      // v1.3 — 信用卡「有效已繳期數」：用後端存檔時戳記的 installmentAsOf 錨點日期跟今天的年月差，
-      // 自動把多過去的月數加回 installmentPaid，不用每月手動+1。純年月字串解析(跟 getRemainingInfo
-      // 對 endDate 的手法一致)，刻意不用 new Date(installmentAsOf) 直接轉，避免時區解析造成的日期偏移。
-      // 舊資料(還沒被存過一次、沒有 installmentAsOf)維持原樣顯示 installmentPaid，不強迫遷移。
-      const getEffectiveInstallmentPaid = (r) => {
-        if (r.installmentTotal == null || r.installmentPaid == null) return r.installmentPaid;
-        if (!r.installmentAsOf) return r.installmentPaid;
-        const match = /^(\d{4})-(\d{2})/.exec(String(r.installmentAsOf));
-        if (!match) return r.installmentPaid;
-        const y = parseInt(match[1], 10), m = parseInt(match[2], 10);
-        const now = new Date();
-        let elapsed = (now.getFullYear() - y) * 12 + (now.getMonth() + 1 - m);
-        if (elapsed < 0) elapsed = 0;
-        return Math.min(r.installmentTotal, r.installmentPaid + elapsed);
       };
 
       // 貸款「剩餘應繳(估)」改用年金現值公式反推剩餘本金，修正「月付×剩餘期數」對有利息貸款的
@@ -5315,6 +5334,8 @@ Build the wall first. Attack second.`)}
         return activeRecords.reduce((sum, r) => {
           const cat = r.category || DEBT_CATEGORY_DEFAULT;
           if (![DEBT_CATEGORY_DEFAULT, DEBT_CATEGORY_CREDIT_CARD, DEBT_CATEGORY_INSURANCE].includes(cat)) return sum;
+          // 剩餘金額算不出來(資料不足)的項目，原始總額也不計入，讓分子分母是同一組項目
+          if (getItemRemainingAmount(r) === null) return sum;
           return sum + (getItemOriginalAmount(r) || 0);
         }, 0);
       }, [activeRecords]);
