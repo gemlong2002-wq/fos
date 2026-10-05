@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/10/05 20:57';
+    const APP_VERSION = '2026/10/05 21:12';
 
     /* ===================================================================
        共用工具
@@ -1673,12 +1673,20 @@
          填「目標水位」(targetAmount)，並新增自動計算的「佔總資產%」(讀ASSET分頁totalAssetsFromAsset，
          null/0時代表ASSET分頁尚未同步，佔比顯示為null，UI端降級成「—」，不算NaN)。 */
       const cmCash = parseFloat(cashMoatInputs.cash) || 0;
-      const cmTarget = parseFloat(cashMoatInputs.targetAmount) || 0;
-      const cmHasTarget = cmTarget > 0;
+      /* v15.0 §4.7 — 目標水位固定 120,000，不再使用畫面自訂目標。
+         後端欄位處理：saveCashMoat/loadCashMoat 仍照原樣讀寫 targetAmount（借用後端
+         monthlyDebt 欄位位置），簽名與欄位對應完全不動，後端無感；只是計算端不再採信它。
+         刻意不把 targetAmount 寫成 0 或移除欄位——那會破壞仍開著舊版分頁的前端且不可逆，
+         保留舊值靜置於後端即可，日後若白皮書改回自訂目標可直接恢復。 */
+      const CASH_MOAT_TARGET = 120000;
+      const CASH_MOAT_ALERT_FLOOR = 80000;
+      const cmTarget = CASH_MOAT_TARGET;
       const cmTargetPctOfAssets = (totalAssetsFromAsset && totalAssetsFromAsset > 0) ? (cmTarget / totalAssetsFromAsset * 100) : null;
       const cmGap = cmTarget - cmCash;
       const cmSurplus = cmCash - cmTarget;
       const cmTier = (cmCash < cmTarget) ? 'danger' : 'standard';
+      // 餘額低於 80,000 → 警示「兩週內補回 12 萬」（比單純未達標更嚴重的一級）
+      const cmBelowFloor = cmCash < CASH_MOAT_ALERT_FLOOR;
 
       /* v14.4 — IPO 抽籤篩選器計算（Boss 拍板：納入中籤郵寄費 50 與賣出成本）
          2026-10-01 — 移除預扣關，判定只看價差與期望值，不再讀取現金護城河。 */
@@ -1926,8 +1934,8 @@
 
       const handleCopyReport = () => {
         const report = t(
-          `【A】\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)}（0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}） | P1: ${p1Ratio}%\n【美股固定比例分流 v12.4】\nTSLA ${(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}% | SPCX ${(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}% | QLD ${(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%\n燈號: ${mrZoneInfo.label} ${splitResult.frozen ? '→ 注資凍結' : '→ 放行'}\n【加密三態】\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n【現金護城河】CASH: ${formatNumber(cmCash)} | TARGET: ${cmHasTarget ? formatNumber(cmTarget) : '未設定目標'} | 佔總資產: ${cmTargetPctOfAssets != null ? cmTargetPctOfAssets.toFixed(2) + '%' : '—'} | 狀態: ${cmTier === 'danger' ? '未達標' : '已達標'}`,
-          `[A]\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} (0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}) | P1: ${p1Ratio}%\n[US EQUITY SPLIT v12.4]\nTSLA ${(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}% | SPCX ${(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}% | QLD ${(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%\nSignal: ${mrZoneInfo.label} ${splitResult.frozen ? '→ INJECTION FROZEN' : '→ RELEASED'}\n[CRYPTO 3-STATE]\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n[CASH MOAT] CASH: ${formatNumber(cmCash)} | TARGET: ${cmHasTarget ? formatNumber(cmTarget) : 'NOT SET'} | % of assets: ${cmTargetPctOfAssets != null ? cmTargetPctOfAssets.toFixed(2) + '%' : '—'} | Status: ${cmTier === 'danger' ? 'BELOW TARGET' : 'ON TARGET'}`
+          `【A】\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)}（0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}） | P1: ${p1Ratio}%\n【美股固定比例分流 v12.4】\nTSLA ${(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}% | SPCX ${(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}% | QLD ${(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%\n燈號: ${mrZoneInfo.label} ${splitResult.frozen ? '→ 注資凍結' : '→ 放行'}\n【加密三態】\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n【現金護城河】CASH: ${formatNumber(cmCash)} | TARGET: ${formatNumber(cmTarget)} | 佔總資產: ${cmTargetPctOfAssets != null ? cmTargetPctOfAssets.toFixed(2) + '%' : '—'} | 狀態: ${cmTier === 'danger' ? '未達標' : '已達標'}`,
+          `[A]\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} (0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}) | P1: ${p1Ratio}%\n[US EQUITY SPLIT v12.4]\nTSLA ${(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}% | SPCX ${(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}% | QLD ${(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%\nSignal: ${mrZoneInfo.label} ${splitResult.frozen ? '→ INJECTION FROZEN' : '→ RELEASED'}\n[CRYPTO 3-STATE]\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n[CASH MOAT] CASH: ${formatNumber(cmCash)} | TARGET: ${formatNumber(cmTarget)} | % of assets: ${cmTargetPctOfAssets != null ? cmTargetPctOfAssets.toFixed(2) + '%' : '—'} | Status: ${cmTier === 'danger' ? 'BELOW TARGET' : 'ON TARGET'}`
         );
         navigator.clipboard.writeText(report).then(() => setTerminalMsg('>> REPORT COPIED.')).catch(() => setTerminalMsg('>> COPY FAILED.'));
       };
@@ -1941,7 +1949,7 @@
       // splitResult 這組舊變數(仍原樣保留給美股固定比例分流引擎卡片與複製報告文字使用，那邊維持
       // 固定80/20，不受這次改動影響)。P1戰備門檻用單一30%，是這輪Boss確認的獨立設計決定，
       // 跟「資金分配指令」卡片本身的24%/30%三段式門檻是兩回事，刻意不共用同一組門檻常數。
-      const fiatGap1 = cmHasTarget ? Math.max(0, cmTarget - cmCash) : 0;
+      const fiatGap1 = Math.max(0, cmTarget - cmCash);
       const fiatCashGapTriggered = (cmCash < cmTarget) || (ergHasDebt && ergBufferMonths < ERG_GATE2_THRESHOLD_MONTHS);
       const fiatGap2 = Math.max(0, 0.30 * L - P1);
       const fiatIsFrozen = mrZoneInfo.zone === 'ZONE3' || mrZoneInfo.zone === 'DANGER';
@@ -2322,7 +2330,7 @@
 
                   {inputTab === 'A' ? (
                     <div className="space-y-5">
-                      <div><label className="block text-sm font-bold mb-1.5 text-slate-500 uppercase tracking-wider">L AMOUNT</label><input type="number" inputMode="decimal" name="lAmount" value={formData.lAmount} onChange={handleInputChange} onKeyDown={handleEnterJump(aInputRefs, 0)} ref={el => aInputRefs.current[0] = el} className="w-full tech-input font-mono" placeholder="0" /></div>
+                      <div><label className="block text-sm font-bold mb-1.5 text-slate-500 uppercase tracking-wider">L AMOUNT</label><input type="number" inputMode="decimal" name="lAmount" value={formData.lAmount} onChange={handleInputChange} onKeyDown={handleEnterJump(aInputRefs, 0)} ref={el => aInputRefs.current[0] = el} className="w-full tech-input font-mono" placeholder="0" /><p className="text-xs leading-snug text-slate-400 mt-1">{t('質押借款本金（券商「已動用金額」），不含利息', 'Pledged loan principal (broker\'s "amount drawn") — excluding interest')}</p></div>
                       {/* ERG準備工作一 — 質押年利率：獨立欄位，不加入 Enter 跳格序列（aInputRefs），
                           避免打亂既有欄位的跳格順序索引；預設4（代表4%），供之後 ERG 質押利息月額使用 */}
                       <div><label className="block text-sm font-bold mb-1.5 text-slate-500 uppercase tracking-wider">{t('質押年利率 %', 'PLEDGE RATE %')}</label><input type="number" inputMode="decimal" step="0.01" name="pledgeRate" value={formData.pledgeRate} onChange={handleInputChange} className="w-full tech-input font-mono" placeholder="4" /></div>
@@ -3010,7 +3018,7 @@ Ask this box before you withdraw.`
                     <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-black shrink-0">{cardTitles.cashMoat}</span>
                   </div>
                   <div className={`flex-grow px-5 pb-4 flex flex-col justify-center border-l-[6px] ${cmBorderClass}`}>
-                    <span className={`text-3xl sm:text-4xl font-black font-mono data-text vibe-hover-text tabular-nums mini-card-num ${cmTextClass}`}>{cmHasTarget ? `$${formatNumber(cmTarget)}` : '—'}</span>
+                    <span className={`text-3xl sm:text-4xl font-black font-mono data-text vibe-hover-text tabular-nums mini-card-num ${cmTextClass}`}>{`$${formatNumber(cmTarget)}`}</span>
                     <span className="text-sm font-bold mt-2 opacity-70">{cmPctDisplay}{cmTargetPctOfAssets != null ? ` ${t('佔總資產', 'of assets')}` : ''}</span>
                   </div>
                 </div>
@@ -3033,8 +3041,8 @@ Ask this box before you withdraw.`
                       <input type="number" name="cash" value={cashMoatInputs.cash} onChange={handleCashMoatChange} disabled={writeLocked} title={writeLocked ? WRITE_LOCK_HINT : undefined} className="w-full tech-input text-lg py-2 px-3 disabled:opacity-50 disabled:cursor-not-allowed" />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('目標水位 (TWD)', 'TARGET (TWD)')}</label>
-                      <input type="number" name="targetAmount" value={cashMoatInputs.targetAmount} onChange={handleCashMoatChange} disabled={writeLocked} title={writeLocked ? WRITE_LOCK_HINT : undefined} className="w-full tech-input text-lg py-2 px-3 disabled:opacity-50 disabled:cursor-not-allowed" />
+                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('目標水位 (TWD・固定)', 'TARGET (TWD・FIXED)')}</label>
+                      <div className="w-full tech-input text-lg py-2 px-3 opacity-70 cursor-not-allowed" title={t('白皮書 v15.0 §4.7 固定目標，不可自訂', 'Fixed by whitepaper v15.0 §4.7')}>{formatNumber(CASH_MOAT_TARGET)}</div>
                     </div>
                     <div>
                       <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('佔總資產% (自動)', '% OF ASSETS (AUTO)')}</label>
@@ -3045,14 +3053,19 @@ Ask this box before you withdraw.`
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
                     <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
                       <span className="text-sm font-bold text-slate-600 dark:text-slate-300">{t('目標水位', 'TARGET')}</span>
-                      <span className="text-lg font-black font-mono text-slate-700 dark:text-slate-200">{cmHasTarget ? `$${formatNumber(cmTarget)}` : t('未設定目標', 'TARGET NOT SET')}</span>
+                      <span className="text-lg font-black font-mono text-slate-700 dark:text-slate-200">{`$${formatNumber(cmTarget)}`}</span>
                     </div>
                     <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
                       <span className="text-sm font-bold text-slate-600 dark:text-slate-300">{t('缺口', 'GAP')}</span>
-                      <span className={`text-lg font-black font-mono ${cmHasTarget && cmGap <= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>{cmHasTarget ? `$${formatNumber(cmGap)}` : t('未設定目標', 'TARGET NOT SET')}</span>
+                      <span className={`text-lg font-black font-mono ${cmGap <= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>{`$${formatNumber(cmGap)}`}</span>
                     </div>
                   </div>
 
+                  {cmBelowFloor && (
+                    <div className="mb-4 p-4 rounded-2xl bg-rose-100 dark:bg-rose-950/50 border-2 border-rose-400 dark:border-rose-700 text-sm font-black text-rose-700 dark:text-rose-300">
+                      ⚠️ {t(`現金餘額低於 ${formatNumber(CASH_MOAT_ALERT_FLOOR)}，請於兩週內補回 ${formatNumber(CASH_MOAT_TARGET)}`, `Cash below ${formatNumber(CASH_MOAT_ALERT_FLOOR)} — restore to ${formatNumber(CASH_MOAT_TARGET)} within two weeks`)}
+                    </div>
+                  )}
                   {cmTier !== 'danger' ? (
                     <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-800 text-sm text-emerald-700 dark:text-emerald-400 space-y-1 font-bold">
                       <div>✅ {t('目標水位已達成', 'Target reached')}</div>
