@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/10/06 22:57';
+    const APP_VERSION = '2026/10/06 23:32';
 
     /* ===================================================================
        共用工具
@@ -969,14 +969,54 @@
     };
 
     /* ===================================================================
-       FOS v12.4 — 美股固定比例常數（單一來源，5 處引用點見 fixedRatioSplit /
-       report 樣板 / INJECTION MATRIX 卡片 / 現值目標追蹤卡片）
+       FOS v12.4 — 美股固定比例常數（單一來源）
+       v15.0 §10.6 起，畫面與分流一律改讀 effectiveUsRatio（= 收斂中則取
+       US_EQUITY_RATIO_QLD_ONLY，否則取本常數），不要直接引用這個常數。
     =================================================================== */
     const US_EQUITY_RATIO = { QLD: 0.70, TSLA: 0.20, SPCX: 0.10 };
     const MUSK_TICKERS = ['TSLA', 'SPCX'];
     const MUSK_EXPOSURE_CAP = 0.30;
     const NDX_WEIGHT = { TSLA: 0.033, SPCX: 0.010 };
     const QLD_LEVERAGE = 2.0;
+
+    /* ===================================================================
+       白皮書 v15.0 §10.6 — 馬斯克系收斂（與「穿透曝險」是兩個獨立指標）
+
+       占比 = (TSLA + SPCX) ÷ (TSLA + SPCX + QLD)，**只算直接持倉**，
+       刻意不含 QLD 的 NDX 穿透部位（那是 MUSK_EXPOSURE_CAP／totalExposure
+       那張卡的事，兩者門檻雖同為 30%，但分母與語意不同，不可互相引用）。
+
+       > 30% 且尚未標記收斂完成 → 美股全部注入 QLD（不買 TSLA／SPCX）。
+       首次降到 ≤ 30% 時顯示確認提示，由業主按下確認後記錄完成旗標與日期。
+       旗標只存本機 localStorage（換裝置會重跳提示，見 known limitation）。
+    =================================================================== */
+    const MUSK_CONVERGENCE_CAP = 0.30;
+    const MUSK_CONVERGENCE_DONE_KEY = 'fos:muskConvergence:done';
+    const MUSK_CONVERGENCE_DATE_KEY = 'fos:muskConvergence:date';
+    const US_EQUITY_RATIO_QLD_ONLY = { QLD: 1, TSLA: 0, SPCX: 0 };
+
+    // 無任何美股持倉（分母 0）時回傳 null＝無法判定，不可當成 0%，否則會被誤判為「已收斂」
+    function calcMuskConvergenceRatio(tsla, spcx, qld) {
+      const T = Math.max(0, parseFloat(tsla) || 0);
+      const S = Math.max(0, parseFloat(spcx) || 0);
+      const Q = Math.max(0, parseFloat(qld) || 0);
+      const denom = T + S + Q;
+      if (denom <= 0) return null;
+      return (T + S) / denom;
+    }
+
+    /* status：
+         unknown   — 無持倉，不判定、不改分流
+         over      — 超標且未標記完成 → forceQldOnly
+         over-done — 已標記完成但又漂回 30% 以上（被動漂移）→ 只警示，不再強制
+         under     — 已在門檻內；若尚未標記完成則需業主確認 */
+    function evalMuskConvergence(ratio, done) {
+      if (ratio == null) return { status: 'unknown', ratio: null, forceQldOnly: false, needConfirm: false };
+      if (ratio > MUSK_CONVERGENCE_CAP) {
+        return { status: done ? 'over-done' : 'over', ratio, forceQldOnly: !done, needConfirm: false };
+      }
+      return { status: 'under', ratio, forceQldOnly: false, needConfirm: !done };
+    }
 
     /* ===================================================================
        FOS BOSS 頁卡片拖曳排序（原生 HTML5 Drag & Drop）
@@ -1222,13 +1262,15 @@
         return { label: 'DEFENDING', msg: 'HOLD & OBSERVE', ui: 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700' };
       }
 
-      function fixedRatioSplit(amount, mrZone) {
+      // qldOnly：§10.6 馬斯克系占比超標且未標記收斂完成時，美股全部注入 QLD
+      function fixedRatioSplit(amount, mrZone, qldOnly) {
         if (mrZone === 'RED') {
           // v15.0 R11 — 凍結改綁 🔴（含回復帶）／4.9，訊息統一；美股與加密同步凍結
-          return { frozen: true, msg: '凍結注資，資金償還質押本金', tsla: 0, spcx: 0, qld: 0 };
+          return { frozen: true, qldOnly: false, msg: '凍結注資，資金償還質押本金', tsla: 0, spcx: 0, qld: 0 };
         }
         const releasable = amount;
-        return { frozen: false, tsla: releasable * US_EQUITY_RATIO.TSLA, spcx: releasable * US_EQUITY_RATIO.SPCX, qld: releasable * US_EQUITY_RATIO.QLD };
+        const ratio = qldOnly ? US_EQUITY_RATIO_QLD_ONLY : US_EQUITY_RATIO;
+        return { frozen: false, qldOnly: !!qldOnly, tsla: releasable * ratio.TSLA, spcx: releasable * ratio.SPCX, qld: releasable * ratio.QLD };
       }
 
       function formatNumber(num) {
@@ -1243,6 +1285,9 @@
       const historyCacheFilledRef = useRef({});
       const [inputTab, setInputTab] = useState('A');
       const [formDataB, setFormDataB] = useState({ tsla: '', qld: '', spcx: '', eth: '', btc: '', usdRate: safeGetStorage('fos_usdRate', '32.5') });
+      // §10.6 收斂完成旗標與日期 — 只存本機 localStorage（換裝置會重跳確認提示）
+      const [muskConvDone, setMuskConvDone] = useState(() => safeGetStorage(MUSK_CONVERGENCE_DONE_KEY, '') === '1');
+      const [muskConvDate, setMuskConvDate] = useState(() => safeGetStorage(MUSK_CONVERGENCE_DATE_KEY, ''));
 
       const [formData, setFormData] = useState({
         lAmount: safeGetStorage('fos_lAmount', ''),
@@ -1837,9 +1882,25 @@
       else if (ratioVal >= 0.020 && ratioVal <= 0.060) { consensusTarget = 'ETH'; consensusColor = 'bg-sky-100 dark:bg-sky-950/40 text-sky-700 dark:text-sky-400 border-sky-200 dark:border-sky-900/50'; consensusMsg = '0.020-0.060 (VALUE)'; }
       else if (ratioVal > 0 && ratioVal < 0.020) { consensusTarget = 'BTC'; consensusColor = 'bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-900/50'; consensusMsg = '< 0.020 (FREEZE)'; }
 
+      /* §10.6 馬斯克系收斂 — 只用直接持倉，與穿透曝險卡（totalExposure）完全分開計算 */
+      const muskConv = evalMuskConvergence(
+        calcMuskConvergenceRatio(formDataB.tsla, formDataB.spcx, formDataB.qld),
+        muskConvDone
+      );
+      const effectiveUsRatio = muskConv.forceQldOnly ? US_EQUITY_RATIO_QLD_ONLY : US_EQUITY_RATIO;
+      // 業主確認「收斂已完成」：只寫本機 localStorage，不碰後端
+      const markMuskConvergenceDone = () => {
+        const d = new Date();
+        const stamp = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+        safeSetStorage(MUSK_CONVERGENCE_DONE_KEY, '1');
+        safeSetStorage(MUSK_CONVERGENCE_DATE_KEY, stamp);
+        setMuskConvDone(true);
+        setMuskConvDate(stamp);
+      };
+
       const escapeVal = parseFloat(escapeAmount) || 0;
       const stockInject = escapeVal * 0.8; const cryptoInject = escapeVal * 0.2;
-      const splitResult = fixedRatioSplit(stockInject, mrZoneInfo.zone);
+      const splitResult = fixedRatioSplit(stockInject, mrZoneInfo.zone, muskConv.forceQldOnly);
 
       const handleSave = async (e) => {
         e.preventDefault(); if (writeLocked || L <= 0 || C <= 0) return;
@@ -2157,8 +2218,8 @@
 
       const handleCopyReport = () => {
         const report = t(
-          `【A】\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)}（0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}） | P1: ${p1Ratio}%\n【美股固定比例分流 v12.4】\nTSLA ${(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}% | SPCX ${(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}% | QLD ${(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%\n燈號: ${mrZoneInfo.label} ${splitResult.frozen ? '→ 注資凍結' : '→ 放行'}\n【加密三態】\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n【現金護城河】CASH: ${formatNumber(cmCash)} | TARGET: ${formatNumber(cmTarget)} | 佔總資產: ${cmTargetPctOfAssets != null ? cmTargetPctOfAssets.toFixed(2) + '%' : '—'} | 狀態: ${cmTier === 'danger' ? '未達標' : '已達標'}`,
-          `[A]\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} (0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}) | P1: ${p1Ratio}%\n[US EQUITY SPLIT v12.4]\nTSLA ${(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}% | SPCX ${(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}% | QLD ${(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%\nSignal: ${mrZoneInfo.label} ${splitResult.frozen ? '→ INJECTION FROZEN' : '→ RELEASED'}\n[CRYPTO 3-STATE]\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n[CASH MOAT] CASH: ${formatNumber(cmCash)} | TARGET: ${formatNumber(cmTarget)} | % of assets: ${cmTargetPctOfAssets != null ? cmTargetPctOfAssets.toFixed(2) + '%' : '—'} | Status: ${cmTier === 'danger' ? 'BELOW TARGET' : 'ON TARGET'}`
+          `【A】\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)}（0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}） | P1: ${p1Ratio}%\n【美股固定比例分流 v12.4】\nTSLA ${(effectiveUsRatio.TSLA * 100).toFixed(0)}% | SPCX ${(effectiveUsRatio.SPCX * 100).toFixed(0)}% | QLD ${(effectiveUsRatio.QLD * 100).toFixed(0)}%${muskConv.forceQldOnly ? ' (§10.6 收斂中：全額 QLD)' : ''}\n燈號: ${mrZoneInfo.label} ${splitResult.frozen ? '→ 注資凍結' : '→ 放行'}\n【加密三態】\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n【現金護城河】CASH: ${formatNumber(cmCash)} | TARGET: ${formatNumber(cmTarget)} | 佔總資產: ${cmTargetPctOfAssets != null ? cmTargetPctOfAssets.toFixed(2) + '%' : '—'} | 狀態: ${cmTier === 'danger' ? '未達標' : '已達標'}`,
+          `[A]\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} (0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}) | P1: ${p1Ratio}%\n[US EQUITY SPLIT v12.4]\nTSLA ${(effectiveUsRatio.TSLA * 100).toFixed(0)}% | SPCX ${(effectiveUsRatio.SPCX * 100).toFixed(0)}% | QLD ${(effectiveUsRatio.QLD * 100).toFixed(0)}%${muskConv.forceQldOnly ? ' (§10.6 converging: QLD only)' : ''}\nSignal: ${mrZoneInfo.label} ${splitResult.frozen ? '→ INJECTION FROZEN' : '→ RELEASED'}\n[CRYPTO 3-STATE]\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n[CASH MOAT] CASH: ${formatNumber(cmCash)} | TARGET: ${formatNumber(cmTarget)} | % of assets: ${cmTargetPctOfAssets != null ? cmTargetPctOfAssets.toFixed(2) + '%' : '—'} | Status: ${cmTier === 'danger' ? 'BELOW TARGET' : 'ON TARGET'}`
         );
         navigator.clipboard.writeText(report).then(() => setTerminalMsg('>> REPORT COPIED.')).catch(() => setTerminalMsg('>> COPY FAILED.'));
       };
@@ -2185,7 +2246,7 @@
       // §4.3 拉回 280% 需償還本金（純顯示；🔴／4.9 時才有意義）
       const deleverageRepayment = calcDeleverageRepayment(L, C);
 
-      const fiatSplitResult = fixedRatioSplit(fiatStockAlloc, mrZoneInfo.zone);
+      const fiatSplitResult = fixedRatioSplit(fiatStockAlloc, mrZoneInfo.zone, muskConv.forceQldOnly);
 
       /* 理由文字：依 allocateExternalFunds 回傳的 steps 順序串成一句話，
          讓使用者看得出完整路徑，而不是只看到最後一層。 */
@@ -2360,17 +2421,24 @@
                         {fiatStockAlloc > 0 && (
                           <div className="grid grid-cols-3 gap-3">
                             <div className="bg-white dark:bg-slate-800 p-3 text-center rounded-xl border border-slate-200 dark:border-slate-700">
-                              <div className="text-xs font-bold text-slate-400">TSLA {(US_EQUITY_RATIO.TSLA * 100).toFixed(0)}%</div>
+                              <div className="text-xs font-bold text-slate-400">TSLA {(effectiveUsRatio.TSLA * 100).toFixed(0)}%</div>
                               <div className="text-lg font-black text-sky-600 dark:text-sky-400 font-mono">{formatNumber(fiatSplitResult.tsla)}</div>
                             </div>
                             <div className="bg-white dark:bg-slate-800 p-3 text-center rounded-xl border border-slate-200 dark:border-slate-700">
-                              <div className="text-xs font-bold text-slate-400">SPCX {(US_EQUITY_RATIO.SPCX * 100).toFixed(0)}%</div>
+                              <div className="text-xs font-bold text-slate-400">SPCX {(effectiveUsRatio.SPCX * 100).toFixed(0)}%</div>
                               <div className="text-lg font-black text-sky-600 dark:text-sky-400 font-mono">{formatNumber(fiatSplitResult.spcx)}</div>
                             </div>
                             <div className="bg-white dark:bg-slate-800 p-3 text-center rounded-xl border border-slate-200 dark:border-slate-700">
-                              <div className="text-xs font-bold text-slate-400">QLD {(US_EQUITY_RATIO.QLD * 100).toFixed(0)}%</div>
+                              <div className="text-xs font-bold text-slate-400">QLD {(effectiveUsRatio.QLD * 100).toFixed(0)}%</div>
                               <div className="text-lg font-black text-sky-600 dark:text-sky-400 font-mono">{formatNumber(fiatSplitResult.qld)}</div>
                             </div>
+                          </div>
+                        )}
+                        {fiatSplitResult.qldOnly && fiatStockAlloc > 0 && (
+                          <div className="bg-amber-50 dark:bg-amber-950/30 p-3 rounded-2xl border border-amber-300 dark:border-amber-800 text-center">
+                            <span className="text-sm font-bold text-amber-700 dark:text-amber-400">
+                              ⚠️ {t('§10.6 馬斯克系收斂中 — 美股全額買 QLD，暫停買入 TSLA／SPCX', '§10.6 Musk convergence in progress — all US equity into QLD, TSLA/SPCX paused')}
+                            </span>
                           </div>
                         )}
                         {fiatIsFrozen && (
@@ -2921,15 +2989,52 @@ Ask this box before you withdraw.`
                           <span className="text-sm font-bold text-rose-500">❄️ {t('注資凍結中 — 以下僅為持倉現況，非買入指令', 'FROZEN — below shows current holdings, NOT buy orders')}</span>
                         </div>
                       )}
+                      {/* §10.6 馬斯克系收斂 — 直接持倉口徑，與穿透曝險卡各自獨立 */}
+                      {muskConv.status !== 'unknown' && (
+                        <div className={`mb-4 p-4 rounded-xl border text-center ${muskConv.status === 'over' ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800' : muskConv.status === 'over-done' ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800' : 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800'}`}>
+                          <div className="text-xs font-black uppercase tracking-widest text-slate-400">{t('§10.6 馬斯克系占比（直接持倉）', '§10.6 MUSK SHARE (DIRECT HOLDINGS)')}</div>
+                          <div className={`text-3xl font-black font-mono mt-1 ${muskConv.status === 'under' ? 'text-emerald-600 dark:text-emerald-400' : muskConv.status === 'over' ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                            {(muskConv.ratio * 100).toFixed(1)}%
+                          </div>
+                          <div className="text-xs font-bold text-slate-400 mt-0.5">(TSLA + SPCX) ÷ (TSLA + SPCX + QLD)｜{t('上限', 'CAP')} {(MUSK_CONVERGENCE_CAP * 100).toFixed(0)}%</div>
+                          {muskConv.status === 'over' && (
+                            <div className="text-sm font-bold text-amber-700 dark:text-amber-400 mt-2">
+                              ⚠️ {t('超過 30% — 美股全額買 QLD，暫停買入 TSLA／SPCX 直到降回 30% 以內', 'Above 30% — all US equity into QLD; TSLA/SPCX paused until back within 30%')}
+                            </div>
+                          )}
+                          {muskConv.status === 'over-done' && (
+                            <div className="text-sm font-bold text-rose-700 dark:text-rose-400 mt-2">
+                              {t(`已於 ${muskConvDate || '—'} 標記收斂完成，但占比又漂回 30% 以上（被動漂移），請人工檢視`, `Convergence marked complete on ${muskConvDate || '—'}, but share drifted back above 30% (passive drift) — manual review needed`)}
+                            </div>
+                          )}
+                          {muskConv.needConfirm && (
+                            <div className="mt-3">
+                              {/* 這裡不能寫「恢復 70/20/10」：本分支涵蓋「從未超標過」的情況，
+                                  此時 70/20/10 本來就在生效，說成被限制中是假的 */}
+                              <div className="text-sm font-bold text-emerald-700 dark:text-emerald-400 mb-2">
+                                ✅ {t('占比在 30% 門檻內 — 標記為已確認後不再提示', 'Share is within the 30% cap — mark as confirmed to stop this prompt')}
+                              </div>
+                              <button onClick={markMuskConvergenceDone} className="tech-btn bg-emerald-500 hover:bg-emerald-600 text-white px-5 py-2 text-sm font-black shadow-sm">
+                                {t('標記 §10.6 收斂完成', 'MARK §10.6 CONVERGENCE DONE')}
+                              </button>
+                            </div>
+                          )}
+                          {muskConv.status === 'under' && !muskConv.needConfirm && (
+                            <div className="text-xs font-bold text-emerald-600 dark:text-emerald-400 mt-2">
+                              {t(`收斂已完成（${muskConvDate || '—'}）`, `Convergence complete (${muskConvDate || '—'})`)}
+                            </div>
+                          )}
+                        </div>
+                      )}
                       {(() => {
                         const curTsla = parseFloat(formDataB.tsla) || 0;
                         const curSpcx = parseFloat(formDataB.spcx) || 0;
                         const curQld = parseFloat(formDataB.qld) || 0;
                         const usTotal = curTsla + curSpcx + curQld;
                         const targets = [
-                          { name: 'TSLA', ratio: US_EQUITY_RATIO.TSLA, current: curTsla, color: 'sky', desc: t('高β個股', 'High β Stock') },
-                          { name: 'SPCX', ratio: US_EQUITY_RATIO.SPCX, current: curSpcx, color: 'violet', desc: 'SpaceX (2026/6/12)' },
-                          { name: 'QLD',  ratio: US_EQUITY_RATIO.QLD,  current: curQld,  color: 'emerald', desc: 'Nasdaq 100 ×2' }
+                          { name: 'TSLA', ratio: effectiveUsRatio.TSLA, current: curTsla, color: 'sky', desc: t('高β個股', 'High β Stock') },
+                          { name: 'SPCX', ratio: effectiveUsRatio.SPCX, current: curSpcx, color: 'violet', desc: 'SpaceX (2026/6/12)' },
+                          { name: 'QLD',  ratio: effectiveUsRatio.QLD,  current: curQld,  color: 'emerald', desc: 'Nasdaq 100 ×2' }
                         ];
                         return (
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
@@ -2939,6 +3044,9 @@ Ask this box before you withdraw.`
                               const pct = targetVal > 0 ? Math.min((item.current / targetVal) * 100, 100) : 0;
                               const isFull = diff <= 0;
                               const isEmpty = item.current === 0 && usTotal > 0;
+                              // §10.6 收斂中目標比例為 0 → 必須顯示「暫停買入」，不能落入 isEmpty 的
+                              // 「100% BUY」或 isFull 的「已足額」，否則與收斂指令互相矛盾
+                              const isPaused = item.ratio === 0;
                               const colorMap = { sky: { bar: 'bg-sky-500', text: 'text-sky-600 dark:text-sky-400' }, violet: { bar: 'bg-violet-500', text: 'text-violet-600 dark:text-violet-400' }, emerald: { bar: 'bg-emerald-500', text: 'text-emerald-600 dark:text-emerald-400' } };
                               const cm = colorMap[item.color];
                               return (
@@ -2958,7 +3066,11 @@ Ask this box before you withdraw.`
                                     <span className="text-xs font-bold text-slate-400">{t('目標', 'TARGET')}</span>
                                     <span className="text-base font-bold font-mono text-slate-500 dark:text-slate-400">${formatNumber(targetVal)}</span>
                                   </div>
-                                  {isEmpty ? (
+                                  {isPaused ? (
+                                    <div className="p-2 rounded-lg text-center text-sm font-black text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+                                      ⏸ {t('§10.6 收斂中，暫停買入', '§10.6 CONVERGING — BUY PAUSED')}
+                                    </div>
+                                  ) : isEmpty ? (
                                     <div className={`p-2 rounded-lg text-center text-sm font-black ${cm.text} bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700`}>
                                       100% BUY {item.name}
                                     </div>
