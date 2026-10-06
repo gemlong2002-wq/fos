@@ -389,13 +389,14 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/10/06 23:32';
+    const APP_VERSION = '2026/10/07 00:21';
 
     /* ===================================================================
        共用工具
     =================================================================== */
     const safeGetStorage = (key, defVal) => { try { return localStorage.getItem(key) || defVal; } catch(e) { return defVal; } };
     const safeSetStorage = (key, val) => { try { localStorage.setItem(key, val); } catch(e) {} };
+    const safeRemoveStorage = (key) => { try { localStorage.removeItem(key); } catch(e) {} };
 
     /* ===================================================================
        共用變數層（ERG 準備工作一）——供 LCM/WCI/ERG 等多個模組共用的純函式，
@@ -1220,6 +1221,7 @@
       const MR_GREEN_FLOOR = 350;
       const MR_RED_CEILING = 260;   // 低於此值 → 🔴（4.3 觸發線）
       const MR_RECOVERY_EXIT = 280; // 回復帶出場線（4.3 拉回目標）
+      // mr：未四捨五入的原始 MR 數值（呼叫端傳 nominalMRRaw，不可傳 toFixed 後的字串）
       function getMRZone(mr) {
         const val = parseFloat(mr);
         if (val === 0) return { dot: 'bg-slate-300 dark:bg-slate-600', text: 'text-slate-400', label: 'STANDBY', zone: 'STANDBY' };
@@ -1230,6 +1232,7 @@
 
       /* 疊加回復帶：recoveryActive 由歷史紀錄算出（commit④ 接上，本 commit 先建框架，
          傳入 false 時行為等同純三段制）。在回復帶內一律沿用 🔴 的處置與視覺。 */
+      // mr 同 getMRZone：未四捨五入的原始數值，回復帶出場線 280 也靠它比對
       function getEffectiveMRZone(baseZoneInfo, mr, recoveryActive) {
         const val = parseFloat(mr);
         if (!recoveryActive) return baseZoneInfo;
@@ -1237,11 +1240,12 @@
         return { dot: 'bg-rose-500 shadow-[0_0_10px_#f43f5e] animate-pulse', text: 'text-rose-500 dark:text-rose-400', label: 'RED (RECOVERY)', zone: 'RED', recoveryBand: true };
       }
 
-      function getCryptoAction(asset, currentPrice, athPrice, drawdown, ethBtcRatio) {
+      // ethBtcRatioRaw：未四捨五入的原始比值（冰凍區門檻比對用，不可傳 toFixed 後的字串）
+      function getCryptoAction(asset, currentPrice, athPrice, drawdown, ethBtcRatioRaw) {
         const dd = parseFloat(drawdown);
         const price = parseFloat(currentPrice);
         const ath = parseFloat(athPrice);
-        const ratio = parseFloat(ethBtcRatio);
+        const ratio = parseFloat(ethBtcRatioRaw) || 0;
 
         if (asset === 'ETH' && ratio > 0 && ratio < 0.020) {
           if (price > 0 && ath > 0 && price >= ath) {
@@ -1288,6 +1292,8 @@
       // §10.6 收斂完成旗標與日期 — 只存本機 localStorage（換裝置會重跳確認提示）
       const [muskConvDone, setMuskConvDone] = useState(() => safeGetStorage(MUSK_CONVERGENCE_DONE_KEY, '') === '1');
       const [muskConvDate, setMuskConvDate] = useState(() => safeGetStorage(MUSK_CONVERGENCE_DATE_KEY, ''));
+      // 撤銷標記的二次確認：false=只顯示「撤銷」鈕，true=顯示「確定撤銷／取消」
+      const [muskConvUndoArmed, setMuskConvUndoArmed] = useState(false);
 
       const [formData, setFormData] = useState({
         lAmount: safeGetStorage('fos_lAmount', ''),
@@ -1347,6 +1353,8 @@
       const [aiFields, setAiFields] = useState({});
       const [isRecognizing, setIsRecognizing] = useState(false);
       const [isInjecting, setIsInjecting] = useState(false);
+      // INJECT A+B 部分成功追蹤：已寫入的那一邊不再重送（見 handleInjectAll）
+      const [injectDone, setInjectDone] = useState({ a: false, b: false });
       const fileInputRef = useRef(null);
 
       // v12.8 — A/B INPUT 輸入框 ENTER 跳下一格 + 全選（各自獨立序列，不跨組，最後一格停住不動作）
@@ -1805,9 +1813,12 @@
         onLiquidityBufferChange(p1LiquidityBufferTop);
       }, [p1LiquidityBufferTop]);
 
-      const nominalMR = L > 0 ? ((C / L) * 100).toFixed(2) : '0.00';
+      /* 門檻比對一律吃 nominalMRRaw（未四捨五入）；nominalMR 只負責顯示與後端 payload。
+         若拿 toFixed(2) 的字串去比，259.996 會被進位成 260.00 而漏判 🔴。 */
+      const nominalMRRaw = L > 0 ? (C / L) * 100 : 0;
+      const nominalMR = nominalMRRaw.toFixed(2);
       const p1Ratio = L > 0 ? ((P1 / L) * 100).toFixed(2) : '0.00';
-      const mrBaseZoneInfo = getMRZone(nominalMR);
+      const mrBaseZoneInfo = getMRZone(nominalMRRaw);
       /* v15.0 §4.2／§4.9 — 以 FOS 歷史紀錄判定回復帶與快速下降。
          優先用 fullHistory（完整），尚未抓到時退回近 60 筆的 history；
          下方另有 effect 在近 60 筆涵蓋不到取樣區間時自動補抓完整歷史。 */
@@ -1817,8 +1828,8 @@
       );
       const mrNowTime = Date.now();
       const mrRecoveryActive = isMrRecoveryActive(mrHistorySorted, MR_RED_CEILING, MR_RECOVERY_EXIT);
-      const mrZoneInfo = getEffectiveMRZone(mrBaseZoneInfo, nominalMR, mrRecoveryActive);
-      const mrQuickDrop = evalQuickDrop(mrHistorySorted, parseFloat(nominalMR), mrNowTime);
+      const mrZoneInfo = getEffectiveMRZone(mrBaseZoneInfo, nominalMRRaw, mrRecoveryActive);
+      const mrQuickDrop = evalQuickDrop(mrHistorySorted, nominalMRRaw, mrNowTime);
       const quickDropActive = mrQuickDrop.status === 'active';
 
       /* 近 60 筆若最舊一筆仍晚於取樣區間下界（T-37），代表 60 筆涵蓋不到 30 日前，
@@ -1853,15 +1864,18 @@
       const isCrashSafe = maxMarketDrop > 0;
 
       const currentBtc = liveCrypto.BTC || 0; const currentEth = liveCrypto.ETH || 0;
-      const ethBtcRatio = currentBtc > 0 ? (currentEth / currentBtc).toFixed(4) : '0.0000';
+      /* 同 MR：三態門檻比對吃 ethBtcRatioRaw，ethBtcRatio 只負責顯示與 payload。
+         0.019996 經 toFixed(4) 會變 0.0200，拿字串比會漏判冰凍區。 */
+      const ethBtcRatioRaw = currentBtc > 0 ? currentEth / currentBtc : 0;
+      const ethBtcRatio = ethBtcRatioRaw.toFixed(4);
 
       const btcAth = parseFloat(formData.btcAth) || 1;
       const ethAth = parseFloat(formData.ethAth) || 1;
       const btcDrawdown = (currentBtc > 0 && btcAth > 0) ? (((currentBtc - btcAth) / btcAth) * 100).toFixed(2) : '0.00';
       const ethDrawdown = (currentEth > 0 && ethAth > 0) ? (((currentEth - ethAth) / ethAth) * 100).toFixed(2) : '0.00';
 
-      const btcAction = getCryptoAction('BTC', currentBtc, formData.btcAth, btcDrawdown, ethBtcRatio);
-      const ethAction = getCryptoAction('ETH', currentEth, formData.ethAth, ethDrawdown, ethBtcRatio);
+      const btcAction = getCryptoAction('BTC', currentBtc, formData.btcAth, btcDrawdown, ethBtcRatioRaw);
+      const ethAction = getCryptoAction('ETH', currentEth, formData.ethAth, ethDrawdown, ethBtcRatioRaw);
 
       const diffValue = Math.abs(c0050 - c00733);
       let targetInjection = t('已平衡', 'BALANCED');
@@ -1877,7 +1891,7 @@
       }
 
       let consensusTarget = 'BTC'; let consensusColor = 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'; let consensusMsg = '...';
-      const ratioVal = parseFloat(ethBtcRatio);
+      const ratioVal = ethBtcRatioRaw;
       if (ratioVal > 0.060) { consensusTarget = 'BTC'; consensusColor = 'bg-yellow-100 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400 border-yellow-200 dark:border-yellow-900/50'; consensusMsg = '> 0.060 (OVERHEATED)'; }
       else if (ratioVal >= 0.020 && ratioVal <= 0.060) { consensusTarget = 'ETH'; consensusColor = 'bg-sky-100 dark:bg-sky-950/40 text-sky-700 dark:text-sky-400 border-sky-200 dark:border-sky-900/50'; consensusMsg = '0.020-0.060 (VALUE)'; }
       else if (ratioVal > 0 && ratioVal < 0.020) { consensusTarget = 'BTC'; consensusColor = 'bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-900/50'; consensusMsg = '< 0.020 (FREEZE)'; }
@@ -1896,6 +1910,17 @@
         safeSetStorage(MUSK_CONVERGENCE_DATE_KEY, stamp);
         setMuskConvDone(true);
         setMuskConvDate(stamp);
+        setMuskConvUndoArmed(false);
+      };
+      /* 撤銷完成標記：清掉旗標與日期，§10.6 判定回到「未標記完成」
+         （超標即恢復強制 QLD、降回門檻內會再跳一次確認提示）。
+         二次確認走同頁面的 muskConvUndoArmed，刻意不用 window.confirm。 */
+      const undoMuskConvergenceDone = () => {
+        safeRemoveStorage(MUSK_CONVERGENCE_DONE_KEY);
+        safeRemoveStorage(MUSK_CONVERGENCE_DATE_KEY);
+        setMuskConvDone(false);
+        setMuskConvDate('');
+        setMuskConvUndoArmed(false);
       };
 
       const escapeVal = parseFloat(escapeAmount) || 0;
@@ -1920,27 +1945,46 @@
         catch (err) { setTerminalMsg('>> FAILED.'); }
       };
 
+      /* INJECT A + B 部分失敗防重複寫入。
+         舊版用 Promise.all，任一邊拋錯就整組 reject，不但看不出哪邊成功，重試還會把
+         已寫入的那一邊再寫一次（歷史多出重複列）。改法：
+         - 兩邊各自包成不會 reject 的 runSave，用 injectDone 記住已寫入的那一邊
+         - 重試時只重送還沒成功的那一邊；兩邊都失敗才整筆重送
+         - 兩邊都成功才清掉 injectDone 並做 ASSET 預填 */
+      const runSave = async (action, payload) => {
+        try { const res = await gasAPI(action, payload); return !!(res && res.success); }
+        catch (err) { return false; }
+      };
+
       const handleInjectAll = async () => {
         if (isInjecting || writeLocked) return;
         setIsInjecting(true);
-        setTerminalMsg('>> INJECTING A + B...');
-        try {
-          const saveAPayload = { lAmount: L, c0050, c00733, p1Value: P1, btcPrice: currentBtc, ethPrice: currentEth, p2Usdt: formData.p2Usdt, nominalMR, p1Ratio, ethBtcRatio: ethBtcRatio };
-          const [resA, resB] = await Promise.all([
-            gasAPI('saveFOSData', saveAPayload),
-            gasAPI('saveFOSDataB', formDataB)
-          ]);
-          if (resA.success && resB.success) {
-            fetchHistory(); fetchHistoryB(); setTerminalMsg('>> A + B INJECTED.');
-            const rate = parseFloat(formDataB.usdRate) || 32.5;
-            const usStockUsdSum = (parseFloat(formDataB.tsla) || 0) + (parseFloat(formDataB.qld) || 0) + (parseFloat(formDataB.spcx) || 0);
-            const usStockTwd = Math.round(usStockUsdSum * rate);
-            const cryptoTwd = Math.round((parseFloat(formDataB.eth) || 0) + (parseFloat(formDataB.btc) || 0));
-            const twStockTwd = Math.round(c0050 + c00733 + P1);
-            if (onInjectPrefill) onInjectPrefill({ twStock: twStockTwd, usStock: usStockTwd, crypto: cryptoTwd });
-          }
-          else setTerminalMsg('>> PARTIAL FAIL: A=' + (resA.success ? 'OK' : 'ERR') + ' B=' + (resB.success ? 'OK' : 'ERR'));
-        } catch (err) { setTerminalMsg('>> INJECT FAILED.'); }
+        const needA = !injectDone.a;
+        const needB = !injectDone.b;
+        setTerminalMsg(needA && needB ? '>> INJECTING A + B...' : needA ? '>> RETRYING A ONLY...' : '>> RETRYING B ONLY...');
+        const saveAPayload = { lAmount: L, c0050, c00733, p1Value: P1, btcPrice: currentBtc, ethPrice: currentEth, p2Usdt: formData.p2Usdt, nominalMR, p1Ratio, ethBtcRatio: ethBtcRatio };
+        // 已寫入的那一邊直接視為成功，不再呼叫後端
+        const [aOk, bOk] = await Promise.all([
+          needA ? runSave('saveFOSData', saveAPayload) : Promise.resolve(true),
+          needB ? runSave('saveFOSDataB', formDataB) : Promise.resolve(true)
+        ]);
+        if (needA && aOk) fetchHistory();
+        if (needB && bOk) fetchHistoryB();
+
+        if (aOk && bOk) {
+          setInjectDone({ a: false, b: false });
+          setTerminalMsg('>> A + B INJECTED.');
+          const rate = parseFloat(formDataB.usdRate) || 32.5;
+          const usStockUsdSum = (parseFloat(formDataB.tsla) || 0) + (parseFloat(formDataB.qld) || 0) + (parseFloat(formDataB.spcx) || 0);
+          const usStockTwd = Math.round(usStockUsdSum * rate);
+          const cryptoTwd = Math.round((parseFloat(formDataB.eth) || 0) + (parseFloat(formDataB.btc) || 0));
+          const twStockTwd = Math.round(c0050 + c00733 + P1);
+          if (onInjectPrefill) onInjectPrefill({ twStock: twStockTwd, usStock: usStockTwd, crypto: cryptoTwd });
+        } else {
+          // 記下已成功的那一邊；兩邊都失敗時為 {false,false}，下次整筆重送
+          setInjectDone({ a: aOk, b: bOk });
+          setTerminalMsg(aOk ? '>> A OK / B FAILED — RETRY SENDS B ONLY.' : bOk ? '>> B OK / A FAILED — RETRY SENDS A ONLY.' : '>> A + B BOTH FAILED.');
+        }
         setIsInjecting(false);
       };
 
@@ -2045,8 +2089,9 @@
       const ergMrAfter50 = ergGate1HasData ? ((C * 0.5) / L) * 100 : 0;
       const ergGate1Pass = ergGate1HasData && ergMrAfter50 >= ERG_GATE1_SAFETY_MR;
 
-      // 閘門3「配息覆蓋」— 粗略模型：殖利率、月生活費為新增前端輸入（ergExtraInputs），
-      // 殖利率預設視為稅前、統一年化處理，壓縮係數0.5先寫死不做UI可調參數，之後再精修
+      // 閘門3「配息覆蓋」— 粗略模型：只有月生活費是前端輸入（ergExtraInputs），
+      // 殖利率已固定為參考值（見下方 ERG_GATE3_YIELD_PCT），視為稅前、統一年化處理；
+      // 壓縮係數0.5先寫死不做UI可調參數，之後再精修
       const ERG_GATE3_COMPRESSION = 0.5; // 壓縮係數，先寫死
       // 2026/08/22 Boss拍板 — 殖利率%不再開放輸入，直接固定當參考依據，理由同壓縮係數：
       // 0050近10年均殖利率約3.00% + 00733近7年均殖利率約4.40%（含2024一次性偏高配息年）簡單平均
@@ -2114,7 +2159,7 @@
           name: t('配息覆蓋', 'DIVIDEND COVERAGE'),
           status: !ergGate3HasData ? 'pending' : (ergGate3Pass ? 'pass' : 'fail'),
           display: !ergGate3HasData
-            ? t('資料未就緒（殖利率或生活費未輸入）', 'DATA NOT READY (yield or living cost unset)')
+            ? t(`資料未就緒（月生活費未輸入；殖利率為固定參考值 ${ERG_GATE3_YIELD_PCT}%）`, `DATA NOT READY (monthly living cost unset; yield is a fixed ${ERG_GATE3_YIELD_PCT}% reference)`)
             : t(`壓縮後年配息估 ${formatNumber(Math.round(ergCompressedDividend))}（年生活費 ${formatNumber(Math.round(ergAnnualLiving))}）`, `Compressed est. annual dividend ${formatNumber(Math.round(ergCompressedDividend))} (annual living cost ${formatNumber(Math.round(ergAnnualLiving))})`)
         },
         {
@@ -2156,7 +2201,7 @@
           title: t('閘門3・配息覆蓋', 'GATE 3 · DIVIDEND COVERAGE'),
           what: t('就算配息打五折（保守估計），一年領到的配息夠不夠付一年生活費。', 'Even with dividends discounted 50% (a conservative estimate), do a year of dividends cover a year of living costs.'),
           formula: t('年配息估×0.5 ≥ 月生活費×12。', 'Annual dividend estimate × 0.5 ≥ Monthly living cost × 12.'),
-          howTo: t('先填上方「殖利率%」與「月生活費」兩個欄位；沒過則提高殖利率持股比重、增加持股市值，或降低生活費。', 'First fill in "Yield %" and "Monthly Living" above; if it fails, raise yield-weighted holdings, increase holdings value, or lower living costs.')
+          howTo: t(`先填上方「月生活費」欄位（殖利率為固定參考值 ${ERG_GATE3_YIELD_PCT}%，不開放輸入）；沒過則增加持股市值或降低生活費。`, `First fill in "Monthly Living" above (yield is a fixed ${ERG_GATE3_YIELD_PCT}% reference and not editable); if it fails, increase holdings value or lower living costs.`)
         },
         4: {
           title: t('閘門4・月付無未爆彈', 'GATE 4 · NO HIDDEN PAYMENT SPIKES'),
@@ -2676,7 +2721,21 @@
                       </div>
                     </div>
                   )}
-                  <button type="button" onClick={handleInjectAll} disabled={isInjecting || writeLocked} className={`w-full tech-btn text-white text-xl py-4 mt-6 shadow-lg ${isInjecting ? 'bg-slate-400 cursor-wait' : writeLocked ? 'bg-slate-400 cursor-not-allowed' : 'bg-gradient-to-r from-sky-600 to-violet-600 hover:from-sky-500 hover:to-violet-500'}`}>{isInjecting ? 'INJECTING...' : writeLocked ? WRITE_LOCK_HINT : 'INJECT A + B'}</button>
+                  {(injectDone.a || injectDone.b) && (
+                    <div className="mt-4 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 text-center">
+                      <div className="text-sm font-black text-amber-700 dark:text-amber-400">
+                        ⚠️ {injectDone.a
+                          ? t('A 已寫入、B 失敗', 'A WRITTEN / B FAILED')
+                          : t('B 已寫入、A 失敗', 'B WRITTEN / A FAILED')}
+                      </div>
+                      <div className="text-xs font-bold text-amber-600 dark:text-amber-500 mt-1">
+                        {injectDone.a
+                          ? t('重試只會重送 B，A 不會再寫一次', 'Retry sends B only — A will not be written again')
+                          : t('重試只會重送 A，B 不會再寫一次', 'Retry sends A only — B will not be written again')}
+                      </div>
+                    </div>
+                  )}
+                  <button type="button" onClick={handleInjectAll} disabled={isInjecting || writeLocked} className={`w-full tech-btn text-white text-xl py-4 mt-6 shadow-lg ${isInjecting ? 'bg-slate-400 cursor-wait' : writeLocked ? 'bg-slate-400 cursor-not-allowed' : 'bg-gradient-to-r from-sky-600 to-violet-600 hover:from-sky-500 hover:to-violet-500'}`}>{isInjecting ? 'INJECTING...' : writeLocked ? WRITE_LOCK_HINT : injectDone.a ? 'RETRY B ONLY' : injectDone.b ? 'RETRY A ONLY' : 'INJECT A + B'}</button>
                 </div>
               );
 
@@ -2840,7 +2899,7 @@ Ask this box before you withdraw.`
                       {/* v15.0 §4.9 快速下降狀態：active 赤字警示、unknown 灰字標註無法判定（視為未觸發） */}
                       {quickDropActive && (
                         <span className="text-xs font-black text-rose-600 dark:text-rose-400 mt-1 leading-tight">
-                          ⚡ {t(`4.9 快速下降（${mrQuickDrop.prevMr.toFixed(0)} → ${parseFloat(nominalMR).toFixed(0)}，近 30 日 −${mrQuickDrop.drop.toFixed(1)}）`, `4.9 QUICK DROP (${mrQuickDrop.prevMr.toFixed(0)} → ${parseFloat(nominalMR).toFixed(0)}, 30d −${mrQuickDrop.drop.toFixed(1)})`)}
+                          ⚡ {t(`4.9 快速下降（${mrQuickDrop.prevMr.toFixed(0)} → ${nominalMRRaw.toFixed(0)}，近 30 日 −${mrQuickDrop.drop.toFixed(1)}）`, `4.9 QUICK DROP (${mrQuickDrop.prevMr.toFixed(0)} → ${nominalMRRaw.toFixed(0)}, 30d −${mrQuickDrop.drop.toFixed(1)})`)}
                         </span>
                       )}
                       {mrQuickDrop.status === 'unknown' && (
@@ -2989,13 +3048,21 @@ Ask this box before you withdraw.`
                           <span className="text-sm font-bold text-rose-500">❄️ {t('注資凍結中 — 以下僅為持倉現況，非買入指令', 'FROZEN — below shows current holdings, NOT buy orders')}</span>
                         </div>
                       )}
-                      {/* §10.6 馬斯克系收斂 — 直接持倉口徑，與穿透曝險卡各自獨立 */}
-                      {muskConv.status !== 'unknown' && (
-                        <div className={`mb-4 p-4 rounded-xl border text-center ${muskConv.status === 'over' ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800' : muskConv.status === 'over-done' ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800' : 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800'}`}>
+                      {/* §10.6 馬斯克系收斂 — 直接持倉口徑，與穿透曝險卡各自獨立。
+                          無持倉（status unknown）時本來不必顯示，但若旗標已標記完成仍要渲染，
+                          否則業主會失去撤銷標記的入口 */}
+                      {(muskConv.status !== 'unknown' || muskConvDone) && (
+                        <div className={`mb-4 p-4 rounded-xl border text-center ${muskConv.status === 'over' ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800' : muskConv.status === 'over-done' ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800' : muskConv.status === 'unknown' ? 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700' : 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800'}`}>
                           <div className="text-xs font-black uppercase tracking-widest text-slate-400">{t('§10.6 馬斯克系占比（直接持倉）', '§10.6 MUSK SHARE (DIRECT HOLDINGS)')}</div>
-                          <div className={`text-3xl font-black font-mono mt-1 ${muskConv.status === 'under' ? 'text-emerald-600 dark:text-emerald-400' : muskConv.status === 'over' ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                            {(muskConv.ratio * 100).toFixed(1)}%
-                          </div>
+                          {muskConv.ratio == null ? (
+                            <div className="text-lg font-black font-mono mt-1 text-slate-400">
+                              {t('無美股持倉，無法判定', 'NO US HOLDINGS — N/A')}
+                            </div>
+                          ) : (
+                            <div className={`text-3xl font-black font-mono mt-1 ${muskConv.status === 'under' ? 'text-emerald-600 dark:text-emerald-400' : muskConv.status === 'over' ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                              {(muskConv.ratio * 100).toFixed(1)}%
+                            </div>
+                          )}
                           <div className="text-xs font-bold text-slate-400 mt-0.5">(TSLA + SPCX) ÷ (TSLA + SPCX + QLD)｜{t('上限', 'CAP')} {(MUSK_CONVERGENCE_CAP * 100).toFixed(0)}%</div>
                           {muskConv.status === 'over' && (
                             <div className="text-sm font-bold text-amber-700 dark:text-amber-400 mt-2">
@@ -3022,6 +3089,31 @@ Ask this box before you withdraw.`
                           {muskConv.status === 'under' && !muskConv.needConfirm && (
                             <div className="text-xs font-bold text-emerald-600 dark:text-emerald-400 mt-2">
                               {t(`收斂已完成（${muskConvDate || '—'}）`, `Convergence complete (${muskConvDate || '—'})`)}
+                            </div>
+                          )}
+                          {/* 撤銷標記：只在已標記完成時出現（under 已確認 ／ over-done 兩種狀態），
+                              需同頁二次確認；撤銷後 §10.6 判定回到未標記完成 */}
+                          {muskConvDone && (
+                            <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
+                              {!muskConvUndoArmed ? (
+                                <button onClick={() => setMuskConvUndoArmed(true)} className="text-xs font-bold text-slate-400 hover:text-rose-500 underline decoration-dotted cursor-pointer bg-transparent border-0">
+                                  {t('撤銷收斂完成標記', 'Undo convergence-complete mark')}
+                                </button>
+                              ) : (
+                                <div className="space-y-2">
+                                  <div className="text-xs font-bold text-rose-600 dark:text-rose-400">
+                                    {t('確定撤銷？撤銷後若占比超過 30%，美股會立即恢復「全額買 QLD」的強制分流。', 'Undo this mark? If the share is above 30%, US equity immediately reverts to QLD-only.')}
+                                  </div>
+                                  <div className="flex items-center justify-center gap-2">
+                                    <button onClick={undoMuskConvergenceDone} className="tech-btn bg-rose-500 hover:bg-rose-600 text-white px-4 py-1.5 text-xs font-black shadow-sm">
+                                      {t('確定撤銷', 'CONFIRM UNDO')}
+                                    </button>
+                                    <button onClick={() => setMuskConvUndoArmed(false)} className="tech-btn bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-300 px-4 py-1.5 text-xs font-bold shadow-sm">
+                                      {t('取消', 'CANCEL')}
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -3153,7 +3245,7 @@ Ask this box before you withdraw.`
                     </div>
                   </div>
                   <div className="mt-4 p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-300 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-400">
-                    <strong>{t('QLD 70% 不是安全配置。', 'QLD 70% is NOT a safe allocation.')}</strong> {t('它是 2 倍每日重置槓桿 ETF，有波動耗損（beta slippage），長期報酬 ≠ 2 × NDX 報酬。Nasdaq-100 中科技類股佔約 68.5%，本引擎實質為「單一產業重押 × 2 倍槓桿」，零防禦類、零非美、零實體資產。', 'It is a 2x daily-reset leveraged ETF with volatility decay (beta slippage) — long-term return ≠ 2 × NDX return. Tech stocks make up approx. 68.5% of Nasdaq-100; this engine is effectively "single-sector concentration × 2x leverage" — zero defensive assets, zero non-US, zero physical assets.')}
+                    <strong>{t(`QLD ${(effectiveUsRatio.QLD * 100).toFixed(0)}% 不是安全配置。`, `QLD ${(effectiveUsRatio.QLD * 100).toFixed(0)}% is NOT a safe allocation.`)}</strong> {t('它是 2 倍每日重置槓桿 ETF，有波動耗損（beta slippage），長期報酬 ≠ 2 × NDX 報酬。Nasdaq-100 中科技類股佔約 68.5%，本引擎實質為「單一產業重押 × 2 倍槓桿」，零防禦類、零非美、零實體資產。', 'It is a 2x daily-reset leveraged ETF with volatility decay (beta slippage) — long-term return ≠ 2 × NDX return. Tech stocks make up approx. 68.5% of Nasdaq-100; this engine is effectively "single-sector concentration × 2x leverage" — zero defensive assets, zero non-US, zero physical assets.')}
                     <br /><br />
                     {t('v13.0 降低的是「單一人物風險」，未降低「科技產業系統性崩盤風險」。唯一防線為 A/B 物理隔離。', 'v13.0 reduces "single-person risk", NOT "tech-sector systemic collapse risk". The only line of defense is A/B physical isolation.')}
                   </div>
@@ -3566,7 +3658,7 @@ Build the wall first. Attack second.`)}
                   {/* 閘門3/4/5 粗略模型輸入 — 純前端local state，不動後端，2026/08/20 Boss拍板先求有再求好 */}
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                     <div>
-                      <label className="block text-sm font-bold uppercase tracking-widest text-slate-400 mb-1">{t('殖利率% (稅前,年化,固定參考值)', 'YIELD % (pre-tax, annualized, fixed reference)')}</label>
+                      <label className="block text-sm font-bold uppercase tracking-widest text-slate-400 mb-1">{t(`殖利率% (稅前,年化,固定參考值 ${ERG_GATE3_YIELD_PCT}%)`, `YIELD % (pre-tax, annualized, fixed ${ERG_GATE3_YIELD_PCT}% reference)`)}</label>
                       <div className="w-full tech-input text-sm py-2 px-3 opacity-70 cursor-default select-none">{ERG_GATE3_YIELD_PCT}%</div>
                     </div>
                     <div>
@@ -4512,8 +4604,11 @@ Build the wall first. Attack second.`)}
         // dynamicGrowthPct 改為「純投資報酬」：已排除本金進出污染的逐日複利連乘結果，不再是兩點式 (終點-起點)/起點
         const dynamicGrowthPct = cleanCompound.count > 0 ? (cleanCompound.myFactor - 1) * 100 : 0;
 
-        const { cagr, holdingYears, cagrWarning } = useMemo(() => {
-            if (targetRecords.length < 2) return { cagr: 0, holdingYears: 0, cagrWarning: false };
+        /* isSubYear：所選期間不足 365 天時不年化（年化是數學外推，短期會嚴重放大）。
+           改顯示該期間的實際報酬率 periodReturn，同樣取自排除本金污染後的 cleanCompound.myFactor。 */
+        const { cagr, holdingYears, cagrWarning, isSubYear, periodReturn, periodDays } = useMemo(() => {
+            // 0 或 1 筆：期間定義上就 < 365 天，必須走「不年化」路徑，且本身即為資料不足（亮 ⚠️）
+            if (targetRecords.length < 2) return { cagr: 0, holdingYears: 0, cagrWarning: true, isSubYear: true, periodReturn: 0, periodDays: 0 };
             const firstData = targetRecords[0];
             const lastData = targetRecords[targetRecords.length - 1];
             const rawBegin = Number(firstData.總資產);
@@ -4532,8 +4627,13 @@ Build the wall first. Attack second.`)}
             // v12.8 — CAGR 連動：改用排除本金污染後的乾淨複利報酬率（cleanCompound.myFactor）年化，
             // 不再用含污染的 endAsset/beginAsset 兩點式。年化期間(years)算法不變，仍是日期差/365.25。
             const cagrValue = cleanCompound.count > 0 ? (Math.pow(cleanCompound.myFactor, 1 / years) - 1) * 100 : 0;
+            // 期間實際報酬率（不年化）：myFactor 已是該期間的連乘結果，直接 −1 即為區間報酬
+            const periodReturnValue = cleanCompound.count > 0 ? (cleanCompound.myFactor - 1) * 100 : 0;
 
-            return { cagr: cagrValue, holdingYears: years, cagrWarning: warn };
+            return {
+                cagr: cagrValue, holdingYears: years, cagrWarning: warn,
+                isSubYear: rawDays < 365, periodReturn: periodReturnValue, periodDays: Math.max(0, Math.round(rawDays))
+            };
         }, [targetRecords, cleanCompound]);
 
         const extremesCalc = useMemo(() => {
@@ -4601,7 +4701,10 @@ Build the wall first. Attack second.`)}
         const momDeltaIsPos = momDeltaAmt >= 0;
         const velocityIsPos = dailyVelocity >= 0;
         const growthIsPos = dynamicGrowthPct >= 0;
-        const cagrIsPos = cagr >= 0;
+        /* 卡片一律顯示 shownReturn：未滿一年＝期間實際報酬率，滿一年＝年化 CAGR。
+           邊框與火焰/雪花顏色跟著顯示的那個數字，不會出現「數字負、邊框正」的錯配。 */
+        const shownReturn = isSubYear ? periodReturn : cagr;
+        const shownIsPos = shownReturn >= 0;
         const isFIRE = totalAssets >= 30000000;
 
         useEffect(() => {
@@ -4895,26 +4998,29 @@ Build the wall first. Attack second.`)}
 
                             <div className="relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card" onMouseMove={handleMouseMove}>
                                 <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
-                                    <span className="text-slate-500 dark:text-blue-500/80 text-sm font-mono uppercase tracking-wider font-extrabold shrink-0 vibe-hover-text">年化複利 CAGR ENGINE</span>
-                                    <span className="text-sm font-mono tracking-widest border px-2 py-0.5 rounded border-indigo-200 dark:border-blue-500/30 text-indigo-600 dark:text-blue-400 bg-indigo-50 dark:bg-blue-950/40 font-bold vibe-hover-text">[{holdingYears.toFixed(2)} YRS]</span>
+                                    <span className="text-slate-500 dark:text-blue-500/80 text-sm font-mono uppercase tracking-wider font-extrabold shrink-0 vibe-hover-text">{isSubYear ? '期間報酬 PERIOD RETURN' : '年化複利 CAGR ENGINE'}</span>
+                                    <span className="text-sm font-mono tracking-widest border px-2 py-0.5 rounded border-indigo-200 dark:border-blue-500/30 text-indigo-600 dark:text-blue-400 bg-indigo-50 dark:bg-blue-950/40 font-bold vibe-hover-text">[{isSubYear ? `${periodDays} DAYS` : `${holdingYears.toFixed(2)} YRS`}]</span>
                                 </div>
                                 <div className="group relative flex-grow cursor-crosshair">
-                                    <div className={"absolute inset-0 px-5 pb-4 flex flex-col justify-center border-l-[6px] transition-all duration-300 group-hover:opacity-0 group-hover:scale-95 bg-slate-50/50 dark:bg-slate-900/50 " + (cagrIsPos ? "border-indigo-500 dark:border-blue-500" : "border-rose-500")}>
-                                        <span className={"text-3xl sm:text-4xl md:text-5xl font-mono font-extrabold vibe-hover-text " + (cagrIsPos ? "text-indigo-600 dark:text-blue-400" : "text-rose-600 dark:text-rose-400")}>
-                                            {cagrIsPos ? <span className="animate-flame mr-1">🔥</span> : <span>❄️ </span>}{cagrIsPos ? <span>+</span> : null}{(isNaN(cagr) ? 0 : cagr).toFixed(2)}%
+                                    <div className={"absolute inset-0 px-5 pb-4 flex flex-col justify-center border-l-[6px] transition-all duration-300 group-hover:opacity-0 group-hover:scale-95 bg-slate-50/50 dark:bg-slate-900/50 " + (shownIsPos ? "border-indigo-500 dark:border-blue-500" : "border-rose-500")}>
+                                        <span className={"text-3xl sm:text-4xl md:text-5xl font-mono font-extrabold vibe-hover-text " + (shownIsPos ? "text-indigo-600 dark:text-blue-400" : "text-rose-600 dark:text-rose-400")}>
+                                            {shownIsPos ? <span className="animate-flame mr-1">🔥</span> : <span>❄️ </span>}{shownIsPos ? <span>+</span> : null}{(isNaN(shownReturn) ? 0 : shownReturn).toFixed(2)}%
                                             {cagrWarning && <span className="ml-2 text-amber-500 cursor-help text-sm" title="資料不足或異常，此數字不可靠（起始資產為0或日期區間過短）">⚠️</span>}
                                         </span>
-                                        {!cagrWarning && holdingYears < 1 && <span className="text-sm font-mono font-bold text-amber-600 dark:text-amber-400 uppercase tracking-widest mt-1">⚠️ 短期年化，參考性低</span>}
+                                        {/* 未滿一年一律不年化：顯示的是該期間的實際報酬率，不是外推的年化值 */}
+                                        {!cagrWarning && isSubYear && <span className="text-sm font-mono font-bold text-amber-600 dark:text-amber-400 tracking-widest mt-1">⚠️ 期間未滿一年，不年化</span>}
                                     </div>
-                                    <div className={"absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 flex flex-col justify-start opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl overflow-y-auto " + (cagrIsPos ? "border-indigo-500 dark:border-blue-500/30" : "border-rose-500 dark:border-rose-500/30")}>
+                                    <div className={"absolute inset-0 p-5 bg-white dark:bg-black/95 border-t-4 flex flex-col justify-start opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 shadow-xl overflow-y-auto " + (shownIsPos ? "border-indigo-500 dark:border-blue-500/30" : "border-rose-500 dark:border-rose-500/30")}>
                                         <span className="text-indigo-600 dark:text-blue-400 text-sm font-bold tracking-widest mb-1">[COMPOUND_YIELD]</span>
                                         <span className="text-slate-600 dark:text-blue-200/80 text-sm font-semibold leading-tight">
                                             <div className="space-y-2">
-                                                <div>用「排除本金進出污染後」的乾淨報酬率年化，<span className="font-normal opacity-70">不是用含存提款的帳面總資產去算</span></div>
+                                                <div>用「排除本金進出污染後」的乾淨報酬率{isSubYear ? '計算' : '年化'}，<span className="font-normal opacity-70">不是用含存提款的帳面總資產去算</span></div>
                                                 <div>年化複利：<span className="font-normal opacity-70">把期間總報酬換算成「假設持續一整年」的速度</span>
-                                                    <div className="text-sm font-normal opacity-60 mt-0.5 leading-snug">⚠️ 期間不足一年時，這是數學外推，不代表真實年報酬。期間越短、外推失真越嚴重（例如 0.5 年賺 50%，年化會顯示約 125%，但那不是你真的賺到的）</div>
+                                                    <div className="text-sm font-normal opacity-60 mt-0.5 leading-snug">⚠️ 年化是數學外推，期間越短失真越嚴重（例如 0.5 年賺 50%，年化會顯示約 125%，但那不是你真的賺到的）。因此<span className="font-bold">期間未滿 365 天時一律不年化</span>，直接顯示該期間的實際報酬率。</div>
                                                 </div>
-                                                <div>年化期間 [{holdingYears.toFixed(2)} YRS]：<span className="font-normal opacity-70">區間起訖日期差 ÷ 365.25</span></div>
+                                                {isSubYear
+                                                    ? <div>本期間 [{periodDays} DAYS]：<span className="font-normal opacity-70">未滿 365 天，上方顯示的是期間實際報酬率，未經年化</span></div>
+                                                    : <div>年化期間 [{holdingYears.toFixed(2)} YRS]：<span className="font-normal opacity-70">區間起訖日期差 ÷ 365.25</span></div>}
                                             </div>
                                         </span>
                                     </div>
