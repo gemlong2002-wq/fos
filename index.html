@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/10/07 00:21';
+    const APP_VERSION = '2026/10/08 19:30';
 
     /* ===================================================================
        共用工具
@@ -1210,7 +1210,7 @@
     /* ===================================================================
        FOS 子元件 (Boss Terminal v12.2)  — isDarkMode / isEng 由 AppShell 注入
     =================================================================== */
-    function FosTerminal({ isDarkMode, isEng, onInjectPrefill, onLAmountChange, onPledgeRateChange, debtMonthlyTotal, totalAssetsFromAsset, onLiquidityBufferChange }) {
+    function FosTerminal({ isDarkMode, isEng, onInjectPrefill, onLAmountChange, onPledgeRateChange, debtMonthlyTotal, totalAssetsFromAsset, bAccountFromAsset, onLiquidityBufferChange }) {
       /* v15.0 §4.2 — 燈號三段制（原 ZONE1/2/3/DANGER 四段作廢，🟠 310~330 撤銷）：
            🟢 GREEN  MR ≥ 350
            🟡 YELLOW 260 ≤ MR < 350
@@ -1453,7 +1453,10 @@
         gate4HasUpcomingSpike: safeGetStorage('fos_erg_gate4HasUpcomingSpike', 'false') === 'true',
         // v14.3 — 閘門5「腰斬後提領率」門檻%，沿用同一組 ergExtraInputs/handleErgExtraChange
         // 存取機制（handleErgExtraChange 會自動存成 'fos_erg_' + name）
-        gate5ThresholdPct: safeGetStorage('fos_erg_gate5ThresholdPct', '')
+        gate5ThresholdPct: safeGetStorage('fos_erg_gate5ThresholdPct', ''),
+        // 閘門3 實際股息：近 12 個月實際現金股息總額＋該數字的填寫日期（<input type="date">，恆為 YYYY-MM-DD）
+        actualAnnualDividend: safeGetStorage('fos_erg_actualAnnualDividend', ''),
+        actualDividendDate: safeGetStorage('fos_erg_actualDividendDate', '')
       }));
       const handleErgExtraChange = (e) => {
         const { name, value, type, checked } = e.target;
@@ -1856,10 +1859,15 @@
       const limitMRVal = parseFloat(betaConfig.mrLimit) || 130;
 
       let portfolioBeta = 0; let maxMarketDrop = 0;
-      if (C > 0 && L > 0) {
+      /* beta 只需要 C（擔保品組成），不需要 L；L > 0 只是 maxMarketDrop（距離斷頭還能跌幾%）
+         的前提。兩者原本綁在同一個 if，導致「質押借款為 0」時 beta 停留在 0，
+         ERG 閘門5 的 max(0, 1 − 0.5β) 會算出存活率 1.0＝擔保品腰斬後毫髮無傷。 */
+      if (C > 0) {
           portfolioBeta = ((c0050 * b0050Val) + (c00733 * b00733Val)) / C;
-          const maxCollateralDrop = (C - (limitMRVal / 100) * L) / C;
-          maxMarketDrop = (maxCollateralDrop / portfolioBeta) * 100;
+          if (L > 0) {
+              const maxCollateralDrop = (C - (limitMRVal / 100) * L) / C;
+              maxMarketDrop = (maxCollateralDrop / portfolioBeta) * 100;
+          }
       }
       const isCrashSafe = maxMarketDrop > 0;
 
@@ -2089,43 +2097,79 @@
       const ergMrAfter50 = ergGate1HasData ? ((C * 0.5) / L) * 100 : 0;
       const ergGate1Pass = ergGate1HasData && ergMrAfter50 >= ERG_GATE1_SAFETY_MR;
 
-      // 閘門3「配息覆蓋」— 粗略模型：只有月生活費是前端輸入（ergExtraInputs），
-      // 殖利率已固定為參考值（見下方 ERG_GATE3_YIELD_PCT），視為稅前、統一年化處理；
-      // 壓縮係數0.5先寫死不做UI可調參數，之後再精修
-      const ERG_GATE3_COMPRESSION = 0.5; // 壓縮係數，先寫死
-      // 2026/08/22 Boss拍板 — 殖利率%不再開放輸入，直接固定當參考依據，理由同壓縮係數：
-      // 0050近10年均殖利率約3.00% + 00733近7年均殖利率約4.40%（含2024一次性偏高配息年）簡單平均
+      /* 閘門3「股息覆蓋」— 壓縮後年股息是否蓋得住「生活費＋全部債務月付」。
+         分母與閘門5 同一口徑（兩者都代表「不工作時每年一定要付出去的錢」），
+         所以 debtMonthlyTotal 尚未載入（null）時一律待定，不可當 0 美化結果。
+         分子優先用業主填的「近 12 個月實際現金股息總額」；沒填才退回 C × 殖利率估算。
+         × 0.5 壓縮係數的依據：保守假設危機期間配息減半。 */
+      const ERG_GATE3_COMPRESSION = 0.5;
+      // 2026/08/22 Boss拍板 — 殖利率%不開放輸入，固定當參考依據（僅在未填實際股息時使用）
       const ERG_GATE3_YIELD_PCT = 3.7;
-      const ergYieldPct = ERG_GATE3_YIELD_PCT;
+      // 實際股息的填寫日期超過這個月數 → 提醒更新（配息是年度資料，容許一個季度的緩衝）
+      const ERG_GATE3_DIVIDEND_STALE_MONTHS = 13;
       const ergMonthlyLiving = parseFloat(ergExtraInputs.monthlyLiving) || 0;
-      const ergGate3HasData = C > 0 && ergMonthlyLiving > 0;
-      const ergAnnualDividendEst = C * (ergYieldPct / 100);
-      const ergCompressedDividend = ergAnnualDividendEst * ERG_GATE3_COMPRESSION;
-      const ergAnnualLiving = ergMonthlyLiving * 12;
-      const ergGate3Pass = ergGate3HasData && ergCompressedDividend >= ergAnnualLiving;
+
+      // 實際股息：空字串／非數字／負數一律視為「未填」，退回估算
+      const ergActualDividendRaw = parseFloat(ergExtraInputs.actualAnnualDividend);
+      const ergHasActualDividend = Number.isFinite(ergActualDividendRaw) && ergActualDividendRaw > 0;
+      const ergDividendBase = ergHasActualDividend ? ergActualDividendRaw : C * (ERG_GATE3_YIELD_PCT / 100);
+      const ergDividendIsEstimate = !ergHasActualDividend;
+      const ergCompressedDividend = ergDividendBase * ERG_GATE3_COMPRESSION;
+      // 填寫日期（<input type="date"，恆為 YYYY-MM-DD）超過 ERG_GATE3_DIVIDEND_STALE_MONTHS
+      // 個月 → 提醒更新；沒填實際股息時不提醒
+      const ergDividendDateMs = ergHasActualDividend ? Date.parse(ergExtraInputs.actualDividendDate || '') : NaN;
+      const ergDividendStale = ergHasActualDividend && (
+        !Number.isFinite(ergDividendDateMs)
+        || (Date.now() - ergDividendDateMs) > ERG_GATE3_DIVIDEND_STALE_MONTHS * 30.44 * ONE_DAY_MS
+      );
+      // 分母：生活費＋全部債務月付（年化）。債務月付未載入 → 待定
+      const ergGate3AnnualNeed = ((debtMonthlyTotal || 0) + ergMonthlyLiving) * 12;
+      const ergGate3HasData = debtMonthlyTotal != null && ergMonthlyLiving > 0
+        && (ergHasActualDividend || C > 0);
+      const ergGate3Pass = ergGate3HasData && ergCompressedDividend >= ergGate3AnnualNeed;
 
       // 閘門4「月付無未爆彈」— 簡化版：手動勾選「近N個月內是否有已知月付變動」，不新增後端欄位，
       // 沿用閘門2的N=24；未勾選視為通過，之後若要接後端排程結構再升級
       const ergGate4Pass = !ergExtraInputs.gate4HasUpcomingSpike;
 
-      // 閘門5「腰斬後提領率」— 報酬順序風險（sequence-of-returns risk）：
-      // 假設轉職當年就遇上大熊市、資產直接腰斬，一年的「月付+生活費」會吃掉
-      // 腰斬後「還能動用」的資產多少%。閘門1測斷頭、閘門2測緩衝月數，都沒有涵蓋這一塊。
-      // Boss 拍板兩個口徑：(1) 可用資產要扣掉質押借款 L（腰斬後得先還得起 L，剩下的才算數）
-      //                   (2) 年支出不含質押利息（利息另計，這裡只看月付+生活費）
-      // 資料全部沿用既有變數，不新增資料來源：
-      //   月付   = debtMonthlyTotal（與閘門2 ergMonthlyDebtEffective 同一個來源）
-      //   生活費 = ergMonthlyLiving（與閘門3 共用同一個輸入欄）
-      //   總資產 = totalAssetsFromAsset（FosTerminal 既有 prop，ASSET 頁最新一筆）
-      //   借款   = L（FosTerminal 既有變數）
+      /* 閘門5「腰斬後提領率」— 報酬順序風險（sequence-of-returns risk）：
+         假設轉職當年就遇上大熊市，一年的「月付+生活費」會吃掉腰斬後「還能動用」的資產多少%。
+         閘門1測斷頭、閘門2測緩衝月數，都沒有涵蓋這一塊。
+
+         腰斬後可用資產改為「分部位壓縮」，不再對總資產一律打五折 —— 三個部位對大盤腰斬的
+         反應差距太大，齊頭五折會嚴重高估轉職後的可動用資金：
+           C（0050＋00733 擔保品）× max(0, 1 − 0.5 × β)   β 沿用既有 portfolioBeta，不另寫一套
+           P1（正2）× 0                                   大盤腰斬時正2 約跌 75～85%，保守直接視為 0
+           B（美股＋加密）× 0.3
+         再扣掉質押借款 L（腰斬後得先還得起 L，剩下的才算數）。
+         年支出仍不含質押利息（利息另計，這裡只看月付＋生活費），門檻 8% 不變。
+
+         資料來源：
+           月付   = debtMonthlyTotal（與閘門2 ergMonthlyDebtEffective 同一個來源）
+           生活費 = ergMonthlyLiving（與閘門3 共用同一個輸入欄）
+           B 帳戶 = bAccountFromAsset（ASSET 頁最新一筆的美股＋加密，台幣）；取不到時
+                    退回「總資產 − C − P1」推算，畫面會標示為推算值
+           借款   = L（FosTerminal 既有變數） */
       const ERG_GATE5_DEFAULT_THRESHOLD_PCT = 8;
+      const ERG_GATE5_P1_SURVIVAL = 0;    // 正2 腰斬後保守視為 0
+      const ERG_GATE5_B_SURVIVAL = 0.3;   // B 帳戶（美股＋加密）保留 30%
       const ergGate5ThresholdRaw = parseFloat(ergExtraInputs.gate5ThresholdPct);
       // 空值或非數字一律視為預設 8
       const ergGate5ThresholdPct = Number.isFinite(ergGate5ThresholdRaw) ? ergGate5ThresholdRaw : ERG_GATE5_DEFAULT_THRESHOLD_PCT;
+      // B 帳戶優先吃 ASSET 頁實際值；取不到才用「總資產 − C − P1」推算（可能為負，夾到 0）
+      // 只有 null（ASSET 頁尚未 mount／還沒有任何紀錄）才算取不到；0 是有效值＝真的沒有美股與加密
+      const ergGate5BIsEstimated = !Number.isFinite(bAccountFromAsset);
+      const ergGate5B = ergGate5BIsEstimated
+        ? Math.max(0, (totalAssetsFromAsset || 0) - C - P1)
+        : bAccountFromAsset;
+      // 擔保品存活率：β 越高跌越深；β ≥ 2 時夾到 0，不讓它變負數
+      const ergGate5CSurvival = Math.max(0, 1 - 0.5 * portfolioBeta);
       const ergGate5HasData = totalAssetsFromAsset != null && totalAssetsFromAsset > 0
         && debtMonthlyTotal != null && ergMonthlyLiving > 0;
       const ergGate5AnnualSpend = ((debtMonthlyTotal || 0) + ergMonthlyLiving) * 12;
-      const ergGate5AssetsAfterCrash = (totalAssetsFromAsset || 0) * 0.5;
+      const ergGate5AssetsAfterCrash = C * ergGate5CSurvival
+        + P1 * ERG_GATE5_P1_SURVIVAL
+        + ergGate5B * ERG_GATE5_B_SURVIVAL;
       const ergGate5Investable = ergGate5AssetsAfterCrash - L;
       // 腰斬後連質押借款都還不起（可用資產 ≤ 0）→ 直接判定 fail，不去算出負數/無限大提領率
       const ergGate5CannotCoverLoan = ergGate5HasData && ergGate5Investable <= 0;
@@ -2135,6 +2179,10 @@
       const ergGate5WithdrawalPctNoLoan = (ergGate5HasData && ergGate5AssetsAfterCrash > 0)
         ? (ergGate5AnnualSpend / ergGate5AssetsAfterCrash * 100) : null;
       const ergGate5Pass = ergGate5WithdrawalPct != null && ergGate5WithdrawalPct <= ergGate5ThresholdPct;
+      // 取不到 ASSET 頁的美股／加密時，畫面必須明示 B 帳戶是推算來的
+      const ergGate5BNote = ergGate5BIsEstimated
+        ? t('｜B 帳戶以推算值計（總資產 − 擔保品 − P1）', ' | B account estimated (total assets - collateral - P1)')
+        : '';
 
       // status: 'pass'(✅達標) / 'fail'(⬜未達標，已建置但未過門檻) / 'pending'(🔲尚未建置，或已建置但缺資料無法判定)
       const ergGates = [
@@ -2156,11 +2204,15 @@
         },
         {
           id: 3,
-          name: t('配息覆蓋', 'DIVIDEND COVERAGE'),
+          name: t('股息覆蓋', 'DIVIDEND COVERAGE'),
           status: !ergGate3HasData ? 'pending' : (ergGate3Pass ? 'pass' : 'fail'),
           display: !ergGate3HasData
-            ? t(`資料未就緒（月生活費未輸入；殖利率為固定參考值 ${ERG_GATE3_YIELD_PCT}%）`, `DATA NOT READY (monthly living cost unset; yield is a fixed ${ERG_GATE3_YIELD_PCT}% reference)`)
-            : t(`壓縮後年配息估 ${formatNumber(Math.round(ergCompressedDividend))}（年生活費 ${formatNumber(Math.round(ergAnnualLiving))}）`, `Compressed est. annual dividend ${formatNumber(Math.round(ergCompressedDividend))} (annual living cost ${formatNumber(Math.round(ergAnnualLiving))})`)
+            ? (debtMonthlyTotal == null
+                ? t('資料未就緒（債務月付尚未載入）', 'DATA NOT READY (debt monthly payment not loaded)')
+                : ergMonthlyLiving <= 0
+                ? t('資料未就緒（月生活費未輸入）', 'DATA NOT READY (monthly living cost unset)')
+                : t('資料未就緒（擔保品市值與實際股息皆為 0）', 'DATA NOT READY (collateral value and actual dividends are both zero)'))
+            : t(`壓縮後年股息 ${formatNumber(Math.round(ergCompressedDividend))}${ergDividendIsEstimate ? '（估算）' : ''}（年需求 ${formatNumber(Math.round(ergGate3AnnualNeed))}＝生活費＋債務月付）${ergDividendStale ? '｜請更新年度股息' : ''}`, `Compressed annual dividend ${formatNumber(Math.round(ergCompressedDividend))}${ergDividendIsEstimate ? ' (estimated)' : ''} (annual need ${formatNumber(Math.round(ergGate3AnnualNeed))} = living + debt payments)${ergDividendStale ? ' | please update annual dividend' : ''}`)
         },
         {
           id: 4,
@@ -2175,12 +2227,14 @@
           name: t('腰斬後提領率', 'WITHDRAWAL RATE AFTER -50%'),
           status: !ergGate5HasData ? 'pending' : ((ergGate5CannotCoverLoan || !ergGate5Pass) ? 'fail' : 'pass'),
           display: !ergGate5HasData
-            ? t('資料未就緒（總資產、月付或月生活費未就緒）', 'DATA NOT READY (total assets, monthly debt or living cost unset)')
+            ? (debtMonthlyTotal == null
+                ? t('資料未就緒（債務月付尚未載入）', 'DATA NOT READY (debt monthly payment not loaded)')
+                : t('資料未就緒（總資產或月生活費未就緒）', 'DATA NOT READY (total assets or living cost unset)'))
             : ergGate5CannotCoverLoan
-            ? t('腰斬後資產不足以償還質押借款', 'Assets after -50% cannot cover the pledged loan')
+            ? t(`腰斬後可用資產 ${formatNumber(Math.round(ergGate5AssetsAfterCrash))} 不足以償還質押借款 ${formatNumber(Math.round(L))}${ergGate5BNote}`, `Usable assets after the crash ${formatNumber(Math.round(ergGate5AssetsAfterCrash))} cannot cover the pledged loan ${formatNumber(Math.round(L))}${ergGate5BNote}`)
             : ergGate5Pass
-            ? t(`腰斬後提領率 ${ergGate5WithdrawalPct.toFixed(1)}%（門檻 ≤ ${ergGate5ThresholdPct}%）（不扣借款對照 ${ergGate5WithdrawalPctNoLoan.toFixed(1)}%）`, `Withdrawal rate after -50% ${ergGate5WithdrawalPct.toFixed(1)}% (threshold ≤ ${ergGate5ThresholdPct}%) (excl. loan deduction: ${ergGate5WithdrawalPctNoLoan.toFixed(1)}%)`)
-            : t(`若轉職當年腰斬，提領率 ${ergGate5WithdrawalPct.toFixed(1)}%（門檻 ≤ ${ergGate5ThresholdPct}%），建議延後轉職（不扣借款對照 ${ergGate5WithdrawalPctNoLoan.toFixed(1)}%）`, `If assets halve in the switch year, withdrawal rate ${ergGate5WithdrawalPct.toFixed(1)}% (threshold ≤ ${ergGate5ThresholdPct}%) — consider delaying the switch (excl. loan deduction: ${ergGate5WithdrawalPctNoLoan.toFixed(1)}%)`)
+            ? t(`腰斬後提領率 ${ergGate5WithdrawalPct.toFixed(1)}%（門檻 ≤ ${ergGate5ThresholdPct}%）（不扣借款對照 ${ergGate5WithdrawalPctNoLoan.toFixed(1)}%）${ergGate5BNote}`, `Withdrawal rate after the crash ${ergGate5WithdrawalPct.toFixed(1)}% (threshold ≤ ${ergGate5ThresholdPct}%) (excl. loan deduction: ${ergGate5WithdrawalPctNoLoan.toFixed(1)}%)${ergGate5BNote}`)
+            : t(`若轉職當年腰斬，提領率 ${ergGate5WithdrawalPct.toFixed(1)}%（門檻 ≤ ${ergGate5ThresholdPct}%），建議延後轉職（不扣借款對照 ${ergGate5WithdrawalPctNoLoan.toFixed(1)}%）${ergGate5BNote}`, `If the market halves in the switch year, withdrawal rate ${ergGate5WithdrawalPct.toFixed(1)}% (threshold ≤ ${ergGate5ThresholdPct}%) — consider delaying the switch (excl. loan deduction: ${ergGate5WithdrawalPctNoLoan.toFixed(1)}%)${ergGate5BNote}`)
         }
       ];
       // 2026/08/21 Boss拍板 — 每道閘門的白話說明，點該閘門列會彈出小視窗顯示
@@ -2198,10 +2252,10 @@
           howTo: t('增加現金存量，或降低每月固定支出（還清一些債務）。', 'Increase cash reserves, or reduce fixed monthly expenses.')
         },
         3: {
-          title: t('閘門3・配息覆蓋', 'GATE 3 · DIVIDEND COVERAGE'),
-          what: t('就算配息打五折（保守估計），一年領到的配息夠不夠付一年生活費。', 'Even with dividends discounted 50% (a conservative estimate), do a year of dividends cover a year of living costs.'),
-          formula: t('年配息估×0.5 ≥ 月生活費×12。', 'Annual dividend estimate × 0.5 ≥ Monthly living cost × 12.'),
-          howTo: t(`先填上方「月生活費」欄位（殖利率為固定參考值 ${ERG_GATE3_YIELD_PCT}%，不開放輸入）；沒過則增加持股市值或降低生活費。`, `First fill in "Monthly Living" above (yield is a fixed ${ERG_GATE3_YIELD_PCT}% reference and not editable); if it fails, increase holdings value or lower living costs.`)
+          title: t('閘門3・股息覆蓋', 'GATE 3 · DIVIDEND COVERAGE'),
+          what: t('就算股息打五折，一年領到的股息夠不夠付「一年生活費＋一年債務月付」。分母與閘門5 同一口徑：不工作時每年一定要付出去的錢。', 'Even with dividends halved, do a year of dividends cover a year of living costs plus a year of debt payments? The denominator matches Gate 5: what you must pay out every year when not working.'),
+          formula: t('年股息×0.5 ≥（月生活費＋債務月付總額）×12。×0.5 的依據：保守假設危機期間配息減半。', 'Annual dividend × 0.5 ≥ (monthly living + total debt payments) × 12. The × 0.5 assumes, conservatively, that dividends are halved during a crisis.'),
+          howTo: t(`分子優先用你填的「近 12 個月實際現金股息總額」；沒填才退回以擔保品市值 × ${ERG_GATE3_YIELD_PCT}% 估算（畫面會標示「估算」）。填寫日期超過 ${ERG_GATE3_DIVIDEND_STALE_MONTHS} 個月會提醒更新。沒過則提高實際股息、增加持股市值，或降低生活費／債務月付。`, `The numerator prefers the "actual cash dividends received in the last 12 months" you enter; without it, it falls back to collateral value × ${ERG_GATE3_YIELD_PCT}% (shown as "estimated"). A fill-in date older than ${ERG_GATE3_DIVIDEND_STALE_MONTHS} months triggers an update reminder. To pass: raise actual dividends, increase holdings, or lower living costs / debt payments.`)
         },
         4: {
           title: t('閘門4・月付無未爆彈', 'GATE 4 · NO HIDDEN PAYMENT SPIKES'),
@@ -2211,9 +2265,10 @@
         },
         5: {
           title: t('閘門5・腰斬後提領率', 'GATE 5 · WITHDRAWAL RATE AFTER -50%'),
-          what: t('假設轉職當年資產腰斬，一年的月付+生活費，佔腰斬後扣掉質押借款、還能動用的資產多少%。', 'Assumes your assets halve in the year you switch careers — what share of the still-usable assets (after -50% and after deducting the pledged loan) does one year of monthly payments plus living costs consume.'),
-          formula: t('（月付總額 + 月生活費）× 12 ÷（總資產 × 50% − 質押借款），要 ≤ 門檻（預設 8%）。', '(Monthly debt + monthly living) × 12 ÷ (Total assets × 50% − Pledged loan), must be ≤ threshold (default 8%).'),
-          howTo: t('增加資產、降低質押借款，或降低月付／生活費；未達標代表轉職時機可能要往後延。月生活費請只填生活開銷，不要包含貸款月付（月付已由債務頁自動加總）。', 'Increase assets, reduce the pledged loan, or lower monthly payments/living costs. Failing this gate suggests delaying the career switch. Enter living expenses only in "Monthly Living" — do not include loan payments (those are auto-summed from the Debt page).')
+          what: t('假設轉職當年遇上大盤腰斬，一年的月付+生活費，佔「分部位壓縮後、再扣掉質押借款」還能動用的資產多少%。', 'Assumes the market halves in the year you switch careers — what share of the still-usable assets (after per-sleeve haircuts and after deducting the pledged loan) does one year of monthly payments plus living costs consume.'),
+          formula: t(`（月付總額 + 月生活費）× 12 ÷（腰斬後可用資產 − 質押借款），要 ≤ 門檻（預設 ${ERG_GATE5_DEFAULT_THRESHOLD_PCT}%）。腰斬後可用資產＝擔保品 × max(0, 1 − 0.5 × β) ＋ P1 × ${ERG_GATE5_P1_SURVIVAL} ＋ B帳戶 × ${ERG_GATE5_B_SURVIVAL}（β 為組合 Beta，目前 ${portfolioBeta.toFixed(2)}）。`, `(Monthly debt + monthly living) × 12 ÷ (usable assets after the crash − pledged loan), must be ≤ threshold (default ${ERG_GATE5_DEFAULT_THRESHOLD_PCT}%). Usable assets after the crash = collateral × max(0, 1 − 0.5 × β) + P1 × ${ERG_GATE5_P1_SURVIVAL} + B account × ${ERG_GATE5_B_SURVIVAL} (β is portfolio beta, currently ${portfolioBeta.toFixed(2)}).`),
+          why: t('不對總資產齊頭打五折，是因為三個部位對大盤腰斬的反應差距太大：擔保品跌幅看組合 Beta；P1 是正2，大盤腰斬時約跌 75～85%，保守直接視為 0；B 帳戶（美股＋加密）波動更大，只保留三成。齊頭五折會嚴重高估轉職後的可動用資金。', 'A flat 50% haircut on total assets is wrong because the three sleeves react very differently: collateral tracks portfolio beta; P1 is a 2x fund that falls roughly 75-85% when the market halves, so it is conservatively treated as zero; the B account (US equities + crypto) is even more volatile and keeps only 30%. A flat haircut badly overstates the funds available after switching.'),
+          howTo: t('增加擔保品、降低組合 Beta、降低質押借款，或降低月付／生活費；未達標代表轉職時機可能要往後延。月生活費請只填生活開銷，不要包含貸款月付（月付已由債務頁自動加總）。', 'Increase collateral, lower portfolio beta, reduce the pledged loan, or lower monthly payments/living costs. Failing this gate suggests delaying the career switch. Enter living expenses only in "Monthly Living" — do not include loan payments (those are auto-summed from the Debt page).')
         }
       };
       const ergIcon = (status) => status === 'pass' ? '✅' : status === 'fail' ? '⬜' : '🔲';
@@ -3658,8 +3713,16 @@ Build the wall first. Attack second.`)}
                   {/* 閘門3/4/5 粗略模型輸入 — 純前端local state，不動後端，2026/08/20 Boss拍板先求有再求好 */}
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                     <div>
-                      <label className="block text-sm font-bold uppercase tracking-widest text-slate-400 mb-1">{t(`殖利率% (稅前,年化,固定參考值 ${ERG_GATE3_YIELD_PCT}%)`, `YIELD % (pre-tax, annualized, fixed ${ERG_GATE3_YIELD_PCT}% reference)`)}</label>
-                      <div className="w-full tech-input text-sm py-2 px-3 opacity-70 cursor-default select-none">{ERG_GATE3_YIELD_PCT}%</div>
+                      <label className="block text-sm font-bold uppercase tracking-widest text-slate-400 mb-1">{t('近12個月實際現金股息總額 (TWD)', 'ACTUAL CASH DIVIDENDS, LAST 12MO (TWD)')}</label>
+                      <input type="number" inputMode="decimal" name="actualAnnualDividend" value={ergExtraInputs.actualAnnualDividend} onChange={handleErgExtraChange} className="w-full tech-input text-lg py-2 px-3" placeholder={t('未填則用估算', 'blank = estimate')} />
+                      <input type="date" name="actualDividendDate" value={ergExtraInputs.actualDividendDate} onChange={handleErgExtraChange} className="w-full tech-input text-sm py-1.5 px-3 mt-1" />
+                      <div className="text-xs font-bold text-slate-400 mt-1">
+                        {ergDividendStale
+                          ? <span className="text-amber-600 dark:text-amber-400">⚠️ {t('請更新年度股息', 'Please update annual dividend')}</span>
+                          : ergDividendIsEstimate
+                          ? t(`未填 → 以擔保品 × ${ERG_GATE3_YIELD_PCT}% 估算`, `Blank → estimated as collateral × ${ERG_GATE3_YIELD_PCT}%`)
+                          : t('使用實際股息', 'Using actual dividends')}
+                      </div>
                     </div>
                     <div>
                       <label className="block text-sm font-bold uppercase tracking-widest text-slate-400 mb-1">{t('月生活費 (TWD)', 'MONTHLY LIVING (TWD)')}</label>
@@ -3697,7 +3760,7 @@ Build the wall first. Attack second.`)}
                     <span className="text-sm font-bold uppercase tracking-widest text-slate-400">{t(`${ergPassCount} / ${ergGates.length} 達標`, `${ergPassCount} / ${ergGates.length} PASSED`)}</span>
                     <span className={`text-sm font-black ${ergVerdict.color}`}>{ergVerdict.text}</span>
                   </div>
-                  <div className="text-sm text-slate-400 mt-3">{t('粗略模型階段（2026/08/20）：閘門1/2已接真實計算；閘門3為壓縮係數/殖利率簡化估算；閘門4為手動勾選簡化版，尚未接後端變動排程，之後逐步精修', 'Rough-model stage (2026/08/20): Gates 1/2 wired to real calculations; Gate 3 uses a simplified compression/yield estimate; Gate 4 is a manual-flag simplification without a backend change schedule yet — to be refined incrementally')}</div>
+                  <div className="text-sm text-slate-400 mt-3">{t('粗略模型階段：閘門1/2/5 已接真實計算；閘門3 填了實際股息就用實際值，未填才用殖利率估算，兩種情形都保留 ×0.5 壓縮；閘門4 為手動勾選簡化版，尚未接後端變動排程', 'Rough-model stage: Gates 1/2/5 wired to real calculations; Gate 3 uses your actual dividends when entered and falls back to a yield estimate otherwise, with the x0.5 haircut in both cases; Gate 4 is a manual-flag simplification without a backend change schedule yet')}</div>
                 </div>
 
                 {/* 2026/08/21 Boss拍板 — 點單一閘門彈出白話說明小視窗 */}
@@ -3718,6 +3781,13 @@ Build the wall first. Attack second.`)}
                           <div className="text-xs font-bold uppercase tracking-widest text-sky-500 mb-1">{t('怎麼算', 'HOW IT IS CALCULATED')}</div>
                           <div className="text-slate-600 dark:text-slate-300 font-mono">{ERG_GATE_INFO[ergInfoGate].formula}</div>
                         </div>
+                        {/* why 為選填：只有需要解釋「為什麼這樣算」的閘門才有（目前閘門5 的分部位壓縮） */}
+                        {ERG_GATE_INFO[ergInfoGate].why && (
+                          <div>
+                            <div className="text-xs font-bold uppercase tracking-widest text-sky-500 mb-1">{t('為什麼這樣算', 'WHY IT IS CALCULATED THIS WAY')}</div>
+                            <div className="text-slate-600 dark:text-slate-300">{ERG_GATE_INFO[ergInfoGate].why}</div>
+                          </div>
+                        )}
                         <div>
                           <div className="text-xs font-bold uppercase tracking-widest text-sky-500 mb-1">{t('要怎麼做才會綠燈', 'HOW TO PASS')}</div>
                           <div className="text-slate-600 dark:text-slate-300">{ERG_GATE_INFO[ergInfoGate].howTo}</div>
@@ -4011,7 +4081,7 @@ Build the wall first. Attack second.`)}
     // 自動偵測本金進出污染：總資產日對日變化絕對值 > 15% 視為資金進出而非真實投資損益
     const CAPITAL_FLOW_THRESHOLD = 15; // %
 
-    const AssetTerminal = ({ theme, assetPrefill, clearPrefill, lAmount, onTotalAssetsChange }) => {
+    const AssetTerminal = ({ theme, assetPrefill, clearPrefill, lAmount, onTotalAssetsChange, onBAccountChange }) => {
         const tierConfigs = useMemo(() => {
             return compoundTargets.map((data, index) => {
                 let colorsLight = "from-cyan-500 via-blue-500 to-indigo-500";
@@ -4208,9 +4278,15 @@ Build the wall first. Attack second.`)}
         // 比照既有onLAmountChange/onCashMoatMonthlyDebtChange的單向useEffect上傳模式，
         // 供FOS BOSS頁現金護城河卡計算「目標水位佔總資產%」。獨立effect，不動下面既有的圖表繪製effect。
         const totalAssetsForFos = data.length > 0 ? (Number(data[data.length - 1].總資產) || 0) : 0;
+        /* ERG 閘門5 需要「B 帳戶市值」(美股＋加密，兩欄都已是台幣)。沿用同一筆最新紀錄與
+           同一條單向上傳通道，只多帶一個值，不另開回呼機制。null 代表還沒有任何紀錄。 */
+        const bAccountForFos = data.length > 0
+            ? ((Number(data[data.length - 1].美股) || 0) + (Number(data[data.length - 1].加密貨幣) || 0))
+            : null;
         useEffect(() => {
             if (onTotalAssetsChange) onTotalAssetsChange(totalAssetsForFos);
-        }, [totalAssetsForFos]);
+            if (onBAccountChange) onBAccountChange(bAccountForFos);
+        }, [totalAssetsForFos, bAccountForFos]);
 
         useEffect(() => {
             if (data.length > 0 && lineChartRef.current && donutChartRef.current) {
@@ -6614,6 +6690,9 @@ Build the wall first. Attack second.`)}
       // v14.0 — 現金護城河簡化階段一：ASSET分頁最新總資產，比照lAmount模式由AssetTerminal算好回傳，
       // 供FOS BOSS頁現金護城河卡計算「目標水位佔總資產%」。null代表AssetTerminal尚未mount過/資料未就緒。
       const [totalAssetsFromAsset, setTotalAssetsFromAsset] = useState(null);
+      // ERG 閘門5 的 B 帳戶市值（ASSET 頁最新一筆的美股＋加密，台幣）。
+      // null＝AssetTerminal 尚未 mount 過／該頁還沒有任何紀錄，閘門5 會退回推算值。
+      const [bAccountFromAsset, setBAccountFromAsset] = useState(null);
       const [unlocked, setUnlocked] = useState(!!getAccessToken());
       const [showPwGuide, setShowPwGuide] = useState(false);
       const [showRefreshHelp, setShowRefreshHelp] = useState(false);
@@ -6778,10 +6857,10 @@ Build the wall first. Attack second.`)}
           )}
 
           <div style={{ display: activeTab === 'asset' ? 'block' : 'none' }}>
-            <AssetTerminal theme={theme} assetPrefill={assetPrefill} clearPrefill={() => setAssetPrefill(null)} lAmount={lAmount} onTotalAssetsChange={setTotalAssetsFromAsset} />
+            <AssetTerminal theme={theme} assetPrefill={assetPrefill} clearPrefill={() => setAssetPrefill(null)} lAmount={lAmount} onTotalAssetsChange={setTotalAssetsFromAsset} onBAccountChange={setBAccountFromAsset} />
           </div>
           <div style={{ display: activeTab === 'fos' ? 'block' : 'none' }}>
-            <FosTerminal isDarkMode={isDark} isEng={isEng} onInjectPrefill={(vals) => { setAssetPrefill(vals); setActiveTab('asset'); }} onLAmountChange={setLAmount} onPledgeRateChange={setPledgeRate} debtMonthlyTotal={debtMonthlyTotal} totalAssetsFromAsset={totalAssetsFromAsset} onLiquidityBufferChange={setLiquidityBufferFromAsset} />
+            <FosTerminal isDarkMode={isDark} isEng={isEng} onInjectPrefill={(vals) => { setAssetPrefill(vals); setActiveTab('asset'); }} onLAmountChange={setLAmount} onPledgeRateChange={setPledgeRate} debtMonthlyTotal={debtMonthlyTotal} totalAssetsFromAsset={totalAssetsFromAsset} bAccountFromAsset={bAccountFromAsset} onLiquidityBufferChange={setLiquidityBufferFromAsset} />
           </div>
           <div style={{ display: activeTab === 'debt' ? 'block' : 'none' }}>
             <DebtTerminal isDarkMode={isDark} isEng={isEng} onDebtTotalChange={setDebtMonthlyTotal} liquidityBufferFromAsset={liquidityBufferFromAsset} />
