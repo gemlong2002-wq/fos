@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/10/10 21:59';
+    const APP_VERSION = '2026/10/10 22:37';
 
     /* ===================================================================
        共用工具
@@ -524,11 +524,11 @@
 
     /* ===================================================================
        P1 雙向計算卡 — 全部是試算，不產生任何寫入動作（實際下單由 Boss 執行）
-       依據白皮書 v15.0 ＋ 秘書裁定（增貸後目標 MR 380%，將寫入 v15.1）
+       依據白皮書 v15.1（§5.7 P1 上限再平衡、§6.1.2 增貸目標 MR 380%、§4.3.1 救火執行機制）
 
-       Part 1 燃料棒上限再平衡：P1 超過 40% L 時，賣超額 → 買擔保品設質 →
+       Part 1 §5.7 上限再平衡：P1 超過 40% L 時，賣超額 → 買擔保品設質 →
          增貸到 MR 380% → 補 P1 到 (L+B)/3 → 餘額 80/20
-       Part 2 §4.3 救火預算：算跌到規則線 260% 時需償還多少本金、正2 觸價、
+       Part 2 §4.3.1 救火執行機制：算跌到規則線 260% 時需償還多少本金、正2 觸價、
          以及賣 P1 還款後殘存 P1 是否擊穿死線
 
        下面這些函式刻意不吃元件內的變數，全部由呼叫端把數字傳進來，
@@ -537,7 +537,7 @@
     const P1_FUEL_ROD_TRIGGER_MR = 350;    // 燃料棒觸發線。自成一條規則，刻意不與
                                            // MR_GREEN_FLOOR 共用常數（v15.1 可能各自調整）
     const P1_TRIGGER_UPPER_RATIO = 0.40;   // P1 觸發上緣 = 40% L
-    const P1_RELEND_TARGET_MR = 3.8;       // 增貸後目標 MR 380%（秘書裁定）
+    const P1_RELEND_TARGET_MR = 3.8;       // §6.1.2 增貸後目標 MR 380%
     const P1_FORTRESS_TARGET_MR = 4.8;     // 築城牆模式 480%。§4.8 本輪不實作，
                                            // 只在說明文字引用，提醒這條還沒接
     const P1_MICRO_PROFIT_FLOOR = 100000;  // §1.4 微利門檻（單一可調常數）
@@ -546,6 +546,42 @@
     const SHARES_PER_LOT = 1000;           // 台股 1 張 = 1000 股
     const PRICE_STALE_DAYS = 3;            // 現價更新日距今超過這個天數 → 提示可能過時
     const BALANCE_ANCHOR_TOLERANCE = 0.05; // 1:1 錨定判定容許帶寬 5%
+
+    /* 四檔現價自動抓取（FOS 後端唯讀 action etfQuotes，不需 WRITE_SECRET）。
+       ticker → P1 計算卡的現價欄位名，兩邊都只認這一份對照表。 */
+    const ETF_QUOTE_TICKERS = ['0050', '00733', '00675L', '00631L'];
+    const ETF_QUOTE_FIELD = { '0050': 'price0050', '00733': 'price00733', '00675L': 'price00675L', '00631L': 'price00631L' };
+
+    // 後端回的 date 是 YYYYMMDD；卡片的價格日期是 <input type="date">，要 YYYY-MM-DD。格式不符一律回空字串
+    function etfQuoteDateToISO(raw) {
+      const str = String(raw == null ? '' : raw).trim();
+      if (!/^\d{8}$/.test(str)) return '';
+      const iso = `${str.slice(0, 4)}-${str.slice(4, 6)}-${str.slice(6, 8)}`;
+      /* 來回驗證才擋得住「格式對但日期不存在」：Date.parse 只擋月越界（20261332），
+         日越界（20260230）會被滾成 3/2 而驗過，所以要比對轉回來的字串是否相同。
+         無效日期的 getTime() 為 NaN，先用 isFinite 擋掉再 toISOString，避免拋錯。 */
+      const parsed = new Date(iso + 'T00:00:00Z');
+      if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== iso) return '';
+      return iso;
+    }
+
+    /* 把 etfQuotes 的回應轉成「要套用的現價」與「每檔的狀態標示」。
+       回 null 代表整體失敗（success 非 true／結構不對），呼叫端據此保留手動值。
+       個別檔位 quotes 為 null／0／負數／非數字 → 該檔 missing，不覆蓋原值。 */
+    function parseEtfQuotes(data) {
+      if (!data || data.success !== true || !data.quotes || typeof data.quotes !== 'object') return null;
+      const prices = {};
+      const meta = {};
+      ETF_QUOTE_TICKERS.forEach(tk => {
+        const num = parseFloat(data.quotes[tk]);
+        const ok = Number.isFinite(num) && num > 0;
+        if (ok) prices[tk] = num;
+        const src = data.sources && data.sources[tk];
+        // 只認後端文件寫明的兩種來源，其他值（含 null）不顯示來源標示
+        meta[tk] = { missing: !ok, source: ok && (src === 'last' || src === 'prevClose') ? src : null };
+      });
+      return { prices, meta, date: etfQuoteDateToISO(data.date) };
+    }
 
     // 天平校準要買哪一邊：市值較低的那檔。§6.3.1 分流與 P1 計算卡共用這一份判定
     function pickBalanceTarget(c0050, c00733) {
@@ -653,7 +689,7 @@
       };
     }
 
-    /* Part 2｜§4.3 救火預算 ＋ 觸價單換算。
+    /* Part 2｜§4.3.1 救火執行機制（觸價單預掛）。
        ruleLineRatio 由呼叫端傳 MR_RED_CEILING / 100，維持門檻單一來源。
        status：unknown（資料不足）／below（已低於規則線）／ok */
     function calcRescueBudget(input) {
@@ -1610,7 +1646,42 @@
         const { name, value } = e.target;
         safeSetStorage('fos_p1calc_' + name, value);
         setP1CalcInputs(prev => ({ ...prev, [name]: value }));
+        /* 手動改過的那一檔，自動抓取的「昨收／未抓到」標示就不再成立，清掉以免文案說錯。
+           其餘檔位的標示保留。 */
+        const ticker = ETF_QUOTE_TICKERS.find(tk => ETF_QUOTE_FIELD[tk] === name);
+        if (ticker) setEtfQuoteMeta(prev => (prev && prev[ticker] ? { ...prev, [ticker]: null } : prev));
       };
+
+      /* 四檔現價自動抓取：卡片載入時打一次唯讀端點（?action=etfQuotes，不需 WRITE_SECRET，
+         與 marketIndex 同等級），之後只有按 🔄 才會重抓並覆蓋 —— 中間的手動輸入不會被蓋掉。
+         整體失敗（success 非 true／網路錯誤／非 JSON）一律只 console.warn，不擋畫面。 */
+      const [isFetchingQuotes, setIsFetchingQuotes] = useState(false);
+      // null＝還沒抓到過（或整體失敗）；抓到後為 { ticker: { missing, source } | null }
+      const [etfQuoteMeta, setEtfQuoteMeta] = useState(null);
+      const fetchEtfQuotes = () => {
+        setIsFetchingQuotes(true);
+        fetch(GAS_URL_FOS + '?action=etfQuotes')
+          .then(res => res.json())
+          .then(data => {
+            const parsed = parseEtfQuotes(data);
+            if (!parsed) { console.warn('[EtfQuotes] 回應非預期格式或 success 不為 true:', data); return; }
+            // 先把要寫的值算好，副作用（localStorage）留在 setState updater 外面
+            const updates = {};
+            ETF_QUOTE_TICKERS.forEach(tk => {
+              if (parsed.prices[tk] != null) updates[ETF_QUOTE_FIELD[tk]] = String(parsed.prices[tk]);
+            });
+            /* 只有真的套用到價格時才更新價格日期：四檔全抓不到（success 仍為 true）時
+               欄位裡擺的是舊價，若把日期改成今天，「現價可能過時」的警告會被錯誤消掉，
+               使用者會拿舊價當當日價用。 */
+            if (parsed.date && Object.keys(updates).length > 0) updates.priceDate = parsed.date;
+            Object.keys(updates).forEach(k => safeSetStorage('fos_p1calc_' + k, updates[k]));
+            setEtfQuoteMeta(parsed.meta);
+            setP1CalcInputs(prev => ({ ...prev, ...updates }));
+          })
+          .catch(err => console.warn('[EtfQuotes] 讀取失敗:', err))
+          .finally(() => setIsFetchingQuotes(false));
+      };
+      useEffect(() => { fetchEtfQuotes(); }, []);
 
       const [liveCrypto, setLiveCrypto] = useState({ BTC: 0, ETH: 0 });
       const [betaConfig, setBetaConfig] = useState({ b0050: '1.0', b00733: '1.35', mrLimit: '130' });
@@ -4064,19 +4135,30 @@ Build the wall first. Attack second.`)}
 
                   {/* 共用輸入 */}
                   <div className="p-6 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
-                    <div className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3">{t('共用輸入（現價）', 'SHARED INPUTS (PRICES)')}</div>
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="text-xs font-black uppercase tracking-widest text-slate-400">{t('共用輸入（現價）', 'SHARED INPUTS (PRICES)')}</div>
+                      <button type="button" onClick={fetchEtfQuotes} disabled={isFetchingQuotes} title={t('重新抓取四檔現價', 'Refresh the four live prices')} className={`text-slate-400 hover:text-sky-500 dark:hover:text-amber-400 transition-colors ${isFetchingQuotes ? 'animate-spin' : ''}`}>
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                      </button>
+                    </div>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                      {[
-                        { key: 'price0050', label: t('0050 現價', '0050 PRICE') },
-                        { key: 'price00733', label: t('00733 現價', '00733 PRICE') },
-                        { key: 'price00675L', label: t('00675L 現價', '00675L PRICE') },
-                        { key: 'price00631L', label: t('00631L 現價', '00631L PRICE') }
-                      ].map(f => (
-                        <div key={f.key}>
-                          <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{f.label}</label>
-                          <input type="number" inputMode="decimal" name={f.key} value={p1CalcInputs[f.key]} onChange={handleP1CalcChange} className="w-full tech-input text-base py-2 px-3" placeholder={t('元／股', 'per share')} />
+                      {ETF_QUOTE_TICKERS.map(tk => {
+                        const field = ETF_QUOTE_FIELD[tk];
+                        const meta = etfQuoteMeta ? etfQuoteMeta[tk] : null;
+                        return (
+                        <div key={field}>
+                          <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t(`${tk} 現價`, `${tk} PRICE`)}</label>
+                          <input type="number" inputMode="decimal" name={field} value={p1CalcInputs[field]} onChange={handleP1CalcChange} className="w-full tech-input text-base py-2 px-3" placeholder={t('元／股', 'per share')} />
+                          {meta && meta.missing && (
+                            <div className="text-xs font-bold text-amber-600 dark:text-amber-400 mt-0.5">{t('未抓到，請手動輸入', 'Not fetched — enter manually')}</div>
+                          )}
+                          {/* source 只在有抓到價時才會是 prevClose（見 parseEtfQuotes），不必再判 missing */}
+                          {meta && meta.source === 'prevClose' && (
+                            <div className="text-xs font-bold text-slate-400 mt-0.5">{t('昨收', 'prev. close')}</div>
+                          )}
                         </div>
-                      ))}
+                        );
+                      })}
                       <div>
                         <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('價格更新日期', 'PRICE DATE')}</label>
                         <input type="date" name="priceDate" value={p1CalcInputs.priceDate} onChange={handleP1CalcChange} className="w-full tech-input text-sm py-2 px-3" />
@@ -4108,9 +4190,8 @@ Build the wall first. Attack second.`)}
                   <div className="p-6 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
                     <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
                       <h3 className="text-base font-black uppercase text-teal-600 dark:text-teal-400">
-                        {t('PART 1｜P1 上限再平衡（燃料棒）', 'PART 1 | P1 UPPER-BOUND REBALANCE (FUEL ROD)')}
+                        {t('PART 1｜§5.7 P1 上限再平衡（必做）', 'PART 1 | §5.7 P1 UPPER-BOUND REBALANCE (MANDATORY)')}
                       </h3>
-                      <span className="text-xs font-bold text-amber-600 dark:text-amber-400">{t('試算｜v15.1 條文起草中', 'Estimate | v15.1 clause being drafted')}</span>
                     </div>
 
                     {!p1FuelOpen ? (
@@ -4198,7 +4279,7 @@ Build the wall first. Attack second.`)}
                               <div className="text-sm font-black text-emerald-600 dark:text-emerald-400">MR {p1Rebalance.newMR.toFixed(2)}%</div>
                             </div>
                             <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
-                              <div className="text-xs font-black uppercase tracking-widest text-slate-400">{t('⑤ 可新增借款上限 B', '(5) NEW BORROWING CAP B')}</div>
+                              <div className="text-xs font-black uppercase tracking-widest text-slate-400">{t('⑤ 可新增借款上限 B｜§6.1.2 增貸目標 MR 380%', '(5) NEW BORROWING CAP B | §6.1.2 TARGET MR 380% AFTER BORROWING')}</div>
                               <div className="text-xl font-black font-mono text-violet-600 dark:text-violet-400 mt-1">{formatNumber(Math.round(p1Rebalance.borrowCap))}</div>
                               <div className="text-xs font-bold text-slate-400 mt-0.5">{t(`= max(0, 新C ÷ ${P1_RELEND_TARGET_MR} − L)｜借款後 MR ${p1Rebalance.mrAfterBorrow.toFixed(2)}%`, `= max(0, new C / ${P1_RELEND_TARGET_MR} - L) | MR after borrowing ${p1Rebalance.mrAfterBorrow.toFixed(2)}%`)}</div>
                             </div>
@@ -4252,7 +4333,7 @@ Build the wall first. Attack second.`)}
                             ⚠️ {t('借款後新資金約 2/3 進入未設質的 B 帳戶，槓桿擴大但擔保覆蓋未同步增加', 'About 2/3 of the borrowed funds go into the unpledged B account — leverage grows while collateral coverage does not')}
                           </div>
                           <div className="text-xs font-bold text-amber-600 dark:text-amber-500 mt-1">
-                            {t(`增貸後目標 MR ${(P1_RELEND_TARGET_MR * 100).toFixed(0)}%（秘書裁定，將寫入 v15.1）；築城牆模式 ${(P1_FORTRESS_TARGET_MR * 100).toFixed(0)}% 的 §4.8 尚未實作`, `Target MR after borrowing is ${(P1_RELEND_TARGET_MR * 100).toFixed(0)}% (secretary's ruling, to be written into v15.1); the §4.8 fortress mode at ${(P1_FORTRESS_TARGET_MR * 100).toFixed(0)}% is not implemented yet`)}
+                            {t(`§6.1.2 增貸後目標 MR ${(P1_RELEND_TARGET_MR * 100).toFixed(0)}%；築城牆模式 ${(P1_FORTRESS_TARGET_MR * 100).toFixed(0)}% 的 §4.8 尚未實作`, `§6.1.2 target MR after borrowing is ${(P1_RELEND_TARGET_MR * 100).toFixed(0)}%; the §4.8 fortress mode at ${(P1_FORTRESS_TARGET_MR * 100).toFixed(0)}% is not implemented yet`)}
                           </div>
                         </div>
 
@@ -4270,7 +4351,7 @@ Build the wall first. Attack second.`)}
                   <div className={`p-6 ${p1RescueAlert ? 'bg-rose-50 dark:bg-rose-950/30' : 'bg-white dark:bg-slate-900'}`}>
                     <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                       <h3 className={`text-base font-black uppercase ${p1RescueAlert ? 'text-rose-600 dark:text-rose-400' : 'text-teal-600 dark:text-teal-400'}`}>
-                        {t('PART 2｜§4.3 救火預算 ＋ 觸價單換算', 'PART 2 | §4.3 RESCUE BUDGET + TRIGGER PRICES')}
+                        {t('PART 2｜§4.3.1 救火執行機制（觸價單預掛）', 'PART 2 | §4.3.1 RESCUE EXECUTION (PRE-PLACED TRIGGER ORDERS)')}
                       </h3>
                       {p1RescueAlert && (
                         <span className="text-xs font-black text-rose-600 dark:text-rose-400">{t(`預警：MR ${nominalMRRaw.toFixed(2)}% ≤ ${MR_RECOVERY_EXIT}%`, `Alert: MR ${nominalMRRaw.toFixed(2)}% <= ${MR_RECOVERY_EXIT}%`)}</span>
