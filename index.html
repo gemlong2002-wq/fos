@@ -390,7 +390,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/10/11 23:15';
+    const APP_VERSION = '2026/10/11 23:31';
 
     /* ===================================================================
        共用工具
@@ -3115,13 +3115,14 @@
          （id = MINI_GRID_ANCHOR_ID）並套既有的 card-highlight-flash。
          順序規則照舊：left → 合併後的 mini 群組 → bottom。
          miniOrder 為空時不產生該膠囊（現行 DEFAULT_MINI_ORDER 有 6 張、
-         reconcileCardOrder 又會補回缺少的 id，所以這個守衛實務上恆真，純防禦）。 */
+         reconcileCardOrder 又會補回缺少的 id，所以這個守衛實務上恆真，純防禦）。
+         ERG 不列入：它有自己的開關（isPart9），關閉時卡片不渲染，膠囊會變成點了沒反應。 */
       const indexEntry = (id) => ({ id, title: cardTitles[id] });
       const cardIndexList = [
         ...leftOrder.map(indexEntry),
         ...topOrder.map(indexEntry),
         ...(miniOrder.length > 0 ? [{ id: MINI_GRID_ANCHOR_ID, title: t('FOS 主系統卡', 'FOS CORE') }] : []),
-        ...bottomOrder.map(indexEntry)
+        ...bottomOrder.filter(id => id !== 'erg').map(indexEntry)
       ];
       const scrollToCard = (cardId) => {
         const el = document.getElementById(cardId);
