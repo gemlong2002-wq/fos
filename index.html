@@ -188,9 +188,10 @@
       background-position: top left, top left, top right, top right, bottom right, bottom right, bottom left, bottom left;
     }
 
-    /* v13.9 — 8張FOS mini卡改用純CSS強度分級(danger/core/standard)取代上輪的col-span-2跨欄方案。
+    /* v13.9 — FOS mini卡改用純CSS強度分級(danger/core/standard)取代上輪的col-span-2跨欄方案。
+       （原為8張；穿透曝險與壓力測試已收進美股分流彈窗，現為6張。）
        tier完全由各卡JS端讀取「該卡當前真實狀態」算出(mrZoneInfo.zone/cmCash<cmTarget(v14.0起)/lcmZoneKey/
-       allocNextStep/p1Ratio/liquidityBufferSafe/overCap，壓力測試無即時狀態可讀故固定standard)，
+       allocNextStep/p1Ratio/liquidityBufferSafe)，
        這裡只負責視覺呈現。danger與core互斥(MR/現金護城河若當下是danger，套danger不套core)。
        不改卡片尺寸/DOM結構，不用grid col-span。*/
     @keyframes mini-card-pulse-danger {
@@ -389,7 +390,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/10/11 14:02';
+    const APP_VERSION = '2026/10/11 18:56';
 
     /* ===================================================================
        共用工具
@@ -1244,7 +1245,10 @@
        v12.5 — 順序存 localStorage（這台機器的顯示偏好，刻意不跨裝置同步）
     =================================================================== */
     const DEFAULT_LEFT_ORDER = ['input'];
-    const DEFAULT_TOP_ORDER = ['crash'];
+    /* 崩盤抵抗卡已收進 MR 卡的 Part 2 觸價單彈窗，頂部 zone 因此沒有任何卡片。
+       保留空陣列而非刪除整個 zone，是為了讓 reconcileCardOrder 把舊 localStorage
+       殘留的 'crash' 濾掉；下方 JSX 在 topOrder 為空時整個容器不渲染。 */
+    const DEFAULT_TOP_ORDER = [];
     // ERG離職放行閘門骨架 — 新增卡片放bottom zone（內容是清單+總結，篇幅比mini卡大，比照history/radar版型）
     // reconcileCardOrder 會自動把新id補進舊使用者已存的排序（見loadCardOrder），不需要額外遷移
     /* p1calc（P1 雙向計算）已改為 MR 卡上的按鈕＋彈窗，不再是獨立卡片。
@@ -1256,7 +1260,9 @@
     const DEFAULT_BOTTOM_ORDER = ['radar', 'history', 'erg'];
     // v12.12 — mini zone：純顯示型卡片改AMBER小卡版型(h-44 grid)，收納自left/top/bottom搬遷的卡片
     // v12.13 — 現金護城河改「小卡摘要+彈窗輸入」比照passthrough/stress模式，一併搬進mini zone(與LCM同主題相鄰)
-    const DEFAULT_MINI_ORDER = ['mr', 'balance', 'lcm', 'allocationOrder', 'cashMoat', 'passthrough', 'stress', 'liquidity'];
+    /* passthrough／stress 已收進美股分流彈窗，不再是獨立 mini 卡；
+       舊 localStorage 殘留的兩個 key 由 reconcileCardOrder 依預設清單濾掉。 */
+    const DEFAULT_MINI_ORDER = ['mr', 'balance', 'lcm', 'allocationOrder', 'cashMoat', 'liquidity'];
 
     const CARD_ORDER_KEYS = { left: 'fos:cardOrder:left', top: 'fos:cardOrder:top', bottom: 'fos:cardOrder:bottom', mini: 'fos:cardOrder:mini' };
 
@@ -2139,6 +2145,105 @@
          （frozen 在 amount <= 0 的 early return 之前就算好，所以傳 0 也拿得到正確值。） */
       const injectionFrozen = allocateExternalFunds(0, { zone: mrZoneInfo.zone, quickDropActive }).frozen;
 
+      // 穿透曝險計算 — 提出到 IIFE 外層，讓完整卡片與收合摘要列共用同一組真實計算值
+      const pxTsla = parseFloat(formDataB.tsla) || 0;
+      const pxSpcx = parseFloat(formDataB.spcx) || 0;
+      const pxQld = parseFloat(formDataB.qld) || 0;
+      const pxTotal = pxTsla + pxSpcx + pxQld;
+      const tslaRatio = pxTotal > 0 ? pxTsla / pxTotal : 0;
+      const spcxRatio = pxTotal > 0 ? pxSpcx / pxTotal : 0;
+      const qldRatio = pxTotal > 0 ? pxQld / pxTotal : 0;
+      const directExposure = tslaRatio + spcxRatio;
+      const qldPassthrough = qldRatio * (NDX_WEIGHT.TSLA + NDX_WEIGHT.SPCX) * QLD_LEVERAGE;
+      const totalExposure = directExposure + qldPassthrough;
+      const overCap = totalExposure > MUSK_EXPOSURE_CAP;
+
+      /* 壓力測試情境結果 — 固定假設情境（非讀取即時資料算出的風險狀態）。
+         原本還有 passthroughTier／stressTier／stressMuskQualifier／stressMuskValue
+         四個值，只供已移除的兩張收合 mini 卡使用，卡片收進美股彈窗後已無人讀取，故刪除。 */
+      const stressMuskDrop = t('約 −25%', 'approx. −25%');
+      const stressNdxVerdict = t('極重，配置無法防禦', 'Severe — allocation cannot defend');
+
+      const b0050Val = parseFloat(betaConfig.b0050) || 1.0;
+      const b00733Val = parseFloat(betaConfig.b00733) || 1.35;
+      const limitMRVal = parseFloat(betaConfig.mrLimit) || 130;
+
+      let portfolioBeta = 0; let maxMarketDrop = 0;
+      /* beta 只需要 C（擔保品組成），不需要 L；L > 0 只是 maxMarketDrop（距離斷頭還能跌幾%）
+         的前提。兩者原本綁在同一個 if，導致「質押借款為 0」時 beta 停留在 0，
+         ERG 閘門5 的 max(0, 1 − 0.5β) 會算出存活率 1.0＝擔保品腰斬後毫髮無傷。 */
+      if (C > 0) {
+          portfolioBeta = ((c0050 * b0050Val) + (c00733 * b00733Val)) / C;
+          if (L > 0) {
+              const maxCollateralDrop = (C - (limitMRVal / 100) * L) / C;
+              maxMarketDrop = (maxCollateralDrop / portfolioBeta) * 100;
+          }
+      }
+      const isCrashSafe = maxMarketDrop > 0;
+
+      const currentIndexVal = parseFloat(crashIndexInput) || 0;
+      // maxMarketDrop 已是擔保品跌幅 ÷ β 後的指數跌幅，不可再除一次 β
+      const marketDropPct = isCrashSafe ? maxMarketDrop : 0;
+      const crashIndexValue = currentIndexVal * (1 - marketDropPct / 100);
+
+      /* 崩盤抵抗（券商斷頭線）—— 原頂部獨立卡片，改收進 Part 2 觸價單彈窗。
+         JSX 原樣搬移，betaConfig／crashIndexInput／fetchMarketIndex 仍讀同一份 state，
+         與 Part 2 的規則線 260% 段共用 β，不複製成兩份。 */
+      const crashResistanceBlock = (
+          <div className={`tech-panel p-8 scale-card cursor-default`}>
+            <h2 className="text-sm font-black uppercase text-slate-400 mb-6">{t('崩盤抵抗', 'CRASH RESISTANCE')}</h2>
+
+            <div className="grid grid-cols-3 gap-3 mb-6">
+              <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-2 text-center border border-slate-100 dark:border-slate-700">
+                <div className="font-bold text-sm text-slate-400 mb-1">0050 β</div>
+                <input type="number" step="0.01" name="b0050" value={betaConfig.b0050} onChange={handleBetaChange} className="w-full text-center text-lg font-black font-mono bg-transparent outline-none text-slate-700 dark:text-slate-300 data-text" />
+              </div>
+              <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-2 text-center border border-slate-100 dark:border-slate-700">
+                <div className="font-bold text-sm text-slate-400 mb-1">00733 β</div>
+                <input type="number" step="0.01" name="b00733" value={betaConfig.b00733} onChange={handleBetaChange} className="w-full text-center text-lg font-black font-mono bg-transparent outline-none text-slate-700 dark:text-slate-300 data-text" />
+              </div>
+              <div className="bg-rose-50 dark:bg-rose-950/30 rounded-xl p-2 text-center border border-rose-100 dark:border-rose-900/50">
+                <div className="font-bold text-sm text-rose-400 mb-1">LIMIT</div>
+                <input type="number" name="mrLimit" value={betaConfig.mrLimit} onChange={handleBetaChange} className="w-full text-center text-lg font-black font-mono bg-transparent outline-none text-rose-500 data-text" />
+              </div>
+            </div>
+
+            <div className={`rounded-2xl p-6 text-center border ${isCrashSafe ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-100 dark:border-emerald-900/50' : 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/50'}`}>
+              <div className="text-sm font-bold mb-2 uppercase tracking-widest text-slate-500 dark:text-slate-400">MAX DROP TO LIQUIDATION</div>
+              {C > 0 && L > 0 ? (
+                <div className={`text-4xl sm:text-5xl font-black font-mono tracking-tight data-text break-words ${isCrashSafe ? 'text-emerald-500' : 'text-rose-500'}`}>
+                  {isCrashSafe ? `-${maxMarketDrop.toFixed(2)}%` : 'BREACHED'}
+                </div>
+              ) : (
+                <div className="text-2xl font-black text-slate-300 dark:text-slate-600 mt-2">N/A</div>
+              )}
+            </div>
+
+            <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
+              <div className="flex justify-between items-center gap-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 border border-slate-100 dark:border-slate-700">
+                <span className="text-sm font-bold text-slate-400 uppercase tracking-wider">{t('當前大盤指數', 'CURRENT INDEX')}</span>
+                <div className="flex items-center gap-1.5">
+                  <button type="button" onClick={fetchMarketIndex} disabled={isFetchingIndex} title={t('重新抓取即時指數', 'Refresh live index')} className={`text-slate-400 hover:text-sky-500 dark:hover:text-amber-400 transition-colors ${isFetchingIndex ? 'animate-spin' : ''}`}>
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                  </button>
+                  <input type="number" value={crashIndexInput} onChange={(e) => setCrashIndexInput(e.target.value)} className="w-28 text-right text-lg font-black font-mono bg-transparent outline-none text-slate-700 dark:text-slate-300 data-text" />
+                </div>
+              </div>
+              <div className={`rounded-xl p-4 text-center border ${isCrashSafe ? 'bg-sky-50 dark:bg-sky-950/30 border-sky-100 dark:border-sky-900/50' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-700'}`}>
+                <div className="text-sm font-bold mb-1 uppercase tracking-widest text-slate-500 dark:text-slate-400">{t('崩盤指數', 'CRASH INDEX')}</div>
+                {isCrashSafe && currentIndexVal > 0 ? (
+                  <div className="text-2xl sm:text-3xl font-black font-mono tracking-tight data-text break-words text-sky-600 dark:text-sky-400">
+                    {crashIndexValue.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                  </div>
+                ) : (
+                  <div className="text-xl font-black text-slate-300 dark:text-slate-600 mt-1">N/A</div>
+                )}
+              </div>
+            </div>
+          </div>
+      );
+
+
       /* 近 60 筆若最舊一筆仍晚於取樣區間下界（T-37），代表 60 筆涵蓋不到 30 日前，
          此時補抓完整歷史，避免 4.9 誤報「無法判定」。fetchFullHistory 自身有
          fullHistory!==null / isFetchingFullHistory 雙重防呆，不會重複打。 */
@@ -2158,22 +2263,7 @@
         }
       }, [mrHistorySorted, fullHistory, isFetchingFullHistory]);
 
-      const b0050Val = parseFloat(betaConfig.b0050) || 1.0;
-      const b00733Val = parseFloat(betaConfig.b00733) || 1.35;
-      const limitMRVal = parseFloat(betaConfig.mrLimit) || 130;
 
-      let portfolioBeta = 0; let maxMarketDrop = 0;
-      /* beta 只需要 C（擔保品組成），不需要 L；L > 0 只是 maxMarketDrop（距離斷頭還能跌幾%）
-         的前提。兩者原本綁在同一個 if，導致「質押借款為 0」時 beta 停留在 0，
-         ERG 閘門5 的 max(0, 1 − 0.5β) 會算出存活率 1.0＝擔保品腰斬後毫髮無傷。 */
-      if (C > 0) {
-          portfolioBeta = ((c0050 * b0050Val) + (c00733 * b00733Val)) / C;
-          if (L > 0) {
-              const maxCollateralDrop = (C - (limitMRVal / 100) * L) / C;
-              maxMarketDrop = (maxCollateralDrop / portfolioBeta) * 100;
-          }
-      }
-      const isCrashSafe = maxMarketDrop > 0;
 
       const currentBtc = liveCrypto.BTC || 0; const currentEth = liveCrypto.ETH || 0;
       /* 同 MR：三態門檻比對吃 ethBtcRatioRaw，ethBtcRatio 只負責顯示與 payload。
@@ -2440,19 +2530,32 @@
            unknown — d 算不出來（L=0／C=0／β 無效）→ 資料不足，按鈕仍可點開
            below   — d ≤ 0，等同 MR 已到規則線（含剛好 260%）→ 紅色，立即執行
            ok      — 顯示還能跌多少才觸發；顏色看 MR 是否已進 280% 預警帶或回復帶 */
-      const p1Part2BtnState = p1Rescue.status === 'unknown'
+      /* 最高優先序：已低於券商斷頭線（maxMarketDrop ≤ 0 代表已無可承受跌幅）。
+         守衛要 C > 0 && L > 0：maxMarketDrop 的計算本身就包在 if (C > 0) 內，
+         C = 0 時它停在初始值 0，isCrashSafe 會是 false —— 但那是「擔保品還沒輸入」，
+         不是「已爆倉」。少了 C > 0 的話，只填了質押借款的半完成狀態會跳紅色假警報，
+         而同一畫面的 MR 卡顯示 STANDBY、下方崩盤抵抗面板顯示 N/A，三處互相矛盾。
+         真正的爆倉（C > 0 且 C ≤ 1.3L）仍照樣觸發。 */
+      const belowLiquidationLine = C > 0 && L > 0 && !isCrashSafe;
+      const p1Part2BtnState = belowLiquidationLine
+        ? 'liquidation'
+        : p1Rescue.status === 'unknown'
         ? 'nodata'
         : p1Rescue.status === 'below'
         ? 'danger'
         : (p1RescueAlert || mrZoneInfo.recoveryBand) ? 'warn' : 'calm';
-      const p1Part2BtnLabel = p1Part2BtnState === 'nodata'
+      const p1Part2BtnLabel = p1Part2BtnState === 'liquidation'
+        ? t(`🚨 已低於券商斷頭線 ${parseFloat(betaConfig.mrLimit) || 130}%`, `🚨 BELOW THE BROKER LIQUIDATION LINE AT ${parseFloat(betaConfig.mrLimit) || 130}%`)
+        : p1Part2BtnState === 'nodata'
         ? t('🎯 觸價單｜資料不足', '🎯 TRIGGER ORDERS | NO DATA')
         : p1Part2BtnState === 'danger'
         // d ≤ 0 同時涵蓋「剛好觸及 260%」與「已跌破」，用「已觸及」兩種情形都說得通
         // （MR 恰為 260.00 時 getMRZone 仍判 YELLOW，寫「已低於」會與燈號不同調）
         ? t(`🚨 已觸及 ${MR_RED_CEILING}% 規則線｜立即執行 4.3`, `🚨 AT/BELOW THE ${MR_RED_CEILING}% RULE LINE | EXECUTE 4.3 NOW`)
         : t(`🎯 觸價單｜大盤再跌 ${(p1Rescue.d * 100).toFixed(1)}% 觸發 ${MR_RED_CEILING}%`, `🎯 TRIGGER ORDERS | ${(p1Rescue.d * 100).toFixed(1)}% MORE DROP HITS ${MR_RED_CEILING}%`);
-      const p1Part2BtnClass = p1Part2BtnState === 'danger'
+      const p1Part2BtnClass = p1Part2BtnState === 'liquidation'
+        ? 'bg-rose-600 hover:bg-rose-700 text-white border-rose-700 animate-pulse'
+        : p1Part2BtnState === 'danger'
         ? 'bg-rose-500 hover:bg-rose-600 text-white border-rose-600'
         : p1Part2BtnState === 'warn'
         ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 animate-pulse'
@@ -2788,7 +2891,7 @@
           )}
 
           <div className="text-xs font-bold text-slate-400 mt-4">
-            {t(`本卡算到「規則線 ${MR_RED_CEILING}%」；崩盤抵抗卡算的是「券商斷頭線 ${parseFloat(betaConfig.mrLimit) || 130}%」，意義不同`, `This card computes down to the rule line at ${MR_RED_CEILING}%; the crash-resistance card computes down to the broker's forced-liquidation line at ${parseFloat(betaConfig.mrLimit) || 130}% — they mean different things`)}
+            {t(`以上為「規則線 ${MR_RED_CEILING}%」—— 白皮書 §4.3 自己訂的去槓桿線，跌到這裡要主動還本金。下方「券商斷頭線 ${parseFloat(betaConfig.mrLimit) || 130}%」是券商強制平倉的位置，兩者意義不同：規則線是你自己的煞車，斷頭線是別人幫你踩。兩段共用同一組 β 設定。`, `The above is the rule line at ${MR_RED_CEILING}% — the deleverage line set by §4.3 of the whitepaper; reaching it means repaying principal yourself. The broker's forced-liquidation line at ${parseFloat(betaConfig.mrLimit) || 130}% below is where the broker closes you out. They differ: the rule line is your own brake, the liquidation line is someone else stepping on it. Both sections share the same beta settings.`)}
           </div>
         </div>
       );
@@ -2995,11 +3098,8 @@
         input: t(`${inputTab} 注入`, `${inputTab} INPUT`),
         liquidity: t('流動性防禦', 'LIQUIDITY DEFENSE'),
         mr: t('名目維持率 MR', 'NOMINAL MR'),
-        crash: t('崩盤抵抗', 'CRASH RESISTANCE'),
         balance: t('1:1 BALANCE + P1 TACTICAL POOL', '1:1 BALANCE + P1 POOL'),
         usEngine: t('美股固定比例分流引擎', 'US EQUITY SPLIT ENGINE'),
-        passthrough: t('穿透曝險', 'PASSTHROUGH EXPOSURE'),
-        stress: t('壓力測試', 'STRESS TEST'),
         crypto: t('加密三態', 'CRYPTO 3-STATE'),
         radar: t(`雷達(${radarRange === 'ALL' ? '全部' : `近${radarRange}筆`})`, `RADAR (${radarRange === 'ALL' ? 'ALL' : `LAST ${radarRange}`})`),
         history: t('歷史矩陣', 'HISTORY MATRIX'),
@@ -3053,13 +3153,15 @@
          凍結一律取既有單一來源 injectionFrozen（= allocateExternalFunds 的 frozen，
          含 🔴 回復帶與 §4.9），不在這裡用 mrZoneInfo 再判一次。
          §10.6 狀態取既有 muskConv，比例取既有 effectiveUsRatio，加密取既有三態結果。
-         優先序：凍結 > §10.6 漂回 > §10.6 收斂中 > 待確認 > 正常。 */
+         優先序：凍結 > §10.6 漂回 > §10.6 收斂中 > 總曝險超過上限 > 待確認 > 正常。 */
       const usBtnState = injectionFrozen
         ? 'frozen'
         : muskConv.status === 'over-done'
         ? 'drifted'
         : muskConv.forceQldOnly
         ? 'converging'
+        : overCap
+        ? 'overcap'
         : muskConv.needConfirm
         ? 'confirm'
         : 'normal';
@@ -3069,6 +3171,8 @@
         ? t('⚠️ 美股分流｜§10.6 占比漂回 30% 以上，請人工檢視', '⚠️ US SPLIT | §10.6 SHARE DRIFTED BACK ABOVE 30% — REVIEW')
         : usBtnState === 'converging'
         ? t('⚠️ 美股分流｜§10.6 收斂中，全額買 QLD', '⚠️ US SPLIT | §10.6 CONVERGING — ALL INTO QLD')
+        : usBtnState === 'overcap'
+        ? t(`⚠️ 美股分流｜總曝險 ${(totalExposure * 100).toFixed(1)}% 超過上限 ${(MUSK_EXPOSURE_CAP * 100).toFixed(0)}%`, `⚠️ US SPLIT | TOTAL EXPOSURE ${(totalExposure * 100).toFixed(1)}% OVER THE ${(MUSK_EXPOSURE_CAP * 100).toFixed(0)}% CAP`)
         : usBtnState === 'confirm'
         ? t('✅ 美股分流｜§10.6 在門檻內，待標記確認', '✅ US SPLIT | §10.6 WITHIN CAP — AWAITING CONFIRMATION')
         : t(`🇺🇸 美股分流｜TSLA ${(effectiveUsRatio.TSLA * 100).toFixed(0)}% · SPCX ${(effectiveUsRatio.SPCX * 100).toFixed(0)}% · QLD ${(effectiveUsRatio.QLD * 100).toFixed(0)}%`, `🇺🇸 US SPLIT | TSLA ${(effectiveUsRatio.TSLA * 100).toFixed(0)}% · SPCX ${(effectiveUsRatio.SPCX * 100).toFixed(0)}% · QLD ${(effectiveUsRatio.QLD * 100).toFixed(0)}%`);
@@ -3078,6 +3182,8 @@
         ? 'bg-rose-400 hover:bg-rose-500 text-white border-rose-500'
         : usBtnState === 'converging'
         ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600'
+        : usBtnState === 'overcap'
+        ? 'bg-amber-400 hover:bg-amber-500 text-white border-amber-500'
         : usBtnState === 'confirm'
         ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800'
         : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-600 hover:border-slate-400';
@@ -3359,6 +3465,12 @@
                     <div className="-mx-4 sm:-mx-6">
                       {p1SharedInputsBlock}
                       {p1Part2Block}
+                      {/* 券商斷頭線段落 —— 原頂部「崩盤抵抗」卡，與上方規則線 260% 段上下並列。
+                          大盤指數輸入、🔄 抓即時指數、崩盤指數、可承受跌幅、β 設定全部可操作，
+                          且與上方 Part 2 的 β 讀同一份 betaConfig state。 */}
+                      <div className="mt-4">
+                        {crashResistanceBlock}
+                      </div>
                     </div>
                   </div>
                 </React.Fragment>,
@@ -3667,78 +3779,14 @@ Ask this box before you withdraw.`
                 </div>
               );
 
-              // 穿透曝險計算 — 提出到 IIFE 外層，讓完整卡片與收合摘要列共用同一組真實計算值
-              const pxTsla = parseFloat(formDataB.tsla) || 0;
-              const pxSpcx = parseFloat(formDataB.spcx) || 0;
-              const pxQld = parseFloat(formDataB.qld) || 0;
-              const pxTotal = pxTsla + pxSpcx + pxQld;
-              const tslaRatio = pxTotal > 0 ? pxTsla / pxTotal : 0;
-              const spcxRatio = pxTotal > 0 ? pxSpcx / pxTotal : 0;
-              const qldRatio = pxTotal > 0 ? pxQld / pxTotal : 0;
-              const directExposure = tslaRatio + spcxRatio;
-              const qldPassthrough = qldRatio * (NDX_WEIGHT.TSLA + NDX_WEIGHT.SPCX) * QLD_LEVERAGE;
-              const totalExposure = directExposure + qldPassthrough;
-              const overCap = totalExposure > MUSK_EXPOSURE_CAP;
-              const passthroughTier = overCap ? 'danger' : 'standard';
-
-              // 壓力測試情境結果 — 沿用卡片內既有的固定文案數值，收合摘要列與完整卡片共用同一組常數
-              // 壓力測試是固定假設情境(非讀取即時資料算出的風險狀態)，沒有「當前真實危險狀態」可判斷，固定standard
-              const stressTier = 'standard';
-              const stressMuskDrop = t('約 −25%', 'approx. −25%');
-              const stressNdxVerdict = t('極重，配置無法防禦', 'Severe — allocation cannot defend');
-              // v12.15 — mini卡正面主數字拆「數字」與修飾詞兩部分顯示用，與stressMuskDrop同一組固定情境值，modal(cardStress)仍用完整的stressMuskDrop不變
-              const stressMuskQualifier = t('約', 'approx.');
-              const stressMuskValue = t('−25%', '−25%');
-
               // 收合狀態摘要列 — 點擊任何時候都能立刻開 modal，無任何解鎖門檻／if 條件包住開啟動作
               // v12.12 — mini卡版型：改h-44固定高度、摘要內容不變，僅重排版；點擊開modal的行為與模態內容(cardPassthrough/cardStress)完全不動
-              const cardPassthroughCollapsed = (
-                <div
-                  onClick={() => setExpandedCard('passthrough')}
-                  onMouseMove={handleMouseMove}
-                  className={`relative rounded-xl overflow-hidden glass-card min-h-[11rem] h-full flex flex-col holo-card mini-card-frost mini-card-corners cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors ${passthroughTier === 'danger' ? 'mini-card-danger' : 'mini-card-standard'}`}
-                >
-                  <div className="px-5 pt-4 pb-2 flex items-center gap-2 relative z-30">
-                    <span className={`w-1 h-4 rounded-full shrink-0 ${overCap ? 'bg-rose-500' : 'bg-emerald-500'}`}></span>
-                    <span className="text-slate-400">▶</span>
-                    <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-black shrink-0">{cardTitles.passthrough}</span>
-                  </div>
-                  <div className={`flex-grow px-5 pb-4 flex flex-col justify-center border-l-[6px] ${overCap ? 'border-rose-500' : 'border-emerald-500'}`}>
-                    <span className="text-sm font-mono uppercase tracking-widest text-slate-400 mb-0.5">{t('總曝險', 'TOTAL EXPOSURE')}</span>
-                    <span className={`text-3xl sm:text-4xl font-mono font-extrabold vibe-hover-text tabular-nums mini-card-num ${overCap ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{(totalExposure * 100).toFixed(1)}% {overCap ? '🔴' : ''}</span>
-                    <span className="text-sm font-mono font-bold text-slate-400 mt-1">{t('上限', 'CAP')} {(MUSK_EXPOSURE_CAP * 100).toFixed(0)}%</span>
-                  </div>
-                </div>
-              );
-
-              // v12.14 — 重新設計出主數字：馬斯克跌幅為主，NDX判定降為次要文字，點擊開modal機制不動
-              const cardStressCollapsed = (
-                <div
-                  onClick={() => setExpandedCard('stress')}
-                  onMouseMove={handleMouseMove}
-                  className={`relative rounded-xl overflow-hidden glass-card min-h-[11rem] h-full flex flex-col holo-card mini-card-frost mini-card-corners cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors ${stressTier === 'danger' ? 'mini-card-danger' : 'mini-card-standard'}`}
-                >
-                  <div className="px-5 pt-4 pb-2 flex items-center gap-2 relative z-30">
-                    <span className="w-1 h-4 rounded-full shrink-0 bg-rose-500"></span>
-                    <span className="text-slate-400">▶</span>
-                    <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-black shrink-0">{cardTitles.stress}</span>
-                  </div>
-                  <div className="flex-grow px-5 pb-4 flex flex-col justify-center border-l-[6px] border-rose-500">
-                    <span className="text-sm font-mono uppercase tracking-widest text-slate-400 mb-0.5">{t('馬斯克跌幅', 'MUSK DROP')}</span>
-                    <span className="font-mono font-black text-rose-600 dark:text-rose-400 whitespace-nowrap vibe-hover-text">
-                      <span className="text-sm align-baseline mr-1">{stressMuskQualifier}</span>
-                      <span className="text-3xl sm:text-4xl align-baseline tabular-nums mini-card-num">{stressMuskValue}</span>
-                    </span>
-                    <span className="text-sm font-bold text-slate-400 mt-1 leading-snug">{t(`NDX −30%：${stressNdxVerdict}`, `NDX −30%: ${stressNdxVerdict}`)}</span>
-                  </div>
-                </div>
-              );
-
               const leftCards = { input: cardInput };
 
               // v12.12 — mini卡版型(比照AMBER h-44 glass-card + hover翻面)：計算邏輯不動，只改外層容器與排版
               const mrBorderClass = { STANDBY: 'border-slate-300 dark:border-slate-600', GREEN: 'border-emerald-500', YELLOW: 'border-yellow-500', RED: 'border-rose-500' }[mrZoneInfo.zone];
               const mrTier = mrZoneInfo.zone === 'RED' ? 'danger' : 'core';
+
               const cardMr = (
                 /* 高度改 min-h：下方多了 P1 雙向計算的按鈕列，固定 h-44 會把 MR 數字擠爆。
                    沒有按鈕時外觀與原本的 h-44 一致。 */
@@ -3798,66 +3846,6 @@ Ask this box before you withdraw.`
                 </div>
               );
 
-              const currentIndexVal = parseFloat(crashIndexInput) || 0;
-              // maxMarketDrop 已是擔保品跌幅 ÷ β 後的指數跌幅，不可再除一次 β
-              const marketDropPct = isCrashSafe ? maxMarketDrop : 0;
-              const crashIndexValue = currentIndexVal * (1 - marketDropPct / 100);
-
-              const cardCrash = (
-                  <div className={`tech-panel p-8 scale-card cursor-default`}>
-                    <h2 className="text-sm font-black uppercase text-slate-400 mb-6">{cardTitles.crash}</h2>
-
-                    <div className="grid grid-cols-3 gap-3 mb-6">
-                      <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-2 text-center border border-slate-100 dark:border-slate-700">
-                        <div className="font-bold text-sm text-slate-400 mb-1">0050 β</div>
-                        <input type="number" step="0.01" name="b0050" value={betaConfig.b0050} onChange={handleBetaChange} className="w-full text-center text-lg font-black font-mono bg-transparent outline-none text-slate-700 dark:text-slate-300 data-text" />
-                      </div>
-                      <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-2 text-center border border-slate-100 dark:border-slate-700">
-                        <div className="font-bold text-sm text-slate-400 mb-1">00733 β</div>
-                        <input type="number" step="0.01" name="b00733" value={betaConfig.b00733} onChange={handleBetaChange} className="w-full text-center text-lg font-black font-mono bg-transparent outline-none text-slate-700 dark:text-slate-300 data-text" />
-                      </div>
-                      <div className="bg-rose-50 dark:bg-rose-950/30 rounded-xl p-2 text-center border border-rose-100 dark:border-rose-900/50">
-                        <div className="font-bold text-sm text-rose-400 mb-1">LIMIT</div>
-                        <input type="number" name="mrLimit" value={betaConfig.mrLimit} onChange={handleBetaChange} className="w-full text-center text-lg font-black font-mono bg-transparent outline-none text-rose-500 data-text" />
-                      </div>
-                    </div>
-
-                    <div className={`rounded-2xl p-6 text-center border ${isCrashSafe ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-100 dark:border-emerald-900/50' : 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/50'}`}>
-                      <div className="text-sm font-bold mb-2 uppercase tracking-widest text-slate-500 dark:text-slate-400">MAX DROP TO LIQUIDATION</div>
-                      {C > 0 && L > 0 ? (
-                        <div className={`text-4xl sm:text-5xl font-black font-mono tracking-tight data-text break-words ${isCrashSafe ? 'text-emerald-500' : 'text-rose-500'}`}>
-                          {isCrashSafe ? `-${maxMarketDrop.toFixed(2)}%` : 'BREACHED'}
-                        </div>
-                      ) : (
-                        <div className="text-2xl font-black text-slate-300 dark:text-slate-600 mt-2">N/A</div>
-                      )}
-                    </div>
-
-                    <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
-                      <div className="flex justify-between items-center gap-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 border border-slate-100 dark:border-slate-700">
-                        <span className="text-sm font-bold text-slate-400 uppercase tracking-wider">{t('當前大盤指數', 'CURRENT INDEX')}</span>
-                        <div className="flex items-center gap-1.5">
-                          <button type="button" onClick={fetchMarketIndex} disabled={isFetchingIndex} title={t('重新抓取即時指數', 'Refresh live index')} className={`text-slate-400 hover:text-sky-500 dark:hover:text-amber-400 transition-colors ${isFetchingIndex ? 'animate-spin' : ''}`}>
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                          </button>
-                          <input type="number" value={crashIndexInput} onChange={(e) => setCrashIndexInput(e.target.value)} className="w-28 text-right text-lg font-black font-mono bg-transparent outline-none text-slate-700 dark:text-slate-300 data-text" />
-                        </div>
-                      </div>
-                      <div className={`rounded-xl p-4 text-center border ${isCrashSafe ? 'bg-sky-50 dark:bg-sky-950/30 border-sky-100 dark:border-sky-900/50' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-700'}`}>
-                        <div className="text-sm font-bold mb-1 uppercase tracking-widest text-slate-500 dark:text-slate-400">{t('崩盤指數', 'CRASH INDEX')}</div>
-                        {isCrashSafe && currentIndexVal > 0 ? (
-                          <div className="text-2xl sm:text-3xl font-black font-mono tracking-tight data-text break-words text-sky-600 dark:text-sky-400">
-                            {crashIndexValue.toLocaleString('en-US', { maximumFractionDigits: 0 })}
-                          </div>
-                        ) : (
-                          <div className="text-xl font-black text-slate-300 dark:text-slate-600 mt-1">N/A</div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-              );
-
-              const topCards = { crash: cardCrash };
 
               // v12.12 — mini卡版型：DIFF/TARGET留在正面(主要行動指令)，P1 TACTICAL POOL明細移到背面，計算邏輯不動
               const balanceBorderClass = parseFloat(p1Ratio) < 33.3 ? 'border-rose-500' : 'border-violet-500';
@@ -4071,7 +4059,7 @@ Ask this box before you withdraw.`
               const cardPassthrough = (
                     <div className="tech-panel p-8">
                       <h2 className="text-xl font-black uppercase text-slate-700 dark:text-slate-200 mb-6 flex items-center gap-2">
-                        {cardTitles.passthrough}
+                        {t('穿透曝險', 'PASSTHROUGH EXPOSURE')}
                       </h2>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 text-center">
@@ -4635,9 +4623,9 @@ Build the wall first. Attack second.`)}
               );
 
               const bottomCards = { radar: cardRadar, history: cardHistory, erg: cardErg };
-              const miniCards = { mr: cardMr, balance: cardBalance, lcm: cardLcm, allocationOrder: cardAllocationOrder, cashMoat: cardCashMoatCollapsed, passthrough: cardPassthroughCollapsed, stress: cardStressCollapsed, liquidity: cardLiquidity };
+              const miniCards = { mr: cardMr, balance: cardBalance, lcm: cardLcm, allocationOrder: cardAllocationOrder, cashMoat: cardCashMoatCollapsed, liquidity: cardLiquidity };
 
-              const expandedCardContent = expandedCard === 'passthrough' ? cardPassthrough : expandedCard === 'stress' ? cardStress : expandedCard === 'cashMoat' ? cardCashMoat : expandedCard === 'liquidity' ? cardLiquidityModal : null;
+              const expandedCardContent = expandedCard === 'cashMoat' ? cardCashMoat : expandedCard === 'liquidity' ? cardLiquidityModal : null;
 
               return (
                 <Fragment>
@@ -4650,15 +4638,6 @@ Build the wall first. Attack second.`)}
                     ))}
                   </div>
 
-                  <div className="xl:col-span-12">
-                    <div className={sortMode ? 'space-y-3' : (topOrder.length > 1 ? 'grid grid-cols-1 md:grid-cols-2 gap-8' : 'space-y-8')}>
-                      {topOrder.map(id => (
-                        <DraggableCard key={id} id={id} zone="top" order={topOrder} setOrder={setTopOrder} dragInfo={dragInfo} setDragInfo={setDragInfo} collapsed={sortMode} title={cardTitles[id]}>
-                          {topCards[id]}
-                        </DraggableCard>
-                      ))}
-                    </div>
-                  </div>
 
                   <div className="xl:col-span-12">
                     <div className={sortMode ? 'space-y-3' : 'grid grid-cols-2 gap-4'}>
@@ -4722,6 +4701,13 @@ Build the wall first. Attack second.`)}
                         <button onClick={() => setShowUsEngineModal(false)} className="text-slate-400 hover:text-rose-500 text-xl leading-none shrink-0 ml-2">✕</button>
                       </div>
                       {cardUsEngine}
+                      {/* 穿透曝險與壓力測試原為兩張 mini 卡＋各自的 modal，現收進本彈窗。
+                          保留的是資訊最完整的 modal 版本（收合摘要的文案是它的子集，
+                          無任何條文說明遺失）；兩者讀的本來就是同一組計算值，無去重風險。 */}
+                      <div className="mt-4 space-y-4">
+                        {cardPassthrough}
+                        {cardStress}
+                      </div>
                     </div>
                   </Fragment>,
                   document.body
