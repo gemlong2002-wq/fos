@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/10/11 13:04';
+    const APP_VERSION = '2026/10/11 13:38';
 
     /* ===================================================================
        共用工具
@@ -1250,7 +1250,10 @@
     /* p1calc（P1 雙向計算）已改為 MR 卡上的按鈕＋彈窗，不再是獨立卡片。
        舊使用者 localStorage 裡殘留的 'p1calc' 會被 reconcileCardOrder 依預設清單濾掉，
        不會留下空位也不會報錯。 */
-    const DEFAULT_BOTTOM_ORDER = ['usEngine', 'crypto', 'radar', 'history', 'erg'];
+    /* usEngine／crypto 已改為資金分配指令卡上的按鈕＋彈窗（比照 p1calc 的處理），
+       不再是獨立卡片。舊 localStorage 排序殘留的這兩個 key 會被 reconcileCardOrder
+       依預設清單濾掉，不留空位也不報錯。 */
+    const DEFAULT_BOTTOM_ORDER = ['radar', 'history', 'erg'];
     // v12.12 — mini zone：純顯示型卡片改AMBER小卡版型(h-44 grid)，收納自left/top/bottom搬遷的卡片
     // v12.13 — 現金護城河改「小卡摘要+彈窗輸入」比照passthrough/stress模式，一併搬進mini zone(與LCM同主題相鄰)
     const DEFAULT_MINI_ORDER = ['mr', 'balance', 'lcm', 'allocationOrder', 'cashMoat', 'passthrough', 'stress', 'liquidity'];
@@ -1347,7 +1350,7 @@
             saveCardOrder(zone, newOrder);
             setDragInfo({ zone: null, id: null, overId: null });
           }}
-          className={`relative transition-all duration-200 ${isDragging ? 'opacity-40 scale-[0.98]' : ''} ${isDropTarget ? 'ring-2 ring-sky-400 dark:ring-amber-400 ring-offset-2 dark:ring-offset-slate-950 rounded-2xl' : ''}`}
+          className={`relative h-full transition-all duration-200 ${isDragging ? 'opacity-40 scale-[0.98]' : ''} ${isDropTarget ? 'ring-2 ring-sky-400 dark:ring-amber-400 ring-offset-2 dark:ring-offset-slate-950 rounded-2xl' : ''}`}
         >
           <div
             draggable
@@ -1608,6 +1611,15 @@
          申購輸入每次開窗都重設為空白（只有股數/中籤率帶預設），所以刻意不存 localStorage；
          「參數設定」那組門檻才會存檔（key 前綴 fos_ipo_，比照 ergExtraInputs 的存法）。 */
       const IPO_INPUT_DEFAULTS = { name: '', subPrice: '', mktPrice: '', shares: '1000', winRatePct: '1' };
+      /* 美股分流引擎／加密三態的兩個彈窗（由資金分配指令卡上的按鈕開啟）。
+         拖曳與圖層沿用既有 useDraggableOffset／z-[999]・z-[1000]，不另寫一套。 */
+      const [showUsEngineModal, setShowUsEngineModal] = useState(false);
+      const [showCryptoModal, setShowCryptoModal] = useState(false);
+      const usEngineHeaderRef = useRef(null);
+      const cryptoModalHeaderRef = useRef(null);
+      const usEngineDragOffset = useDraggableOffset(usEngineHeaderRef, showUsEngineModal);
+      const cryptoModalDragOffset = useDraggableOffset(cryptoModalHeaderRef, showCryptoModal);
+
       /* P1 雙向計算的兩個彈窗（由 MR 卡上的按鈕開啟）。
          拖曳沿用既有 useDraggableOffset，不另寫一套。 */
       const [showP1Part1Modal, setShowP1Part1Modal] = useState(false);
@@ -3030,6 +3042,52 @@
       // §4.3 拉回 280% 需償還本金（純顯示；🔴／4.9 時才有意義）
       const deleverageRepayment = calcDeleverageRepayment(L, C);
 
+      /* 資金分配指令卡上「美股分流」「加密三態」兩顆按鈕的狀態。
+         凍結一律取既有單一來源 fiatIsFrozen（= allocateExternalFunds 的 frozen，
+         含 🔴 回復帶與 §4.9），不在這裡用 mrZoneInfo 再判一次。
+         §10.6 狀態取既有 muskConv，比例取既有 effectiveUsRatio，加密取既有三態結果。
+         優先序：凍結 > §10.6 漂回 > §10.6 收斂中 > 待確認 > 正常。 */
+      const usBtnState = fiatIsFrozen
+        ? 'frozen'
+        : muskConv.status === 'over-done'
+        ? 'drifted'
+        : muskConv.forceQldOnly
+        ? 'converging'
+        : muskConv.needConfirm
+        ? 'confirm'
+        : 'normal';
+      const usBtnLabel = usBtnState === 'frozen'
+        ? t('❄️ 美股分流｜注資凍結，資金償還本金', '❄️ US SPLIT | FROZEN — FUNDS REPAY PRINCIPAL')
+        : usBtnState === 'drifted'
+        ? t('⚠️ 美股分流｜§10.6 占比漂回 30% 以上，請人工檢視', '⚠️ US SPLIT | §10.6 SHARE DRIFTED BACK ABOVE 30% — REVIEW')
+        : usBtnState === 'converging'
+        ? t('⚠️ 美股分流｜§10.6 收斂中，全額買 QLD', '⚠️ US SPLIT | §10.6 CONVERGING — ALL INTO QLD')
+        : usBtnState === 'confirm'
+        ? t('✅ 美股分流｜§10.6 在門檻內，待標記確認', '✅ US SPLIT | §10.6 WITHIN CAP — AWAITING CONFIRMATION')
+        : t(`🇺🇸 美股分流｜TSLA ${(effectiveUsRatio.TSLA * 100).toFixed(0)}% · SPCX ${(effectiveUsRatio.SPCX * 100).toFixed(0)}% · QLD ${(effectiveUsRatio.QLD * 100).toFixed(0)}%`, `🇺🇸 US SPLIT | TSLA ${(effectiveUsRatio.TSLA * 100).toFixed(0)}% · SPCX ${(effectiveUsRatio.SPCX * 100).toFixed(0)}% · QLD ${(effectiveUsRatio.QLD * 100).toFixed(0)}%`);
+      const usBtnClass = usBtnState === 'frozen'
+        ? 'bg-rose-500 hover:bg-rose-600 text-white border-rose-600'
+        : usBtnState === 'drifted'
+        ? 'bg-rose-400 hover:bg-rose-500 text-white border-rose-500'
+        : usBtnState === 'converging'
+        ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600'
+        : usBtnState === 'confirm'
+        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800'
+        : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-600 hover:border-slate-400';
+
+      // 加密按鈕：凍結 > 無三態資料（ETH/BTC 比值為 0）> 正常。配色沿用既有 consensusColor
+      const cryptoBtnState = fiatIsFrozen ? 'frozen' : (ratioVal > 0 ? 'normal' : 'nodata');
+      const cryptoBtnLabel = cryptoBtnState === 'frozen'
+        ? t('❄️ 加密三態｜注資凍結', '❄️ CRYPTO 3-STATE | FROZEN')
+        : cryptoBtnState === 'nodata'
+        ? t('₿ 加密三態｜資料不足', '₿ CRYPTO 3-STATE | NO DATA')
+        : t(`₿ 加密三態｜→ ${consensusTarget}（${consensusMsg}）`, `₿ CRYPTO 3-STATE | → ${consensusTarget} (${consensusMsg})`);
+      const cryptoBtnClass = cryptoBtnState === 'frozen'
+        ? 'bg-rose-500 hover:bg-rose-600 text-white border-rose-600'
+        : cryptoBtnState === 'nodata'
+        ? 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-600 hover:border-slate-400'
+        : `${consensusColor} hover:opacity-80`;
+
       const fiatSplitResult = fixedRatioSplit(fiatStockAlloc, mrZoneInfo.zone, muskConv.forceQldOnly);
 
       /* 理由文字：依 allocateExternalFunds 回傳的 steps 順序串成一句話，
@@ -3545,7 +3603,7 @@
                 <div
                   onClick={() => setExpandedCard('liquidity')}
                   onMouseMove={handleMouseMove}
-                  className={`relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card mini-card-frost mini-card-corners cursor-pointer hover:border-rose-300 dark:hover:border-rose-700 transition-colors ${liquidityTier === 'danger' ? 'mini-card-danger' : 'mini-card-standard'}`}
+                  className={`relative rounded-xl overflow-hidden glass-card min-h-[11rem] h-full flex flex-col holo-card mini-card-frost mini-card-corners cursor-pointer hover:border-rose-300 dark:hover:border-rose-700 transition-colors ${liquidityTier === 'danger' ? 'mini-card-danger' : 'mini-card-standard'}`}
                 >
                   <div className="px-5 pt-4 pb-2 flex items-center gap-2 relative z-30">
                     <span className={`w-1 h-4 rounded-full shrink-0 ${liquidityBufferSafe ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
@@ -3631,7 +3689,7 @@ Ask this box before you withdraw.`
                 <div
                   onClick={() => setExpandedCard('passthrough')}
                   onMouseMove={handleMouseMove}
-                  className={`relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card mini-card-frost mini-card-corners cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors ${passthroughTier === 'danger' ? 'mini-card-danger' : 'mini-card-standard'}`}
+                  className={`relative rounded-xl overflow-hidden glass-card min-h-[11rem] h-full flex flex-col holo-card mini-card-frost mini-card-corners cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors ${passthroughTier === 'danger' ? 'mini-card-danger' : 'mini-card-standard'}`}
                 >
                   <div className="px-5 pt-4 pb-2 flex items-center gap-2 relative z-30">
                     <span className={`w-1 h-4 rounded-full shrink-0 ${overCap ? 'bg-rose-500' : 'bg-emerald-500'}`}></span>
@@ -3651,7 +3709,7 @@ Ask this box before you withdraw.`
                 <div
                   onClick={() => setExpandedCard('stress')}
                   onMouseMove={handleMouseMove}
-                  className={`relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card mini-card-frost mini-card-corners cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors ${stressTier === 'danger' ? 'mini-card-danger' : 'mini-card-standard'}`}
+                  className={`relative rounded-xl overflow-hidden glass-card min-h-[11rem] h-full flex flex-col holo-card mini-card-frost mini-card-corners cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors ${stressTier === 'danger' ? 'mini-card-danger' : 'mini-card-standard'}`}
                 >
                   <div className="px-5 pt-4 pb-2 flex items-center gap-2 relative z-30">
                     <span className="w-1 h-4 rounded-full shrink-0 bg-rose-500"></span>
@@ -3677,7 +3735,7 @@ Ask this box before you withdraw.`
               const cardMr = (
                 /* 高度改 min-h：下方多了 P1 雙向計算的按鈕列，固定 h-44 會把 MR 數字擠爆。
                    沒有按鈕時外觀與原本的 h-44 一致。 */
-                <div className={`relative rounded-xl overflow-hidden glass-card min-h-[11rem] flex flex-col holo-card mini-card-frost mini-card-corners`} onMouseMove={handleMouseMove}>
+                <div className={`relative rounded-xl overflow-hidden glass-card min-h-[11rem] h-full flex flex-col holo-card mini-card-frost mini-card-corners`} onMouseMove={handleMouseMove}>
                   <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
                     <span className="flex items-center gap-2">
                       <span className={`w-1 h-4 rounded-full shrink-0 ${mrZoneInfo.dot}`}></span>
@@ -3798,7 +3856,7 @@ Ask this box before you withdraw.`
               const balanceBorderClass = parseFloat(p1Ratio) < 33.3 ? 'border-rose-500' : 'border-violet-500';
               const balanceTier = parseFloat(p1Ratio) < 33.3 ? 'danger' : 'standard';
               const cardBalance = (
-                <div className={`relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card mini-card-frost mini-card-corners`} onMouseMove={handleMouseMove}>
+                <div className={`relative rounded-xl overflow-hidden glass-card min-h-[11rem] h-full flex flex-col holo-card mini-card-frost mini-card-corners`} onMouseMove={handleMouseMove}>
                   <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
                     <span className="flex items-center gap-2">
                       <span className={`w-1 h-4 rounded-full shrink-0 ${balanceTier === 'danger' ? 'bg-rose-500' : 'bg-violet-500'}`}></span>
@@ -4257,7 +4315,7 @@ Ask this box before you withdraw.`
                 <div
                   onClick={() => setExpandedCard('cashMoat')}
                   onMouseMove={handleMouseMove}
-                  className={`relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card mini-card-frost mini-card-corners cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors ${cmTier === 'danger' ? 'mini-card-danger' : 'mini-card-standard'}`}
+                  className={`relative rounded-xl overflow-hidden glass-card min-h-[11rem] h-full flex flex-col holo-card mini-card-frost mini-card-corners cursor-pointer hover:border-sky-300 dark:hover:border-sky-700 transition-colors ${cmTier === 'danger' ? 'mini-card-danger' : 'mini-card-standard'}`}
                 >
                   <div className="px-5 pt-4 pb-2 pr-16 flex items-center gap-1.5 relative z-30">
                     <span className={`w-1 h-4 rounded-full shrink-0 ${cmDotClass}`}></span>
@@ -4361,7 +4419,7 @@ Build the wall first. Attack second.`)}
 
               // v12.12 — mini卡版型：主數字+燈號留正面，明細+說明移到背面(hover展開)，計算邏輯完全不動
               const cardLcm = (
-                <div className={`relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card mini-card-frost mini-card-corners`} onMouseMove={handleMouseMove}>
+                <div className={`relative rounded-xl overflow-hidden glass-card min-h-[11rem] h-full flex flex-col holo-card mini-card-frost mini-card-corners`} onMouseMove={handleMouseMove}>
                   <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
                     <span className="flex items-center gap-2">
                       <span className={`w-1 h-4 rounded-full shrink-0 ${lcmDotClass}`}></span>
@@ -4420,14 +4478,16 @@ Build the wall first. Attack second.`)}
 
               // v12.12 — mini卡版型：指令留正面，3區間對照表+完整說明移到背面(hover展開)，判定邏輯完全不動
               const cardAllocationOrder = (
-                <div className={`relative rounded-xl overflow-hidden glass-card h-44 flex flex-col holo-card mini-card-frost mini-card-corners`} onMouseMove={handleMouseMove}>
+                /* 高度改 min-h：下方多了美股分流／加密三態的按鈕列，固定 h-44 會把指令文字擠爆。
+                   翻面區塊另補 min-h 保住正面數字與背面說明的空間。 */
+                <div className={`relative rounded-xl overflow-hidden glass-card min-h-[11rem] h-full flex flex-col holo-card mini-card-frost mini-card-corners`} onMouseMove={handleMouseMove}>
                   <div className="px-5 pt-4 pb-2 flex justify-between items-center relative z-30">
                     <span className="flex items-center gap-2">
                       <span className={`w-1 h-4 rounded-full shrink-0 ${allocDotClass}`}></span>
                       <span className="text-slate-500 dark:text-slate-400 text-sm font-mono uppercase tracking-wider font-black shrink-0">{cardTitles.allocationOrder}</span>
                     </span>
                   </div>
-                  <div className="group relative flex-grow cursor-crosshair">
+                  <div className="group relative flex-grow min-h-[6.5rem] cursor-crosshair">
                     <div className={`absolute inset-0 isolate px-5 pb-4 flex flex-col justify-center border-l-[6px] ${allocBorderClass} bg-slate-50/50 dark:bg-slate-900/50 transition-all duration-300 group-hover:opacity-0 group-hover:scale-95 ${allocTier === 'danger' ? 'mini-card-danger' : 'mini-card-standard'}`}>
                       <span className={`text-xl sm:text-2xl md:text-3xl font-black font-mono data-text whitespace-nowrap vibe-hover-text tabular-nums mini-card-num ${allocTier === 'danger' ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-200'}`}>{allocLabel}</span>
                       <span className="text-sm font-bold mt-1 opacity-70">{t(`P1 ${formatNumber(P1)} / \u76ee\u6a19 ${formatNumber(allocP1Target)}`, `P1 ${formatNumber(P1)} / target ${formatNumber(allocP1Target)}`)}</span>
@@ -4448,6 +4508,19 @@ Build the wall first. Attack second.`)}
                         </div>
                       </span>
                     </div>
+                  </div>
+                  {/* 美股分流／加密三態入口 —— 刻意放在上面 group 翻面區塊「外面」：
+                      放進去會被 group-hover:opacity-0 淡掉，滑過去就消失且點不到。
+                      按鈕本身就帶狀態（凍結／§10.6／三態目標），警示不只藏在彈窗裡。 */}
+                  <div className="px-3 pb-3 pt-1 space-y-1.5 shrink-0 relative z-30">
+                    <button type="button" onClick={() => setShowUsEngineModal(true)}
+                      className={`w-full text-xs font-black py-1.5 px-2 rounded-lg border transition-colors leading-tight ${usBtnClass}`}>
+                      {usBtnLabel}
+                    </button>
+                    <button type="button" onClick={() => setShowCryptoModal(true)}
+                      className={`w-full text-xs font-black py-1.5 px-2 rounded-lg border transition-colors leading-tight ${cryptoBtnClass}`}>
+                      {cryptoBtnLabel}
+                    </button>
                   </div>
                 </div>
               );
@@ -4552,7 +4625,7 @@ Build the wall first. Attack second.`)}
                 </React.Fragment>
               );
 
-              const bottomCards = { usEngine: cardUsEngine, crypto: cardCrypto, radar: cardRadar, history: cardHistory, erg: cardErg };
+              const bottomCards = { radar: cardRadar, history: cardHistory, erg: cardErg };
               const miniCards = { mr: cardMr, balance: cardBalance, lcm: cardLcm, allocationOrder: cardAllocationOrder, cashMoat: cardCashMoatCollapsed, passthrough: cardPassthroughCollapsed, stress: cardStressCollapsed, liquidity: cardLiquidity };
 
               const expandedCardContent = expandedCard === 'passthrough' ? cardPassthrough : expandedCard === 'stress' ? cardStress : expandedCard === 'cashMoat' ? cardCashMoat : expandedCard === 'liquidity' ? cardLiquidityModal : null;
@@ -4620,6 +4693,51 @@ Build the wall first. Attack second.`)}
                       {expandedCardContent}
                     </div>
                   </div>
+                )}
+
+                {/* 美股固定比例分流引擎彈窗 —— 內容是原 usEngine 卡原樣搬入（含燈號切換、
+                    凍結畫面、§10.6 區塊、三檔目標進度、穿透曝險／壓力測試說明），計算未改。
+                    結構（portal + 遮罩 + ✕ + useDraggableOffset）比照既有 FIAT／IPO／P1 視窗。 */}
+                {showUsEngineModal && ReactDOM.createPortal(
+                  <Fragment>
+                    <div className="fixed inset-0 z-[999] bg-black/40" onClick={() => setShowUsEngineModal(false)} />
+                    <div
+                      className="fixed top-1/2 left-1/2 z-[1000] w-[92vw] max-w-sm sm:max-w-3xl bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-sky-500/30 p-3 sm:p-5 max-h-[88vh] overflow-y-auto"
+                      style={{ transform: `translate(calc(-50% + ${usEngineDragOffset.dx}px), calc(-50% + ${usEngineDragOffset.dy}px))` }}
+                    >
+                      <div ref={usEngineHeaderRef} className="flex items-center justify-between mb-3 cursor-grab active:cursor-grabbing select-none">
+                        <span className="text-xs font-bold uppercase tracking-widest text-slate-400 flex items-center gap-2 leading-tight">
+                          <span className="w-2 h-2 rounded-full bg-sky-500 shrink-0"></span>
+                          {cardTitles.usEngine}
+                        </span>
+                        <button onClick={() => setShowUsEngineModal(false)} className="text-slate-400 hover:text-rose-500 text-xl leading-none shrink-0 ml-2">✕</button>
+                      </div>
+                      {cardUsEngine}
+                    </div>
+                  </Fragment>,
+                  document.body
+                )}
+
+                {/* 加密三態彈窗 —— 內容是原 crypto 卡原樣搬入（含 SYNC P2/ATH、幣種詳情切換、
+                    BTC／ETH 動作卡、P2 輸入），計算與三態判定未改。 */}
+                {showCryptoModal && ReactDOM.createPortal(
+                  <Fragment>
+                    <div className="fixed inset-0 z-[999] bg-black/40" onClick={() => setShowCryptoModal(false)} />
+                    <div
+                      className="fixed top-1/2 left-1/2 z-[1000] w-[92vw] max-w-sm sm:max-w-3xl bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-violet-500/30 p-3 sm:p-5 max-h-[88vh] overflow-y-auto"
+                      style={{ transform: `translate(calc(-50% + ${cryptoModalDragOffset.dx}px), calc(-50% + ${cryptoModalDragOffset.dy}px))` }}
+                    >
+                      <div ref={cryptoModalHeaderRef} className="flex items-center justify-between mb-3 cursor-grab active:cursor-grabbing select-none">
+                        <span className="text-xs font-bold uppercase tracking-widest text-slate-400 flex items-center gap-2 leading-tight">
+                          <span className="w-2 h-2 rounded-full bg-violet-500 shrink-0"></span>
+                          {cardTitles.crypto}
+                        </span>
+                        <button onClick={() => setShowCryptoModal(false)} className="text-slate-400 hover:text-rose-500 text-xl leading-none shrink-0 ml-2">✕</button>
+                      </div>
+                      {cardCrypto}
+                    </div>
+                  </Fragment>,
+                  document.body
                 )}
                 </Fragment>
               );
