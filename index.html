@@ -390,7 +390,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/10/11 18:56';
+    const APP_VERSION = '2026/10/11 23:15';
 
     /* ===================================================================
        共用工具
@@ -1265,6 +1265,9 @@
     const DEFAULT_MINI_ORDER = ['mr', 'balance', 'lcm', 'allocationOrder', 'cashMoat', 'liquidity'];
 
     const CARD_ORDER_KEYS = { left: 'fos:cardOrder:left', top: 'fos:cardOrder:top', bottom: 'fos:cardOrder:bottom', mini: 'fos:cardOrder:mini' };
+    /* mini 區網格容器的 id，供跳轉列的「FOS 主系統卡」膠囊捲動與高亮用。
+       刻意不與任何卡片 id 同名（卡片 id 來自 DEFAULT_*_ORDER 的那些鍵）。 */
+    const MINI_GRID_ANCHOR_ID = 'fosMiniCardGrid';
 
     /* 以程式碼的預設卡片清單為準做校驗：
        - localStorage 有、程式碼沒有的 id → 忽略（未來刪卡片時自動清掉）
@@ -3108,7 +3111,18 @@
         allocationOrder: t('資金分配指令 ALLOCATION ORDER', 'ALLOCATION ORDER'),
         erg: t('離職放行閘門 ERG', 'EXIT READINESS GATE')
       };
-      const cardIndexList = [...leftOrder, ...topOrder, ...miniOrder, ...bottomOrder].map(id => ({ id, title: cardTitles[id] }));
+      /* 卡片快速跳轉列。mini 區六張卡合併成單一膠囊「FOS 主系統卡」，點擊捲到整個網格容器
+         （id = MINI_GRID_ANCHOR_ID）並套既有的 card-highlight-flash。
+         順序規則照舊：left → 合併後的 mini 群組 → bottom。
+         miniOrder 為空時不產生該膠囊（現行 DEFAULT_MINI_ORDER 有 6 張、
+         reconcileCardOrder 又會補回缺少的 id，所以這個守衛實務上恆真，純防禦）。 */
+      const indexEntry = (id) => ({ id, title: cardTitles[id] });
+      const cardIndexList = [
+        ...leftOrder.map(indexEntry),
+        ...topOrder.map(indexEntry),
+        ...(miniOrder.length > 0 ? [{ id: MINI_GRID_ANCHOR_ID, title: t('FOS 主系統卡', 'FOS CORE') }] : []),
+        ...bottomOrder.map(indexEntry)
+      ];
       const scrollToCard = (cardId) => {
         const el = document.getElementById(cardId);
         if (!el) return;
@@ -4640,7 +4654,13 @@ Build the wall first. Attack second.`)}
 
 
                   <div className="xl:col-span-12">
-                    <div className={sortMode ? 'space-y-3' : 'grid grid-cols-2 gap-4'}>
+                    {/* 低調的區塊標題：與跳轉列的膠囊同一個名稱，樣式比照頁面其他小標題 */}
+                    <div className="text-xs font-black uppercase tracking-widest text-slate-400 mb-2">
+                      {t('FOS 主系統卡', 'FOS CORE')}
+                    </div>
+                    {/* id 掛在網格容器上（排序模式下是同一個容器，只換 className），
+                        所以兩種模式下跳轉與高亮都有效 */}
+                    <div id={MINI_GRID_ANCHOR_ID} className={sortMode ? 'space-y-3' : 'grid grid-cols-2 gap-4'}>
                       {miniOrder.map(id => (
                         <DraggableCard key={id} id={id} zone="mini" order={miniOrder} setOrder={setMiniOrder} dragInfo={dragInfo} setDragInfo={setDragInfo} collapsed={sortMode} title={cardTitles[id]}>
                           {miniCards[id]}
