@@ -389,7 +389,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/10/11 13:38';
+    const APP_VERSION = '2026/10/11 14:02';
 
     /* ===================================================================
        共用工具
@@ -1491,10 +1491,13 @@
         return { label: 'DEFENDING', msg: 'HOLD & OBSERVE', ui: 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700' };
       }
 
-      // qldOnly：§10.6 馬斯克系占比超標且未標記收斂完成時，美股全部注入 QLD
-      function fixedRatioSplit(amount, mrZone, qldOnly) {
-        if (mrZone === 'RED') {
-          // v15.0 R11 — 凍結改綁 🔴（含回復帶）／4.9，訊息統一；美股與加密同步凍結
+      /* frozen：注資是否凍結。由呼叫端傳既有的 injectionFrozen（唯一來源），
+         本函式刻意不自己判 —— 先前這裡寫成 mrZone === 'RED'，漏掉 §4.9，
+         導致按鈕說凍結、點開卡片卻顯示正常分流。
+         qldOnly：§10.6 馬斯克系占比超標且未標記收斂完成時，美股全部注入 QLD */
+      function fixedRatioSplit(amount, frozen, qldOnly) {
+        if (frozen) {
+          // v15.0 R11 — 🔴（含回復帶）／§4.9 皆凍結，訊息統一；美股與加密同步凍結
           return { frozen: true, qldOnly: false, msg: '凍結注資，資金償還質押本金', tsla: 0, spcx: 0, qld: 0 };
         }
         const releasable = amount;
@@ -2130,6 +2133,11 @@
       const mrZoneInfo = getEffectiveMRZone(mrBaseZoneInfo, nominalMRRaw, mrRecoveryActive);
       const mrQuickDrop = evalQuickDrop(mrHistorySorted, nominalMRRaw, mrNowTime);
       const quickDropActive = mrQuickDrop.status === 'active';
+      /* 注資凍結的唯一判定來源 —— §6.3.1：🔴（含回復帶）與 §4.9 皆凍結。
+         條件本身只寫在 allocateExternalFunds 的 defensive 那一行，這裡用 amount = 0
+         呼叫它、只取 frozen 旗標，避免在第二個地方把同一條件再寫一次。
+         （frozen 在 amount <= 0 的 early return 之前就算好，所以傳 0 也拿得到正確值。） */
+      const injectionFrozen = allocateExternalFunds(0, { zone: mrZoneInfo.zone, quickDropActive }).frozen;
 
       /* 近 60 筆若最舊一筆仍晚於取樣區間下界（T-37），代表 60 筆涵蓋不到 30 日前，
          此時補抓完整歷史，避免 4.9 誤報「無法判定」。fetchFullHistory 自身有
@@ -2229,7 +2237,7 @@
 
       const escapeVal = parseFloat(escapeAmount) || 0;
       const stockInject = escapeVal * 0.8; const cryptoInject = escapeVal * 0.2;
-      const splitResult = fixedRatioSplit(stockInject, mrZoneInfo.zone, muskConv.forceQldOnly);
+      const splitResult = fixedRatioSplit(stockInject, injectionFrozen, muskConv.forceQldOnly);
 
       const handleSave = async (e) => {
         e.preventDefault(); if (writeLocked || L <= 0 || C <= 0) return;
@@ -2414,11 +2422,11 @@
         price675: p1CalcInputs.price00675L, price631: p1CalcInputs.price00631L,
         sellCostRate: p1SellCostRate, microFloor: p1CalcInputs.microFloor
       });
-      /* 增貸後的 80/20：美股必須走既有的 fixedRatioSplit（內含 §10.6 收斂與 🔴 凍結），
+      /* 增貸後的 80/20：美股必須走既有的 fixedRatioSplit（吃 injectionFrozen 與 §10.6 收斂），
          加密標的沿用既有三態結果 consensusTarget，不另寫一套判定 */
       const p1GrowthStock = p1Rebalance.growthRemainder * GROWTH_STOCK_RATIO;
       const p1GrowthCrypto = p1Rebalance.growthRemainder * GROWTH_CRYPTO_RATIO;
-      const p1GrowthSplit = fixedRatioSplit(p1GrowthStock, mrZoneInfo.zone, muskConv.forceQldOnly);
+      const p1GrowthSplit = fixedRatioSplit(p1GrowthStock, injectionFrozen, muskConv.forceQldOnly);
 
       const p1Rescue = calcRescueBudget({
         C, L, P1, beta: portfolioBeta,
@@ -3014,8 +3022,8 @@
 
       const handleCopyReport = () => {
         const report = t(
-          `【A】\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)}（0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}） | P1: ${p1Ratio}%\n【美股固定比例分流 v12.4】\nTSLA ${(effectiveUsRatio.TSLA * 100).toFixed(0)}% | SPCX ${(effectiveUsRatio.SPCX * 100).toFixed(0)}% | QLD ${(effectiveUsRatio.QLD * 100).toFixed(0)}%${muskConv.forceQldOnly ? ' (§10.6 收斂中：全額 QLD)' : ''}\n燈號: ${mrZoneInfo.label} ${splitResult.frozen ? '→ 注資凍結' : '→ 放行'}\n【加密三態】\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n【現金護城河】CASH: ${formatNumber(cmCash)} | TARGET: ${formatNumber(cmTarget)} | 佔總資產: ${cmTargetPctOfAssets != null ? cmTargetPctOfAssets.toFixed(2) + '%' : '—'} | 狀態: ${cmTier === 'danger' ? '未達標' : '已達標'}`,
-          `[A]\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} (0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}) | P1: ${p1Ratio}%\n[US EQUITY SPLIT v12.4]\nTSLA ${(effectiveUsRatio.TSLA * 100).toFixed(0)}% | SPCX ${(effectiveUsRatio.SPCX * 100).toFixed(0)}% | QLD ${(effectiveUsRatio.QLD * 100).toFixed(0)}%${muskConv.forceQldOnly ? ' (§10.6 converging: QLD only)' : ''}\nSignal: ${mrZoneInfo.label} ${splitResult.frozen ? '→ INJECTION FROZEN' : '→ RELEASED'}\n[CRYPTO 3-STATE]\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n[CASH MOAT] CASH: ${formatNumber(cmCash)} | TARGET: ${formatNumber(cmTarget)} | % of assets: ${cmTargetPctOfAssets != null ? cmTargetPctOfAssets.toFixed(2) + '%' : '—'} | Status: ${cmTier === 'danger' ? 'BELOW TARGET' : 'ON TARGET'}`
+          `【A】\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)}（0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}） | P1: ${p1Ratio}%\n【美股固定比例分流 v12.4】\nTSLA ${(effectiveUsRatio.TSLA * 100).toFixed(0)}% | SPCX ${(effectiveUsRatio.SPCX * 100).toFixed(0)}% | QLD ${(effectiveUsRatio.QLD * 100).toFixed(0)}%${muskConv.forceQldOnly ? ' (§10.6 收斂中：全額 QLD)' : ''}\n燈號: ${mrZoneInfo.label} ${splitResult.frozen ? (quickDropActive ? '→ 注資凍結（§4.9 快速下降）' : '→ 注資凍結（🔴 含回復帶）') : '→ 放行'}\n【加密三態】\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n【現金護城河】CASH: ${formatNumber(cmCash)} | TARGET: ${formatNumber(cmTarget)} | 佔總資產: ${cmTargetPctOfAssets != null ? cmTargetPctOfAssets.toFixed(2) + '%' : '—'} | 狀態: ${cmTier === 'danger' ? '未達標' : '已達標'}`,
+          `[A]\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} (0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}) | P1: ${p1Ratio}%\n[US EQUITY SPLIT v12.4]\nTSLA ${(effectiveUsRatio.TSLA * 100).toFixed(0)}% | SPCX ${(effectiveUsRatio.SPCX * 100).toFixed(0)}% | QLD ${(effectiveUsRatio.QLD * 100).toFixed(0)}%${muskConv.forceQldOnly ? ' (§10.6 converging: QLD only)' : ''}\nSignal: ${mrZoneInfo.label} ${splitResult.frozen ? (quickDropActive ? '→ INJECTION FROZEN (§4.9 QUICK DROP)' : '→ INJECTION FROZEN (RED incl. recovery band)') : '→ RELEASED'}\n[CRYPTO 3-STATE]\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n[CASH MOAT] CASH: ${formatNumber(cmCash)} | TARGET: ${formatNumber(cmTarget)} | % of assets: ${cmTargetPctOfAssets != null ? cmTargetPctOfAssets.toFixed(2) + '%' : '—'} | Status: ${cmTier === 'danger' ? 'BELOW TARGET' : 'ON TARGET'}`
         );
         navigator.clipboard.writeText(report).then(() => setTerminalMsg('>> REPORT COPIED.')).catch(() => setTerminalMsg('>> COPY FAILED.'));
       };
@@ -3038,16 +3046,15 @@
       const fiatStockAlloc = fiatAlloc.stock;
       const fiatCryptoAlloc = fiatAlloc.crypto;
       const fiatRepayAlloc = fiatAlloc.repay;
-      const fiatIsFrozen = fiatAlloc.frozen;
       // §4.3 拉回 280% 需償還本金（純顯示；🔴／4.9 時才有意義）
       const deleverageRepayment = calcDeleverageRepayment(L, C);
 
       /* 資金分配指令卡上「美股分流」「加密三態」兩顆按鈕的狀態。
-         凍結一律取既有單一來源 fiatIsFrozen（= allocateExternalFunds 的 frozen，
+         凍結一律取既有單一來源 injectionFrozen（= allocateExternalFunds 的 frozen，
          含 🔴 回復帶與 §4.9），不在這裡用 mrZoneInfo 再判一次。
          §10.6 狀態取既有 muskConv，比例取既有 effectiveUsRatio，加密取既有三態結果。
          優先序：凍結 > §10.6 漂回 > §10.6 收斂中 > 待確認 > 正常。 */
-      const usBtnState = fiatIsFrozen
+      const usBtnState = injectionFrozen
         ? 'frozen'
         : muskConv.status === 'over-done'
         ? 'drifted'
@@ -3076,7 +3083,7 @@
         : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-600 hover:border-slate-400';
 
       // 加密按鈕：凍結 > 無三態資料（ETH/BTC 比值為 0）> 正常。配色沿用既有 consensusColor
-      const cryptoBtnState = fiatIsFrozen ? 'frozen' : (ratioVal > 0 ? 'normal' : 'nodata');
+      const cryptoBtnState = injectionFrozen ? 'frozen' : (ratioVal > 0 ? 'normal' : 'nodata');
       const cryptoBtnLabel = cryptoBtnState === 'frozen'
         ? t('❄️ 加密三態｜注資凍結', '❄️ CRYPTO 3-STATE | FROZEN')
         : cryptoBtnState === 'nodata'
@@ -3088,7 +3095,7 @@
         ? 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-600 hover:border-slate-400'
         : `${consensusColor} hover:opacity-80`;
 
-      const fiatSplitResult = fixedRatioSplit(fiatStockAlloc, mrZoneInfo.zone, muskConv.forceQldOnly);
+      const fiatSplitResult = fixedRatioSplit(fiatStockAlloc, injectionFrozen, muskConv.forceQldOnly);
 
       /* 理由文字：依 allocateExternalFunds 回傳的 steps 順序串成一句話，
          讓使用者看得出完整路徑，而不是只看到最後一層。 */
@@ -3215,7 +3222,7 @@
                   >
                     <div ref={fiatHeaderRef} className="flex items-center justify-between mb-4 cursor-grab active:cursor-grabbing select-none">
                       <span className="text-xl font-black uppercase text-slate-700 dark:text-slate-300 flex items-center gap-3">
-                        <span className={`w-2 h-2 rounded-full ${fiatIsFrozen ? 'bg-rose-500' : 'bg-violet-500'}`}></span> {fiatIsFrozen ? 'DELEVERAGE INJECTION' : 'INJECTION MATRIX'}
+                        <span className={`w-2 h-2 rounded-full ${injectionFrozen ? 'bg-rose-500' : 'bg-violet-500'}`}></span> {injectionFrozen ? 'DELEVERAGE INJECTION' : 'INJECTION MATRIX'}
                       </span>
                       <button onClick={() => setShowFiatModal(false)} className="text-slate-400 hover:text-rose-500 text-xl leading-none">✕</button>
                     </div>
@@ -3283,7 +3290,7 @@
                             </span>
                           </div>
                         )}
-                        {fiatIsFrozen && (
+                        {injectionFrozen && (
                           <div className="bg-rose-50 dark:bg-rose-950/30 p-4 rounded-2xl border border-rose-200 dark:border-rose-800 text-center space-y-1">
                             <div className="text-lg font-black text-rose-600 dark:text-rose-400">❄️ {t('\u51cd\u7d50\u6ce8\u8cc7\uff0c\u8cc7\u91d1\u511f\u9084\u8cea\u62bc\u672c\u91d1', 'INJECTION FROZEN: Funds Repay Pledged Principal')}</div>
                             <div className="text-sm font-bold text-rose-500">{t('\u7f8e\u80a1\u8207\u52a0\u5bc6\u540c\u6b65\u51cd\u7d50\uff0c\u56b4\u7981\u6539\u9053\u9032\u52a0\u5bc6', 'US equities and crypto frozen together \u2014 never reroute into crypto')}</div>
@@ -3897,7 +3904,9 @@ Ask this box before you withdraw.`
                     <div className="text-xs font-normal normal-case text-slate-400 dark:text-slate-500 mt-1">{t(`匯率手動維護（NT$/USD ${formDataB.usdRate}），記得定期更新`, `Exchange rate is manually maintained (NT$/USD ${formDataB.usdRate}) — remember to update it periodically`)}</div>
                   </div>
 
-                  {(!showUsDetail && mrZoneInfo.zone === 'RED') ? (
+                  {/* 凍結畫面與下方橫幅都吃 injectionFrozen（唯一來源，含 §4.9）；
+                      先前寫 mrZoneInfo.zone === 'RED' 會漏掉 §4.9，造成按鈕說凍結、卡內卻正常分流 */}
+                  {(!showUsDetail && injectionFrozen) ? (
                     <div className="p-12 text-center bg-rose-50 dark:bg-rose-950/20">
                       <div className="text-6xl mb-4">❄️</div>
                       <div className="text-2xl font-black text-rose-600 dark:text-rose-400 uppercase">
@@ -3908,7 +3917,7 @@ Ask this box before you withdraw.`
                     </div>
                   ) : (
                     <div className="p-6 md:p-8 bg-white dark:bg-slate-900">
-                      {mrZoneInfo.zone === 'RED' && (
+                      {injectionFrozen && (
                         <div className="mb-4 p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-center">
                           <span className="text-sm font-bold text-rose-500">❄️ {t('注資凍結中 — 以下僅為持倉現況，非買入指令', 'FROZEN — below shows current holdings, NOT buy orders')}</span>
                         </div>
