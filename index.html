@@ -390,7 +390,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/10/11 23:31';
+    const APP_VERSION = '2026/10/21 15:10';
 
     /* ===================================================================
        共用工具
@@ -4322,6 +4322,24 @@ Ask this box before you withdraw.`
               const cmTierLabel = cmTier === 'danger' ? t('未達標', 'BELOW TARGET') : t('已達標', 'ON TARGET');
               const cmPctDisplay = cmTargetPctOfAssets != null ? `${cmTargetPctOfAssets.toFixed(2)}%` : t('尚未同步ASSET分頁', 'ASSET tab not synced');
 
+              // v12.11 — 流動性覆蓋 LCM(階段二)：P1可用(扣死線)+現金 除以月付，沿用既有 P1/L/現金護城河欄位，不新增計算來源
+              // v14.0 — cmMonthlyDebt(手動月付)已移除，月付來源純粹依賴debtMonthlyTotal(債務分頁自動加總)，
+              //         null時沿用既有lcmZoneKey==='na'的「未設定」降級模式，不再有手動fallback來源。
+              // 宣告提前到現金護城河卡之前：護城河卡的「現金可支應月數」與 LCM 卡共用同一個月付變數
+              const lcmMonthlyDebtSource = 'debt';
+              const lcmMonthlyDebtEffective = debtMonthlyTotal;
+              const lcmMonthlyDebtSourceLabel = lcmMonthlyDebtSource === 'debt' ? t('(自動)', '(AUTO)') : t('(手動)', '(MANUAL)');
+
+              // 現金可支應月數 = 現金 ÷ 月扣款（只計現金；含 P1 可用的月數見 LCM 卡），不做任何顏色門檻判定
+              const cmCashEmpty = String(cashMoatInputs.cash ?? '').trim() === '';
+              const cmHasMonthlyDebt = lcmMonthlyDebtEffective > 0;
+              const cmRunwayText = cmCashEmpty
+                ? t('現金未填', 'Cash not entered')
+                : !cmHasMonthlyDebt
+                  ? t('月扣款未設定', 'Monthly debt not set')
+                  : t(`現金可支應 ${(cmCash / lcmMonthlyDebtEffective).toFixed(1)} 個月（月扣款 ${formatNumber(lcmMonthlyDebtEffective)} ${lcmMonthlyDebtSourceLabel}）`,
+                      `Cash covers ${(cmCash / lcmMonthlyDebtEffective).toFixed(1)} months (monthly debt ${formatNumber(lcmMonthlyDebtEffective)} ${lcmMonthlyDebtSourceLabel})`);
+
               // v12.13 — mini zone小卡摘要：點擊開modal輸入(比照passthrough/stress)，計算/state/輸入邏輯完全不動
               const cardCashMoatCollapsed = (
                 <div
@@ -4336,7 +4354,8 @@ Ask this box before you withdraw.`
                   </div>
                   <div className={`flex-grow px-5 pb-4 flex flex-col justify-center border-l-[6px] ${cmBorderClass}`}>
                     <span className={`text-3xl sm:text-4xl font-black font-mono data-text vibe-hover-text tabular-nums mini-card-num ${cmTextClass}`}>{`$${formatNumber(cmTarget)}`}</span>
-                    <span className="text-sm font-bold mt-2 opacity-70">{cmPctDisplay}{cmTargetPctOfAssets != null ? ` ${t('佔總資產', 'of assets')}` : ''}</span>
+                    <span className="text-sm font-bold mt-2 opacity-70 break-words">{cmRunwayText}</span>
+                    <span className="text-xs mt-1 opacity-50 break-words">{t('只計現金；含 P1 可用的月數見 LCM 卡', 'Cash only; months incl. available P1 → see LCM card')}</span>
                   </div>
                 </div>
               );
@@ -4352,7 +4371,7 @@ Ask this box before you withdraw.`
                     <span className={`px-4 py-1.5 rounded-none text-sm font-black ${cmBadgeClass}`}>{cmTierLabel}</span>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
                     <div>
                       <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">CASH (TWD)</label>
                       <input type="number" name="cash" value={cashMoatInputs.cash} onChange={handleCashMoatChange} disabled={writeLocked} title={writeLocked ? WRITE_LOCK_HINT : undefined} className="w-full tech-input text-lg py-2 px-3 disabled:opacity-50 disabled:cursor-not-allowed" />
@@ -4361,11 +4380,11 @@ Ask this box before you withdraw.`
                       <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('目標水位 (TWD・固定)', 'TARGET (TWD・FIXED)')}</label>
                       <div className="w-full tech-input text-lg py-2 px-3 opacity-70 cursor-not-allowed" title={t('白皮書 v15.0 §4.7 固定目標，不可自訂', 'Fixed by whitepaper v15.0 §4.7')}>{formatNumber(CASH_MOAT_TARGET)}</div>
                     </div>
-                    <div>
-                      <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{t('佔總資產% (自動)', '% OF ASSETS (AUTO)')}</label>
-                      <div className="w-full tech-input text-lg py-2 px-3 opacity-70 cursor-not-allowed">{cmPctDisplay}</div>
-                    </div>
                   </div>
+                  <p className="mb-6 text-sm leading-relaxed text-slate-500 dark:text-slate-400 break-words">
+                    {t(`目標 ${formatNumber(cmTarget)} ÷ 毛資產 = ${cmPctDisplay}（毛資產 = ASSET 頁最新一筆 台股＋美股＋加密，未扣質押借款／信貸／房貸，不含現金）`,
+                       `Target ${formatNumber(cmTarget)} ÷ gross assets = ${cmPctDisplay} (gross assets = latest ASSET row: TW + US + crypto, before pledged loan / credit loan / mortgage, excluding cash)`)}
+                  </p>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
                     <div className="flex justify-between items-center p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
@@ -4405,12 +4424,7 @@ Build the wall first. Attack second.`)}
                 </div>
               );
 
-              // v12.11 — 流動性覆蓋 LCM(階段二)：P1可用(扣死線)+現金 除以月付，沿用既有 P1/L/現金護城河欄位，不新增計算來源
-              // v14.0 — cmMonthlyDebt(手動月付)已移除，月付來源純粹依賴debtMonthlyTotal(債務分頁自動加總)，
-              //         null時沿用既有lcmZoneKey==='na'的「未設定」降級模式，不再有手動fallback來源。
-              //         現金護城河卡自己的cmTarget/cmGap等既有計算與顯示完全不動。
-              const lcmMonthlyDebtSource = 'debt';
-              const lcmMonthlyDebtEffective = debtMonthlyTotal;
+              // (lcmMonthlyDebtSource / lcmMonthlyDebtEffective 已提前宣告於現金護城河卡之前，兩卡共用)
               // ERG準備工作一 — 改呼叫共用函式 calcAvailableBuffer（逐字搬自原本這三行算式，
               // 未改變任何運算順序，數字應與遷移前完全一致）
               const { deathLine: lcmDeathLine, p1Available: lcmP1Available, totalLiquid: lcmTotalLiquid } = calcAvailableBuffer(P1, L, cmCash);
