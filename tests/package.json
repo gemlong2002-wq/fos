@@ -2,15 +2,15 @@
   "name": "fos-deploy-tests",
   "private": true,
   "version": "1.0.0",
-  "description": "FOS 驗收斷言：對 repo 根的 index.html 做語法檢查與純函式數值驗算（唯讀，不改程式）。p1／misc／erg 位於未入庫的 pending/，標準答案待填",
+  "description": "FOS 驗收斷言：對 repo 根的 index.html 做語法檢查與純函式數值驗算（唯讀，不改程式）。p1／erg 位於未入庫的 pending/，標準答案待填",
   "scripts": {
     "syntax": "node bcheck.js",
     "p1": "node pending/verify-p1.js",
     "quotes": "node verify-quotes.js",
     "frozen": "node verify-frozen.js",
-    "misc": "node pending/verify-misc.js",
+    "misc": "node verify-misc.js",
     "erg": "node pending/verify-erg.js",
-    "test": "node bcheck.js && node verify-frozen.js && node verify-quotes.js"
+    "test": "node bcheck.js && node verify-frozen.js && node verify-quotes.js && node verify-misc.js"
   },
   "devDependencies": {
     "@babel/standalone": "^7.23.6"
