@@ -1,1 +1,3 @@
 _handoff/
+node_modules/
+tests/pending/
