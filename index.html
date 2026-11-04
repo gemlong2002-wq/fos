@@ -131,6 +131,19 @@
       box-shadow: 0 10px 25px -5px rgba(212, 175, 55, 0.2);
     }
 
+    /* ============ 資產回放｜大跌字卡的輕震動 ============ */
+    @keyframes replayShake {
+      0%, 100% { transform: translateX(0); }
+      20% { transform: translateX(-5px); }
+      40% { transform: translateX(5px); }
+      60% { transform: translateX(-3px); }
+      80% { transform: translateX(3px); }
+    }
+    .replay-shake { animation: replayShake 360ms ease-in-out; }
+    @media (prefers-reduced-motion: reduce) {
+      .replay-shake { animation: none; }
+    }
+
     /* ============ Amber 樣式 — 裸元素選擇器一律收進 .amber-scope，避免外洩 ============ */
     html.dark .amber-scope { color: #f59e0b; }
     .amber-scope .font-mono { font-family: 'JetBrains Mono', monospace; }
@@ -390,7 +403,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/10/21 15:10';
+    const APP_VERSION = '2026/11/04 17:44';
 
     /* ===================================================================
        共用工具
@@ -4981,6 +4994,543 @@ Build the wall first. Attack second.`)}
     // 自動偵測本金進出污染：總資產日對日變化絕對值 > 15% 視為資金進出而非真實投資損益
     const CAPITAL_FLOW_THRESHOLD = 15; // %
 
+    /* ===================================================================
+       資產回放（ASSET）｜斷點事件偵測
+       純函式區：不依賴 React 與元件內變數，可單獨測試
+       （見 tests/verify-replay.js）。口徑一律為毛資產（總資產欄位，
+       含質押借款與投入本金），與 ASSET 頁其他卡片相同。
+    =================================================================== */
+    const ASSET_REPLAY_DAY_MS = 86400000;
+    const ASSET_REPLAY_MILESTONE_STEP = 5000000;            // 整數關卡：每 500 萬
+    const ASSET_REPLAY_DRAWDOWN_TIERS = [0.10, 0.20, 0.30]; // 大跌字卡的回檔級距
+    const ASSET_REPLAY_SEGMENT_MIN_DRAWDOWN = 0.10;         // 谷底與收復前高的最小回檔幅度
+    const ASSET_REPLAY_GAP_DAYS = 60;                       // 兩筆間隔 > 60 天 → 虛線「無紀錄」
+    const ASSET_REPLAY_NOTE_MAX = 20;                       // 備註顯示上限字數
+    const ASSET_REPLAY_EVENT_HOLD_MS = 600;                 // 每個斷點字卡停留時間
+    const ASSET_REPLAY_MS_PER_POINT = 220;                  // 每筆的推進時間
+    const ASSET_REPLAY_MIN_MS = 8000;                       // 播放時間下限
+    const ASSET_REPLAY_MAX_MS = 20000;                      // 播放時間上限
+    /* 同一筆有多個事件時只顯示優先度最高者：
+       最後一筆 > 收復前高 > 大跌 > 整數關卡 > 谷底 > 跨年 > 備註 */
+    const ASSET_REPLAY_EVENT_PRIORITY = {
+        final: 7, recover: 6, crash: 5, milestone: 4, trough: 3, year: 2, note: 1
+    };
+
+    // 兩個 timestamp 相差幾天（整數）
+    const replayDayDiff = (fromTs, toTs) => {
+        if (!Number.isFinite(fromTs) || !Number.isFinite(toTs)) return 0;
+        return Math.round((toTs - fromTs) / ASSET_REPLAY_DAY_MS);
+    };
+
+    // 兩筆之間是否為「無紀錄」空檔（間隔 > 60 天）
+    const isReplayGap = (prevTs, ts) => {
+        if (!Number.isFinite(prevTs) || !Number.isFinite(ts)) return false;
+        return replayDayDiff(prevTs, ts) > ASSET_REPLAY_GAP_DAYS;
+    };
+
+    // 回傳所有空檔的索引（代表 i−1 到 i 這一段要畫虛線）
+    const buildReplayGaps = (series) => {
+        const out = [];
+        if (!Array.isArray(series)) return out;
+        for (let i = 1; i < series.length; i++) {
+            if (isReplayGap(series[i - 1].ts, series[i].ts)) out.push(i);
+        }
+        return out;
+    };
+
+    // 備註超過上限則截斷加…；null 與純空白一律視為沒有備註
+    const truncateReplayNote = (note) => {
+        const s = String(note == null ? '' : note).trim();
+        if (!s) return '';
+        return s.length > ASSET_REPLAY_NOTE_MAX ? s.slice(0, ASSET_REPLAY_NOTE_MAX) + '…' : s;
+    };
+
+    // 播放總時間：依筆數線性調整，夾在 8～20 秒
+    const calcReplayDuration = (count) => {
+        const raw = (Number(count) || 0) * ASSET_REPLAY_MS_PER_POINT;
+        return Math.min(ASSET_REPLAY_MAX_MS, Math.max(ASSET_REPLAY_MIN_MS, raw));
+    };
+
+    /* 把 ASSET 頁的 data 原樣轉成回放序列（只讀 日期／總資產／備註 三個欄位，
+       不碰其他欄位、不改原陣列）。data 本身已是由舊到新排序。 */
+    const toReplaySeries = (rows) => {
+        if (!Array.isArray(rows)) return [];
+        return rows.map((r) => {
+            const d = parseYMD(r && r.日期);
+            return {
+                ts: d.getTime(),
+                year: d.getFullYear(),
+                value: Number(r && r.總資產) || 0,
+                note: (r && r.備註) || ''
+            };
+        }).filter((p) => Number.isFinite(p.ts));
+    };
+
+    /* 斷點事件偵測。
+       series：[{ ts, value, year, note }]，已由舊到新排序。
+       回傳與 series 等長的陣列，每格是該筆觸發的事件清單（可能為空）。 */
+    const buildReplayEvents = (series) => {
+        const n = Array.isArray(series) ? series.length : 0;
+        const events = [];
+        for (let i = 0; i < n; i++) events.push([]);
+        if (n < 2) return events;
+
+        // 每一年的最後一筆（後面覆蓋前面）
+        const yearLast = {};
+        for (let i = 0; i < n; i++) yearLast[series[i].year] = series[i].value;
+
+        let peakValue = series[0].value;
+        let peakTs = series[0].ts;
+        let firedMilestone = 0;   // 已觸發過的最高關卡
+        let firedTiers = [];      // 本段回檔已觸發的級距，創新高後清空
+        let seg = null;           // 本段回檔：{ minValue, minIndex, maxDd }
+
+        const markTrough = () => {
+            if (seg && seg.maxDd >= ASSET_REPLAY_SEGMENT_MIN_DRAWDOWN) {
+                events[seg.minIndex].push({ type: 'trough', value: seg.minValue, drawdown: seg.maxDd });
+            }
+        };
+
+        for (let i = 0; i < n; i++) {
+            const p = series[i];
+
+            // ① 整數關卡：首次達到的最高 500 萬倍數
+            const level = Math.floor(p.value / ASSET_REPLAY_MILESTONE_STEP) * ASSET_REPLAY_MILESTONE_STEP;
+            if (level >= ASSET_REPLAY_MILESTONE_STEP && level > firedMilestone) {
+                events[i].push({ type: 'milestone', level: level });
+                firedMilestone = level;
+            }
+
+            if (i === 0) continue;
+
+            if (p.value >= peakValue) {
+                // ④ 收復前高（僅當該段回檔達門檻）＋ ③ 該段谷底
+                if (seg && seg.maxDd >= ASSET_REPLAY_SEGMENT_MIN_DRAWDOWN) {
+                    events[i].push({
+                        type: 'recover', days: replayDayDiff(peakTs, p.ts),
+                        peakValue: peakValue, drawdown: seg.maxDd
+                    });
+                    markTrough();
+                }
+                seg = null;
+                firedTiers = [];
+                peakValue = p.value;
+                peakTs = p.ts;
+                continue;
+            }
+
+            const dd = peakValue > 0 ? (peakValue - p.value) / peakValue : 0;
+            if (!seg) {
+                seg = { minValue: p.value, minIndex: i, maxDd: dd };
+            } else {
+                if (p.value < seg.minValue) { seg.minValue = p.value; seg.minIndex = i; }
+                if (dd > seg.maxDd) seg.maxDd = dd;
+            }
+
+            // ② 大跌：本段首次跌破各級距，同一筆跨越多級取最深者
+            let hit = 0;
+            for (let t = 0; t < ASSET_REPLAY_DRAWDOWN_TIERS.length; t++) {
+                const tier = ASSET_REPLAY_DRAWDOWN_TIERS[t];
+                if (dd >= tier && firedTiers.indexOf(tier) < 0) { firedTiers.push(tier); hit = tier; }
+            }
+            if (hit) events[i].push({ type: 'crash', tier: hit, drawdown: dd });
+        }
+
+        // 收尾：最後一段回檔沒收復也要標谷底
+        markTrough();
+
+        // ⑤ 跨年：進入新年份的第一筆，比較「剛結束那年」與「其前一年」的最後一筆
+        for (let i = 1; i < n; i++) {
+            if (series[i].year === series[i - 1].year) continue;
+            const closedYear = series[i - 1].year;
+            const basisYear = closedYear - 1;
+            const hasBasis = Object.prototype.hasOwnProperty.call(yearLast, basisYear);
+            const basis = hasBasis ? yearLast[basisYear] : series[0].value;
+            events[i].push({
+                type: 'year', year: series[i].year, closedYear: closedYear,
+                delta: yearLast[closedYear] - basis, basisIsFirst: !hasBasis
+            });
+        }
+
+        // ⑥ 備註
+        for (let i = 0; i < n; i++) {
+            const text = truncateReplayNote(series[i].note);
+            if (text) events[i].push({ type: 'note', text: text });
+        }
+
+        // ⑦ 最後一筆
+        events[n - 1].push({ type: 'final' });
+
+        return events;
+    };
+
+    // 同一筆多個事件時取優先度最高者
+    const pickReplayEvent = (list) => {
+        if (!Array.isArray(list) || !list.length) return null;
+        let best = null;
+        let bestRank = -1;
+        for (let i = 0; i < list.length; i++) {
+            const rank = ASSET_REPLAY_EVENT_PRIORITY[list[i].type] || 0;
+            if (rank > bestRank) { best = list[i]; bestRank = rank; }
+        }
+        return best;
+    };
+
+    /* ===================================================================
+       資產回放（ASSET）｜全螢幕動畫視窗
+       純讀取：只吃 AssetTerminal 已載入的 data，不發任何請求、不寫入後端。
+       單一深色主題，不隨 AppShell 的 theme 變動。
+    =================================================================== */
+    const REPLAY_BG = '#0D0D0D';
+    const REPLAY_RED = '#FF3B47';
+    const REPLAY_GREEN = '#2BD47D';
+    const REPLAY_GOLD = '#F5C542';
+
+    const AssetReplayModal = ({ rows, onClose }) => {
+        const series = useMemo(() => toReplaySeries(rows), [rows]);
+        const events = useMemo(() => buildReplayEvents(series), [series]);
+        const gaps = useMemo(() => buildReplayGaps(series), [series]);
+        const enough = series.length >= 2;
+        const reduced = useMemo(() => !!(typeof window !== 'undefined' && window.matchMedia
+            && window.matchMedia('(prefers-reduced-motion: reduce)').matches), []);
+
+        const lastIdx = Math.max(0, series.length - 1);
+        const [idx, setIdx] = useState(reduced ? lastIdx : 0);
+        const [card, setCard] = useState(null);
+        const [shake, setShake] = useState(false);
+        const [playing, setPlaying] = useState(enough && !reduced);
+        const [runId, setRunId] = useState(0);
+        const lineRef = useRef(null);
+        const fxRef = useRef(null);
+        const partsRef = useRef([]);
+
+        // Esc 關閉
+        useEffect(() => {
+            const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+            window.addEventListener('keydown', onKey);
+            return () => window.removeEventListener('keydown', onKey);
+        }, [onClose]);
+
+        // 開啟時鎖住背景捲動，關閉時原樣還原
+        useEffect(() => {
+            const prev = document.body.style.overflow;
+            document.body.style.overflow = 'hidden';
+            return () => { document.body.style.overflow = prev; };
+        }, []);
+
+        // 播放主迴圈
+        useEffect(() => {
+            if (!enough || reduced) return;
+            const n = series.length;
+            const perPoint = calcReplayDuration(n) / (n - 1);
+            let raf = 0, last = 0, acc = 0, i = 0, hold = 0, dead = false;
+            setIdx(0);
+            setPlaying(true);
+            const first = pickReplayEvent(events[0]);
+            setCard(first);
+            if (first) hold = ASSET_REPLAY_EVENT_HOLD_MS;
+
+            const tick = (t) => {
+                if (dead) return;
+                if (!last) last = t;
+                const dt = t - last;
+                last = t;
+                if (hold > 0) {
+                    hold -= dt;
+                    raf = requestAnimationFrame(tick);
+                    return;
+                }
+                if (i >= n - 1) { setPlaying(false); return; }
+                acc += dt;
+                while (acc >= perPoint && i < n - 1) {
+                    acc -= perPoint;
+                    i += 1;
+                    setIdx(i);
+                    const ev = pickReplayEvent(events[i]);
+                    setCard(ev);
+                    if (ev) {
+                        hold = ASSET_REPLAY_EVENT_HOLD_MS;
+                        if (ev.type === 'crash') { setShake(true); window.setTimeout(() => setShake(false), 360); }
+                        if (ev.type === 'milestone' || ev.type === 'recover' || ev.type === 'final') {
+                            spawnBurst(ev.type === 'final' ? 120 : 40);
+                        }
+                        break;
+                    }
+                }
+                raf = requestAnimationFrame(tick);
+            };
+            raf = requestAnimationFrame(tick);
+            return () => { dead = true; cancelAnimationFrame(raf); };
+        }, [runId, enough, reduced, series, events]);
+
+        // 煙火／紙屑：自行用 canvas 實作，不引入函式庫
+        const spawnBurst = (count) => {
+            const cv = fxRef.current;
+            if (!cv) return;
+            const w = cv.clientWidth, h = cv.clientHeight;
+            const cx = w / 2, cy = h * 0.42;
+            const palette = [REPLAY_GOLD, REPLAY_RED, REPLAY_GREEN, '#FFFFFF'];
+            for (let k = 0; k < count; k++) {
+                const a = Math.random() * Math.PI * 2;
+                const sp = 2 + Math.random() * 4.5;
+                partsRef.current.push({
+                    x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1.2,
+                    life: 1, color: palette[k % palette.length],
+                    size: 1.5 + Math.random() * 2.5, spin: (Math.random() - 0.5) * 0.3
+                });
+            }
+        };
+
+        // 粒子繪製迴圈
+        useEffect(() => {
+            if (reduced) return;
+            const cv = fxRef.current;
+            if (!cv) return;
+            let raf = 0, dead = false;
+            const draw = () => {
+                if (dead) return;
+                const dpr = window.devicePixelRatio || 1;
+                const w = cv.clientWidth, h = cv.clientHeight;
+                if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+                const ctx = cv.getContext('2d');
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                ctx.clearRect(0, 0, w, h);
+                const ps = partsRef.current;
+                for (let k = ps.length - 1; k >= 0; k--) {
+                    const p = ps[k];
+                    p.x += p.vx; p.y += p.vy; p.vy += 0.09; p.vx *= 0.99;
+                    p.life -= 0.012;
+                    if (p.life <= 0) { ps.splice(k, 1); continue; }
+                    ctx.globalAlpha = Math.max(0, p.life);
+                    ctx.fillStyle = p.color;
+                    ctx.save();
+                    ctx.translate(p.x, p.y);
+                    ctx.rotate(p.spin * (1 - p.life) * 12);
+                    ctx.fillRect(-p.size, -p.size * 0.5, p.size * 2, p.size);
+                    ctx.restore();
+                }
+                ctx.globalAlpha = 1;
+                raf = requestAnimationFrame(draw);
+            };
+            raf = requestAnimationFrame(draw);
+            return () => { dead = true; cancelAnimationFrame(raf); partsRef.current = []; };
+        }, [reduced]);
+
+        // 折線：發光線＋下方漸層填色，由左至右畫到 idx
+        useEffect(() => {
+            const cv = lineRef.current;
+            if (!cv || !series.length) return;
+            const dpr = window.devicePixelRatio || 1;
+            const w = cv.clientWidth, h = cv.clientHeight;
+            if (!w || !h) return;
+            if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+            const ctx = cv.getContext('2d');
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, w, h);
+
+            const padL = 10, padR = 10, padT = 16, padB = 26;
+            const t0 = series[0].ts, tN = series[series.length - 1].ts;
+            const span = Math.max(1, tN - t0);
+            let lo = Infinity, hi = -Infinity;
+            for (let k = 0; k < series.length; k++) {
+                if (series[k].value < lo) lo = series[k].value;
+                if (series[k].value > hi) hi = series[k].value;
+            }
+            if (!(hi > lo)) { hi = lo + 1; }
+            const range = (hi - lo) * 1.12;
+            const base = lo - (hi - lo) * 0.06;
+            const X = (p) => padL + (p.ts - t0) / span * (w - padL - padR);
+            const Y = (p) => padT + (1 - (p.value - base) / range) * (h - padT - padB);
+
+            const upto = Math.min(idx, series.length - 1);
+
+            // 下方漸層填色
+            if (upto > 0) {
+                const g = ctx.createLinearGradient(0, padT, 0, h - padB);
+                g.addColorStop(0, 'rgba(255,59,71,0.34)');
+                g.addColorStop(1, 'rgba(255,59,71,0)');
+                ctx.beginPath();
+                ctx.moveTo(X(series[0]), h - padB);
+                for (let k = 0; k <= upto; k++) ctx.lineTo(X(series[k]), Y(series[k]));
+                ctx.lineTo(X(series[upto]), h - padB);
+                ctx.closePath();
+                ctx.fillStyle = g;
+                ctx.fill();
+            }
+
+            // 線段：空檔畫虛線
+            ctx.lineWidth = 2;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            ctx.shadowColor = REPLAY_RED;
+            ctx.shadowBlur = 12;
+            for (let k = 1; k <= upto; k++) {
+                const isGap = gaps.indexOf(k) >= 0;
+                ctx.beginPath();
+                ctx.setLineDash(isGap ? [5, 5] : []);
+                ctx.strokeStyle = isGap ? 'rgba(255,59,71,0.45)' : REPLAY_RED;
+                ctx.moveTo(X(series[k - 1]), Y(series[k - 1]));
+                ctx.lineTo(X(series[k]), Y(series[k]));
+                ctx.stroke();
+            }
+            ctx.setLineDash([]);
+            ctx.shadowBlur = 0;
+
+            // 空檔標註：貼著 X 軸放，避開中央字卡與折線
+            ctx.font = '10px ui-monospace, monospace';
+            ctx.textAlign = 'center';
+            for (let gi = 0; gi < gaps.length; gi++) {
+                const k = gaps[gi];
+                if (k > upto) continue;
+                const mx = (X(series[k - 1]) + X(series[k])) / 2;
+                ctx.save();
+                ctx.setLineDash([3, 4]);
+                ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(mx, padT);
+                ctx.lineTo(mx, h - padB - 12);
+                ctx.stroke();
+                ctx.restore();
+                ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                ctx.fillText('無紀錄', mx, h - padB - 2);
+            }
+
+            // 當前點
+            const cur = series[upto];
+            ctx.beginPath();
+            ctx.fillStyle = REPLAY_RED;
+            ctx.shadowColor = REPLAY_RED;
+            ctx.shadowBlur = 16;
+            ctx.arc(X(cur), Y(cur), 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            // X 軸兩端日期
+            ctx.fillStyle = 'rgba(255,255,255,0.45)';
+            ctx.textAlign = 'left';
+            ctx.fillText(formatYMD(new Date(t0)), padL, h - 8);
+            ctx.textAlign = 'right';
+            ctx.fillText(formatYMD(new Date(tN)), w - padR, h - 8);
+        }, [idx, series, gaps]);
+
+        if (!enough) {
+            return (
+                <div className="fixed inset-0 z-[1200] flex items-center justify-center p-6"
+                     style={{ background: REPLAY_BG }}>
+                    <button onClick={onClose} aria-label="關閉資產回放"
+                            className="absolute top-4 right-4 w-11 h-11 rounded-full font-mono text-xl"
+                            style={{ color: '#fff', background: 'rgba(255,255,255,0.1)' }}>✕</button>
+                    <p className="font-mono text-lg" style={{ color: 'rgba(255,255,255,0.75)' }}>紀錄不足，無法回放</p>
+                </div>
+            );
+        }
+
+        const cur = series[idx];
+        const first = series[0].value;
+        let peak = series[0].value;   // 播到目前為止的歷史高點
+        let deepest = 0;              // 播到目前為止的最深回檔
+        for (let k = 0; k <= idx; k++) {
+            if (series[k].value > peak) peak = series[k].value;
+            if (peak > 0) {
+                const dd = (peak - series[k].value) / peak;
+                if (dd > deepest) deepest = dd;
+            }
+        }
+        const pct = first > 0 ? (cur.value - first) / first * 100 : 0;
+        const cumWan = Math.round((cur.value - first) / 10000);
+
+        const cardText = (ev) => {
+            if (!ev) return null;
+            if (ev.type === 'final') return { tone: REPLAY_GOLD, main: '回放結束', sub: '最新一筆' };
+            if (ev.type === 'recover') return { tone: REPLAY_GOLD, main: '收復前高', sub: '歷時 ' + ev.days + ' 天' };
+            if (ev.type === 'crash') return { tone: REPLAY_RED, main: '−' + Math.round(ev.tier * 100) + '%', sub: '自前高回檔 ' + (ev.drawdown * 100).toFixed(1) + '%' };
+            if (ev.type === 'milestone') return { tone: REPLAY_GOLD, main: (ev.level / 10000).toLocaleString() + ' 萬', sub: '關卡達成' };
+            if (ev.type === 'trough') return { tone: REPLAY_GREEN, main: '谷底', sub: '回檔 ' + (ev.drawdown * 100).toFixed(1) + '%' };
+            if (ev.type === 'year') return {
+                tone: REPLAY_GOLD, main: ev.year + ' 年',
+                sub: ev.closedYear + ' 年' + (ev.delta >= 0 ? '增加 ' : '減少 ')
+                    + Math.abs(Math.round(ev.delta / 10000)).toLocaleString() + ' 萬'
+                    + (ev.basisIsFirst ? '（對比第一筆）' : '')
+            };
+            if (ev.type === 'note') return { tone: '#FFFFFF', main: ev.text, sub: '備註' };
+            return null;
+        };
+        const ct = cardText(card);
+
+        return (
+            <div className={"fixed inset-0 z-[1200] overflow-hidden" + (shake ? ' replay-shake' : '')}
+                 style={{ background: REPLAY_BG }}>
+                <canvas ref={fxRef} className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 2 }}></canvas>
+
+                <button onClick={onClose} aria-label="關閉資產回放"
+                        className="absolute top-4 right-4 w-11 h-11 rounded-full font-mono text-xl leading-none"
+                        style={{ color: '#fff', background: 'rgba(255,255,255,0.1)', zIndex: 4 }}>✕</button>
+
+                <div className="relative h-full w-full flex flex-col px-5 pt-14 pb-6 max-w-md mx-auto" style={{ zIndex: 3 }}>
+                    <div className="shrink-0 text-center">
+                        <div className="font-mono font-bold tracking-tight text-5xl sm:text-6xl"
+                             style={{ color: REPLAY_RED, textShadow: '0 0 18px rgba(255,59,71,0.65)' }}>
+                            {cur.value.toLocaleString()}
+                        </div>
+                        <div className="font-mono text-sm mt-2" style={{ color: 'rgba(255,255,255,0.6)' }}>
+                            {formatYMD(new Date(cur.ts))}
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 mt-5 font-mono text-xs">
+                            <div>
+                                <div style={{ color: 'rgba(255,255,255,0.45)' }}>較第一筆</div>
+                                <div className="text-base font-bold" style={{ color: pct >= 0 ? REPLAY_GREEN : REPLAY_RED }}>
+                                    {(pct >= 0 ? '+' : '') + pct.toFixed(1)}%
+                                </div>
+                            </div>
+                            <div>
+                                <div style={{ color: 'rgba(255,255,255,0.45)' }}>歷史高點</div>
+                                <div className="text-base font-bold" style={{ color: REPLAY_GOLD }}>{peak.toLocaleString()}</div>
+                            </div>
+                            <div>
+                                <div style={{ color: 'rgba(255,255,255,0.45)' }}>最深回檔</div>
+                                <div className="text-base font-bold" style={{ color: REPLAY_GREEN }}>
+                                    {(deepest > 0 ? '−' : '') + (deepest * 100).toFixed(1) + '%'}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="text-[10px] font-mono mt-3" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                            毛資產口徑（含質押借款與投入本金）
+                        </div>
+                    </div>
+
+                    <div className="flex-grow min-h-0 relative mt-4">
+                        <canvas ref={lineRef} className="absolute inset-0 w-full h-full"></canvas>
+                        {ct && (
+                            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex flex-col items-center pointer-events-none">
+                                <div className="font-mono font-extrabold text-3xl sm:text-4xl text-center px-4"
+                                     style={{ color: ct.tone, textShadow: '0 0 20px ' + ct.tone }}>{ct.main}</div>
+                                <div className="font-mono text-sm mt-2 text-center px-4" style={{ color: 'rgba(255,255,255,0.75)' }}>{ct.sub}</div>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="shrink-0 text-center mt-4">
+                        <div className="font-mono font-bold text-xl" style={{ color: REPLAY_GOLD }}>
+                            累積 {(cumWan >= 0 ? '+' : '−') + Math.abs(cumWan).toLocaleString()} 萬
+                        </div>
+                        {!reduced && (
+                            <button onClick={() => { partsRef.current = []; setCard(null); setRunId((v) => v + 1); }}
+                                    disabled={playing}
+                                    className="mt-4 px-6 py-2 rounded-full font-mono text-sm"
+                                    style={{
+                                        color: playing ? 'rgba(255,255,255,0.3)' : REPLAY_BG,
+                                        background: playing ? 'rgba(255,255,255,0.1)' : REPLAY_GOLD
+                                    }}>
+                                ↻ 重播
+                            </button>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
     const AssetTerminal = ({ theme, assetPrefill, clearPrefill, lAmount, onTotalAssetsChange, onBAccountChange }) => {
         const tierConfigs = useMemo(() => {
             return compoundTargets.map((data, index) => {
@@ -5021,6 +5571,8 @@ Build the wall first. Attack second.`)}
         const [barProgress, setBarProgress] = useState(0);
         const [hoveredAsset, setHoveredAsset] = useState(null);
         const [showDestinyModal, setShowDestinyModal] = useState(false);
+        // 回放：開啟當下把 data 快照起來，播放期間不受後續資料更新影響（否則會從頭重播）
+        const [replaySnapshot, setReplaySnapshot] = useState(null);
         const [benchmarkData, setBenchmarkData] = useState(null);
         const [btcLiveChange, setBtcLiveChange] = useState(null);
         const [alphaPopover, setAlphaPopover] = useState(null);
@@ -5774,6 +6326,11 @@ Build the wall first. Attack second.`)}
                     document.body
                 )}
 
+                {replaySnapshot && ReactDOM.createPortal(
+                    <AssetReplayModal rows={replaySnapshot} onClose={() => setReplaySnapshot(null)} />,
+                    document.body
+                )}
+
                 {showDestinyModal && (
                     <div className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto p-4 md:p-10" onClick={() => setShowDestinyModal(false)}>
                         <div
@@ -6185,6 +6742,12 @@ Build the wall first. Attack second.`)}
 
                     <div className="glass-card p-8 rounded-2xl lg:col-span-2 flex flex-col stagger-2 shadow-lg border border-slate-200 dark:border-transparent">
                         <div className="flex justify-between items-center mb-8 relative z-10"><h3 className="text-2xl font-mono text-slate-800 dark:text-amber-600 uppercase tracking-widest font-extrabold vibe-hover-text">軌跡 Trajectory</h3><div className="flex items-center gap-3"><select value={dataSource} onChange={(e) => setDataSource(e.target.value)} className="bg-white border-2 border-slate-200 text-slate-700 text-lg font-mono rounded-lg px-4 py-2 outline-none relative z-10 font-bold focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/10 transition-all cyber-select"><option value="total">總資產 ASSET</option><option value="tw">台股 TW</option><option value="us">美股 US</option><option value="crypto">加密 CRYPTO</option></select><select value={chartFilter} onChange={(e) => setChartFilter(e.target.value)} className="bg-white border-2 border-slate-200 text-slate-700 text-lg font-mono rounded-lg px-4 py-2 outline-none relative z-10 font-bold focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/10 transition-all cyber-select"><option value="last20">Last 20</option><option value="all">All Time</option>{sortedYears.map(y => <option key={"chart-opt-" + y} value={y}>{y}</option>)}</select></div></div>
+                        <div className="flex mb-6 relative z-10">
+                            <button type="button" onClick={() => setReplaySnapshot(data)}
+                                    className="w-full md:w-auto px-6 py-3 rounded-xl font-mono font-bold text-base tracking-widest border-2 border-slate-300 dark:border-amber-600/60 bg-white dark:bg-black/40 text-slate-800 dark:text-amber-400 hover:border-cyan-500 dark:hover:border-amber-400 transition-all shadow-sm">
+                                ▶ 資產回放
+                            </button>
+                        </div>
                         <div className="flex-grow min-h-[400px] relative z-0"><canvas ref={lineChartRef}></canvas></div>
                         <div className="mt-10 pt-10 border-t border-slate-200 dark:border-amber-700/50 grid grid-cols-1 md:grid-cols-4 gap-8 items-center relative z-10">
 

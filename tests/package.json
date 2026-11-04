@@ -10,7 +10,8 @@
     "frozen": "node verify-frozen.js",
     "misc": "node verify-misc.js",
     "erg": "node verify-erg.js",
-    "test": "node bcheck.js && node verify-frozen.js && node verify-quotes.js && node verify-misc.js && node verify-p1.js && node verify-erg.js"
+    "replay": "node verify-replay.js",
+    "test": "node bcheck.js && node verify-frozen.js && node verify-quotes.js && node verify-misc.js && node verify-p1.js && node verify-erg.js && node verify-replay.js"
   },
   "devDependencies": {
     "@babel/standalone": "^7.23.6"

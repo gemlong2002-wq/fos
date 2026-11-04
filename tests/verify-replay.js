@@ -1,0 +1,389 @@
+/* ============================================================
+   verify-replay — ASSET「資產回放」斷點事件偵測驗收斷言
+
+   測的是 index.html 模組層的純函式區（ASSET_REPLAY_* 常數、
+   toReplaySeries／buildReplayEvents／pickReplayEvent／
+   buildReplayGaps／isReplayGap／truncateReplayNote／
+   calcReplayDuration），用 grab 把那整段從 index.html 切出來實跑，
+   不另寫一份模擬邏輯。
+
+   輸入是人工設計的假序列（整數、不含真實部位），
+   預期值全部依下列定義手推後寫入，非取自程式輸出。
+
+   ── 事件定義（出自本次工單） ───────────────────────────────
+   ① 整數關卡：首次 ≥ 每 500 萬（ASSET_REPLAY_MILESTONE_STEP）
+   ② 大跌：自前高回檔首次跌破 −10% / −20% / −30%，
+          每段回檔各觸發一次，創新高後重置；
+          同一筆跨越多級取最深者
+   ③ 谷底：每段回檔幅度 ≥ 10% 的最低點
+   ④ 收復前高：該段回檔後首次 ≥ 前高，N = 前高日→收復日的天數
+   ⑤ 跨年：進入新年份的第一筆，比較「剛結束那年」最後一筆
+          與「其前一年」最後一筆；前一年無資料則對比第一筆
+   ⑥ 備註：非空則顯示，超過 20 字截斷加…
+   ⑦ 最後一筆
+   優先度：⑦ > ④ > ② > ① > ③ > ⑤ > ⑥
+   空檔：兩筆間隔 > 60 天 → 虛線「無紀錄」
+
+   ── 假序列 S1（9 筆，YYYYMMDD／總資產／備註） ──────────────
+     i0 20240101   4,800,000  ''
+     i1 20240201   5,200,000  '加碼 0050 兩張'（10 字）
+     i2 20240301  10,000,000  ''
+     i3 20240401  11,000,000  ''
+     i4 20240701   9,000,000  ''
+     i5 20240801   7,500,000  ''
+     i6 20250101  11,500,000  ''
+     i7 20250201   7,000,000  ''
+     i8 20260101  20,000,000  '年終結算：含質押借款與投入本金，毛資產口徑已確認'（24 字）
+
+   手推過程：
+   · 空檔：相鄰間隔 31／29／31／91／31／153／31／334 天
+     → > 60 的是 i3→i4、i5→i6、i7→i8，故空檔索引 = [4, 6, 8]
+   · 關卡：i0 的 480 萬未達 500 萬 → 無。i1 的 520 萬 → floor/500萬
+     = 500 萬，首次 → 觸發 500 萬。i2 的 1000 萬 → 觸發 1000 萬。
+     i3 的 1100 萬 → floor 仍是 1000 萬，不高於已觸發 → 無。
+     i8 的 2000 萬 → 觸發 2000 萬（跳過 1500 萬，取已達到的最高級）
+   · 前高推移：i0 480 萬 → i1 520 萬 → i2 1000 萬 → i3 1100 萬
+     （i3 之後進入回檔）→ i6 1150 萬（創新高）→ i8 2000 萬（創新高）
+   · 第一段回檔（前高 1100 萬 @20240401）：
+       i4 900 萬 → (1100−900)/1100 = 18.1818%，首次跌破 10% → 大跌 −10%
+       i5 750 萬 → (1100−750)/1100 = 31.8182%，同一筆跨越 20% 與 30%
+                   → 大跌取最深者 −30%
+       本段最低點 = i5 的 750 萬，幅度 31.8182% ≥ 10% → i5 有谷底
+       i6 1150 萬 ≥ 前高 1100 萬 → 收復前高，
+         N = 20240401 → 20250101 = 275 天
+   · 第二段回檔（前高 1150 萬 @20250101，級距已因創新高重置）：
+       i7 700 萬 → (1150−700)/1150 = 39.1304%，跨越 10/20/30
+                   → 大跌 −30%（證明重置生效）
+       本段最低點 = i7，幅度 39.1304% ≥ 10% → i7 有谷底
+       i8 2000 萬 ≥ 前高 1150 萬 → 收復前高，
+         N = 20250101 → 20260101 = 365 天
+   · 跨年：
+       i6 是 2025 年第一筆 → 剛結束的是 2024 年，其最後一筆 = i5 750 萬；
+         2023 年無資料 → 對比第一筆 i0 480 萬 → 增減 = +270 萬
+       i8 是 2026 年第一筆 → 剛結束的是 2025 年，其最後一筆 = i7 700 萬；
+         2024 年最後一筆 = i5 750 萬 → 增減 = −50 萬
+   · 備註：i1 共 10 字 ≤ 20 → 原樣；i8 共 24 字 > 20 → 前 20 字 + …
+   · 每筆的事件與勝出者（依優先度）：
+       i0 無
+       i1 關卡 500 萬 ＋ 備註        → 關卡勝（① > ⑥）
+       i2 關卡 1000 萬               → 關卡
+       i3 無
+       i4 大跌 −10%                  → 大跌
+       i5 大跌 −30% ＋ 谷底          → 大跌勝（② > ③）
+       i6 收復前高 ＋ 跨年 2025      → 收復前高勝（④ > ⑤）
+       i7 大跌 −30% ＋ 谷底          → 大跌勝
+       i8 關卡 2000 萬 ＋ 收復前高 ＋ 跨年 2026 ＋ 備註 ＋ 最後一筆
+                                     → 最後一筆勝（⑦ 最高）
+
+   ── 假序列 S2（7 筆，測邊界與「淺回檔不觸發」） ────────────
+     i0 20260105  10,000,000
+     i1 20260205  11,000,000
+     i2 20260305   9,900,000
+     i3 20260405   9,500,000
+     i4 20260505  11,200,000
+     i5 20260605  10,800,000
+     i6 20260705  11,300,000
+
+   手推過程：
+   · 空檔：間隔 31／28／31／30／31／30 天，全部 ≤ 60 → 無空檔
+   · i0 的 1000 萬 → 觸發關卡 1000 萬（第一筆也算「首次 ≥」）
+   · i1 的 1100 萬 → floor 仍 1000 萬 → 無關卡
+   · 第一段回檔（前高 1100 萬 @20260205）：
+       i2 990 萬 → (1100−990)/1100 = 10.0000% 正好等於門檻，
+                   判定用 ≥ → 大跌 −10%（邊界測試）
+       i3 950 萬 → 13.6364%，未跨新級距 → 無大跌；
+                   為本段最低點且幅度 ≥ 10% → 只有谷底
+                   → 谷底成為勝出者（此序列用來讓 ③ 真的顯示）
+       i4 1120 萬 ≥ 前高 → 收復前高，N = 20260205 → 20260505 = 89 天
+   · 第二段回檔（前高 1120 萬 @20260505）：
+       i5 1080 萬 → (1120−1080)/1120 = 3.5714%，未達 10%
+                   → 無大跌、無谷底
+       i6 1130 萬 ≥ 前高 1120 萬，但該段最大回檔 3.5714% < 10%
+                   → 不觸發收復前高（淺回檔不算收復）
+                   i6 是最後一筆 → 只有「最後一筆」
+   ============================================================ */
+const fs = require('fs');
+const path = require('path');
+/* 目標檔一律相對解析：預設讀 repo 根的 index.html，也可用 argv[2] 指定別的檔。 */
+const TARGET = process.argv[2] ? path.resolve(process.cwd(), process.argv[2]) : path.resolve(__dirname, '..', 'index.html');
+const H = fs.readFileSync(TARGET, 'utf8');
+let fail = 0;
+const chk = (n, a, e) => {
+  const ok = String(a) === String(e);
+  if (!ok) fail++;
+  console.log('   ', n.padEnd(52), '預期', String(e).padStart(16), '實際', String(a).padStart(16), ok ? '✓' : '✗');
+};
+const near = (n, a, e, tol) => {
+  const ok = Number.isFinite(a) && Math.abs(a - e) <= tol;
+  if (!ok) fail++;
+  console.log('   ', n.padEnd(52), '預期', ('≈' + e).padStart(16), '實際',
+    String(typeof a === 'number' ? Math.round(a * 1e6) / 1e6 : a).padStart(16), ok ? '✓' : '✗');
+};
+
+// 把模組層那整段（回放純函式）連同它依賴的 parseYMD 一起抽出來實跑
+const grab = (from, to) => {
+  const i = H.indexOf(from);
+  if (i < 0) { console.log('GRAB_FAIL', from); process.exit(2); }
+  return H.slice(i, H.indexOf(to, i + from.length));
+};
+const deps = grab('    const parseYMD = (val) => {', '    const formatYMD')
+  + grab('    const ASSET_REPLAY_DAY_MS = 86400000;', '    /* ======');
+
+const M = eval(deps + `; ({
+  toReplaySeries, buildReplayEvents, pickReplayEvent, buildReplayGaps,
+  isReplayGap, truncateReplayNote, calcReplayDuration, replayDayDiff,
+  K: { STEP: ASSET_REPLAY_MILESTONE_STEP, TIERS: ASSET_REPLAY_DRAWDOWN_TIERS,
+       MIN_DD: ASSET_REPLAY_SEGMENT_MIN_DRAWDOWN, GAP: ASSET_REPLAY_GAP_DAYS,
+       NOTE: ASSET_REPLAY_NOTE_MAX, HOLD: ASSET_REPLAY_EVENT_HOLD_MS,
+       MIN_MS: ASSET_REPLAY_MIN_MS, MAX_MS: ASSET_REPLAY_MAX_MS,
+       PRIORITY: ASSET_REPLAY_EVENT_PRIORITY }
+})`);
+const K = M.K;
+
+// 取某筆的事件型別序列 / 勝出者型別
+const types = (evs, i) => evs[i].map((e) => e.type).join(',');
+const winner = (evs, i) => { const w = M.pickReplayEvent(evs[i]); return w ? w.type : 'null'; };
+const find = (evs, i, t) => evs[i].filter((e) => e.type === t)[0] || null;
+
+console.log('【常數核對】');
+chk('整數關卡級距', K.STEP, 5000000);
+chk('大跌級距', JSON.stringify(K.TIERS), '[0.1,0.2,0.3]');
+chk('谷底／收復的最小回檔幅度', K.MIN_DD, 0.1);
+chk('空檔天數門檻', K.GAP, 60);
+chk('備註字數上限', K.NOTE, 20);
+chk('斷點字卡停留毫秒', K.HOLD, 600);
+chk('播放時間下限（毫秒）', K.MIN_MS, 8000);
+chk('播放時間上限（毫秒）', K.MAX_MS, 20000);
+chk('優先度：最後一筆最高', K.PRIORITY.final, 7);
+chk('優先度：收復前高 > 大跌', K.PRIORITY.recover > K.PRIORITY.crash, true);
+chk('優先度：大跌 > 整數關卡', K.PRIORITY.crash > K.PRIORITY.milestone, true);
+chk('優先度：整數關卡 > 谷底', K.PRIORITY.milestone > K.PRIORITY.trough, true);
+chk('優先度：谷底 > 跨年', K.PRIORITY.trough > K.PRIORITY.year, true);
+chk('優先度：跨年 > 備註', K.PRIORITY.year > K.PRIORITY.note, true);
+
+console.log('');
+console.log('【假序列 S1】9 筆｜兩段回檔、兩次收復、兩次跨年、3 個空檔');
+const S1_ROWS = [
+  { 日期: '20240101', 總資產: 4800000, 備註: '' },
+  { 日期: '20240201', 總資產: 5200000, 備註: '加碼 0050 兩張' },
+  { 日期: '20240301', 總資產: 10000000, 備註: '' },
+  { 日期: '20240401', 總資產: 11000000, 備註: '' },
+  { 日期: '20240701', 總資產: 9000000, 備註: '' },
+  { 日期: '20240801', 總資產: 7500000, 備註: '' },
+  { 日期: '20250101', 總資產: 11500000, 備註: '' },
+  { 日期: '20250201', 總資產: 7000000, 備註: '' },
+  { 日期: '20260101', 總資產: 20000000, 備註: '年終結算：含質押借款與投入本金，毛資產口徑已確認' }
+];
+const s1 = M.toReplaySeries(S1_ROWS);
+const e1 = M.buildReplayEvents(s1);
+
+console.log('  — 序列正規化（只讀 日期／總資產／備註）');
+chk('筆數', s1.length, 9);
+chk('第一筆年份', s1[0].year, 2024);
+chk('最後一筆年份', s1[8].year, 2026);
+chk('第一筆毛資產', s1[0].value, 4800000);
+chk('最後一筆毛資產', s1[8].value, 20000000);
+chk('YYYYMMDD 解析後排序未變（仍由舊到新）',
+  s1.every((p, i) => i === 0 || p.ts >= s1[i - 1].ts), true);
+
+console.log('  — 空檔（間隔 > 60 天 → 虛線「無紀錄」）');
+chk('空檔索引', JSON.stringify(M.buildReplayGaps(s1)), '[4,6,8]');
+chk('空檔數', M.buildReplayGaps(s1).length, 3);
+chk('i3→i4 間隔天數', M.replayDayDiff(s1[3].ts, s1[4].ts), 91);
+chk('i5→i6 間隔天數', M.replayDayDiff(s1[5].ts, s1[6].ts), 153);
+chk('i7→i8 間隔天數', M.replayDayDiff(s1[7].ts, s1[8].ts), 334);
+chk('i1→i2 間隔天數（閏年 2 月）', M.replayDayDiff(s1[1].ts, s1[2].ts), 29);
+
+console.log('  — 每筆的事件組合與勝出者');
+chk('i0 事件', types(e1, 0), '');
+chk('i0 勝出者', winner(e1, 0), 'null');
+chk('i1 事件（關卡＋備註）', types(e1, 1), 'milestone,note');
+chk('i1 勝出者', winner(e1, 1), 'milestone');
+chk('i2 事件', types(e1, 2), 'milestone');
+chk('i3 事件（1100 萬未達新關卡）', types(e1, 3), '');
+chk('i4 事件', types(e1, 4), 'crash');
+chk('i5 事件（大跌＋谷底）', types(e1, 5), 'crash,trough');
+chk('i5 勝出者（大跌壓過谷底）', winner(e1, 5), 'crash');
+chk('i6 事件（收復＋跨年）', types(e1, 6), 'recover,year');
+chk('i6 勝出者（收復壓過跨年）', winner(e1, 6), 'recover');
+chk('i7 事件（大跌＋谷底）', types(e1, 7), 'crash,trough');
+chk('i8 事件（關卡＋收復＋跨年＋備註＋最後一筆）',
+  types(e1, 8), 'milestone,recover,year,note,final');
+chk('i8 勝出者（最後一筆最高）', winner(e1, 8), 'final');
+
+console.log('  — ① 整數關卡');
+chk('i1 關卡金額', find(e1, 1, 'milestone').level, 5000000);
+chk('i2 關卡金額', find(e1, 2, 'milestone').level, 10000000);
+chk('i8 關卡金額（跳過 1500 萬取最高級）', find(e1, 8, 'milestone').level, 20000000);
+
+console.log('  — ② 大跌（每段一次，創新高後重置，同筆跨多級取最深）');
+chk('i4 級距', find(e1, 4, 'crash').tier, 0.1);
+near('i4 實際回檔', find(e1, 4, 'crash').drawdown, 0.181818, 1e-5);
+chk('i5 級距（跨越 20% 與 30% → 取 30%）', find(e1, 5, 'crash').tier, 0.3);
+near('i5 實際回檔', find(e1, 5, 'crash').drawdown, 0.318182, 1e-5);
+chk('i7 級距（創新高後重置，再次觸發 30%）', find(e1, 7, 'crash').tier, 0.3);
+near('i7 實際回檔', find(e1, 7, 'crash').drawdown, 0.391304, 1e-5);
+chk('全序列大跌次數（第一段 −10%／−30% 共 2 次，第二段 1 次）',
+  e1.reduce((a, l) => a + l.filter((x) => x.type === 'crash').length, 0), 3);
+
+console.log('  — ③ 谷底（每段回檔 ≥ 10% 的最低點）');
+chk('第一段谷底在 i5', find(e1, 5, 'trough').value, 7500000);
+near('第一段谷底幅度', find(e1, 5, 'trough').drawdown, 0.318182, 1e-5);
+chk('第二段谷底在 i7', find(e1, 7, 'trough').value, 7000000);
+near('第二段谷底幅度', find(e1, 7, 'trough').drawdown, 0.391304, 1e-5);
+chk('全序列谷底次數',
+  e1.reduce((a, l) => a + l.filter((x) => x.type === 'trough').length, 0), 2);
+
+console.log('  — ④ 收復前高（N = 前高日→收復日）');
+chk('i6 收復歷時天數', find(e1, 6, 'recover').days, 275);
+chk('i6 收復的前高', find(e1, 6, 'recover').peakValue, 11000000);
+chk('i8 收復歷時天數', find(e1, 8, 'recover').days, 365);
+chk('i8 收復的前高', find(e1, 8, 'recover').peakValue, 11500000);
+
+console.log('  — ⑤ 跨年（剛結束那年 vs 其前一年的最後一筆）');
+chk('i6 年份字卡', find(e1, 6, 'year').year, 2025);
+chk('i6 結算的年度', find(e1, 6, 'year').closedYear, 2024);
+chk('i6 增減（750 萬 − 第一筆 480 萬）', find(e1, 6, 'year').delta, 2700000);
+chk('i6 以第一筆為基準', find(e1, 6, 'year').basisIsFirst, true);
+chk('i8 年份字卡', find(e1, 8, 'year').year, 2026);
+chk('i8 結算的年度', find(e1, 8, 'year').closedYear, 2025);
+chk('i8 增減（700 萬 − 750 萬）', find(e1, 8, 'year').delta, -500000);
+chk('i8 不以第一筆為基準', find(e1, 8, 'year').basisIsFirst, false);
+chk('全序列跨年次數',
+  e1.reduce((a, l) => a + l.filter((x) => x.type === 'year').length, 0), 2);
+
+console.log('  — ⑥ 備註（> 20 字截斷加…）');
+chk('i1 備註原樣（10 字）', find(e1, 1, 'note').text, '加碼 0050 兩張');
+chk('i8 備註截斷為 20 字 + …', find(e1, 8, 'note').text, '年終結算：含質押借款與投入本金，毛資產口…');
+chk('i8 備註顯示長度', find(e1, 8, 'note').text.length, 21);
+chk('空備註不產生事件',
+  e1.reduce((a, l) => a + l.filter((x) => x.type === 'note').length, 0), 2);
+
+console.log('  — ⑦ 最後一筆');
+chk('只有最後一筆有 final',
+  e1.map((l, i) => l.some((x) => x.type === 'final') ? i : -1).filter((i) => i >= 0).join(','), '8');
+
+console.log('');
+console.log('【假序列 S2】7 筆｜10% 整的邊界、谷底單獨勝出、淺回檔不算收復');
+const S2_ROWS = [
+  { 日期: '20260105', 總資產: 10000000, 備註: '' },
+  { 日期: '20260205', 總資產: 11000000, 備註: '' },
+  { 日期: '20260305', 總資產: 9900000, 備註: '' },
+  { 日期: '20260405', 總資產: 9500000, 備註: '' },
+  { 日期: '20260505', 總資產: 11200000, 備註: '' },
+  { 日期: '20260605', 總資產: 10800000, 備註: '' },
+  { 日期: '20260705', 總資產: 11300000, 備註: '' }
+];
+const s2 = M.toReplaySeries(S2_ROWS);
+const e2 = M.buildReplayEvents(s2);
+
+chk('無空檔', JSON.stringify(M.buildReplayGaps(s2)), '[]');
+chk('i0 事件（第一筆也算首次 ≥ 1000 萬）', types(e2, 0), 'milestone');
+chk('i0 關卡金額', find(e2, 0, 'milestone').level, 10000000);
+chk('i1 事件（1100 萬未達新關卡）', types(e2, 1), '');
+chk('i2 事件（回檔正好 10.0000% → 用 ≥ 判定）', types(e2, 2), 'crash');
+chk('i2 級距', find(e2, 2, 'crash').tier, 0.1);
+near('i2 實際回檔（正好 10%）', find(e2, 2, 'crash').drawdown, 0.1, 1e-9);
+chk('i3 事件（未跨新級距，只有谷底）', types(e2, 3), 'trough');
+chk('i3 勝出者（谷底單獨勝出）', winner(e2, 3), 'trough');
+chk('i3 谷底金額', find(e2, 3, 'trough').value, 9500000);
+near('i3 谷底幅度', find(e2, 3, 'trough').drawdown, 0.136364, 1e-5);
+chk('i4 事件（收復前高）', types(e2, 4), 'recover');
+chk('i4 收復歷時天數', find(e2, 4, 'recover').days, 89);
+chk('i5 事件（回檔 3.57% 未達級距）', types(e2, 5), '');
+chk('i6 事件（淺回檔不算收復，只有最後一筆）', types(e2, 6), 'final');
+chk('全序列收復次數（淺回檔那次不算）',
+  e2.reduce((a, l) => a + l.filter((x) => x.type === 'recover').length, 0), 1);
+chk('全序列谷底次數（淺回檔那段無谷底）',
+  e2.reduce((a, l) => a + l.filter((x) => x.type === 'trough').length, 0), 1);
+
+console.log('');
+console.log('【空檔判定邊界】');
+const ts = (ymd) => M.toReplaySeries([{ 日期: ymd, 總資產: 0, 備註: '' }])[0].ts;
+chk('正好 60 天 → 不是空檔', M.isReplayGap(ts('20260101'), ts('20260302')), false);
+chk('   └ 確認是 60 天', M.replayDayDiff(ts('20260101'), ts('20260302')), 60);
+chk('61 天 → 是空檔', M.isReplayGap(ts('20260101'), ts('20260303')), true);
+chk('   └ 確認是 61 天', M.replayDayDiff(ts('20260101'), ts('20260303')), 61);
+chk('同一天 → 不是空檔', M.isReplayGap(ts('20260101'), ts('20260101')), false);
+
+console.log('');
+console.log('【備註截斷】');
+chk('空字串 → 無備註', M.truncateReplayNote(''), '');
+chk('null → 無備註', M.truncateReplayNote(null), '');
+chk('純空白 → 無備註', M.truncateReplayNote('   '), '');
+chk('正好 20 字 → 原樣', M.truncateReplayNote('一二三四五六七八九十一二三四五六七八九十'), '一二三四五六七八九十一二三四五六七八九十');
+chk('21 字 → 前 20 字 + …', M.truncateReplayNote('一二三四五六七八九十一二三四五六七八九十壹'), '一二三四五六七八九十一二三四五六七八九十…');
+chk('前後空白會去掉', M.truncateReplayNote('  加碼  '), '加碼');
+
+console.log('');
+console.log('【播放時間：依筆數線性調整，夾在 8～20 秒】');
+chk('9 筆 → 夾到下限', M.calcReplayDuration(9), 8000);
+chk('36 筆（7,920ms）→ 夾到下限', M.calcReplayDuration(36), 8000);
+chk('37 筆 → 8,140ms（未被夾）', M.calcReplayDuration(37), 8140);
+chk('90 筆 → 19,800ms（未被夾）', M.calcReplayDuration(90), 19800);
+chk('91 筆（20,020ms）→ 夾到上限', M.calcReplayDuration(91), 20000);
+chk('300 筆 → 夾到上限', M.calcReplayDuration(300), 20000);
+chk('0 筆 → 下限（不得為 0 或 NaN）', M.calcReplayDuration(0), 8000);
+chk('空值 → 下限（不得為 NaN）', M.calcReplayDuration(null), 8000);
+
+console.log('');
+console.log('【優先度：同一筆多事件只顯示最高者】');
+const ALL = [
+  { type: 'note' }, { type: 'year' }, { type: 'trough' },
+  { type: 'milestone' }, { type: 'crash' }, { type: 'recover' }, { type: 'final' }
+];
+chk('七種齊發 → 最後一筆', M.pickReplayEvent(ALL).type, 'final');
+chk('去掉最後一筆 → 收復前高', M.pickReplayEvent(ALL.slice(0, 6)).type, 'recover');
+chk('去掉收復 → 大跌', M.pickReplayEvent(ALL.slice(0, 5)).type, 'crash');
+chk('去掉大跌 → 整數關卡', M.pickReplayEvent(ALL.slice(0, 4)).type, 'milestone');
+chk('去掉關卡 → 谷底', M.pickReplayEvent(ALL.slice(0, 3)).type, 'trough');
+chk('去掉谷底 → 跨年', M.pickReplayEvent(ALL.slice(0, 2)).type, 'year');
+chk('只剩備註 → 備註', M.pickReplayEvent(ALL.slice(0, 1)).type, 'note');
+chk('空清單 → null', M.pickReplayEvent([]), null);
+chk('非陣列 → null', M.pickReplayEvent(undefined), null);
+
+console.log('');
+console.log('【邊界防呆：0／空值／單筆／亂序欄位】');
+chk('空陣列 → 無序列', M.toReplaySeries([]).length, 0);
+chk('非陣列 → 無序列', M.toReplaySeries(null).length, 0);
+chk('空陣列 → 無事件', M.buildReplayEvents([]).length, 0);
+chk('單筆 → 不產生任何事件（含 final）',
+  JSON.stringify(M.buildReplayEvents(M.toReplaySeries([S1_ROWS[0]]))), '[[]]');
+chk('單筆 → 無空檔', M.buildReplayGaps(M.toReplaySeries([S1_ROWS[0]])).length, 0);
+chk('總資產為空字串 → 當 0 不當 NaN',
+  M.toReplaySeries([{ 日期: '20260101', 總資產: '', 備註: '' }])[0].value, 0);
+chk('總資產為字串數字 → 轉成數字',
+  M.toReplaySeries([{ 日期: '20260101', 總資產: '12345', 備註: '' }])[0].value, 12345);
+chk('備註為 undefined → 空字串',
+  M.toReplaySeries([{ 日期: '20260101', 總資產: 1 }])[0].note, '');
+chk('全程 0 資產不觸發關卡或大跌',
+  JSON.stringify(M.buildReplayEvents(M.toReplaySeries([
+    { 日期: '20260101', 總資產: 0, 備註: '' },
+    { 日期: '20260201', 總資產: 0, 備註: '' }
+  ])).map((l) => l.map((x) => x.type).join('|'))), '["","final"]');
+
+console.log('');
+console.log('【非範圍：沒有動到既有內容】');
+chk('沒有新增任何後端寫入動作', /ASSET_REPLAY[\s\S]{0,4000}?gasRouter/.test(
+  H.slice(H.indexOf('const ASSET_REPLAY_DAY_MS'), H.indexOf('const AssetTerminal'))), false);
+chk('回放只讀 總資產 欄位（未改 FIELD_MAP）',
+  /const FIELD_MAP = \{ total: '總資產', tw: '台股', us: '美股', crypto: '加密貨幣' \};/.test(H), true);
+chk('未引入任何煙火／動畫函式庫',
+  /confetti|fireworks|party-js|canvas-confetti/i.test(H), false);
+chk('回放元件以 portal 掛到 body（不影響既有版型）',
+  /ReactDOM\.createPortal\(\s*<AssetReplayModal/.test(H), true);
+chk('prefers-reduced-motion 有被處理', /prefers-reduced-motion/.test(H), true);
+chk('開啟時鎖背景捲動', /document\.body\.style\.overflow = 'hidden'/.test(H), true);
+chk('關閉時還原背景捲動（不是寫死成 auto）',
+  /const prev = document\.body\.style\.overflow;[\s\S]{0,200}?document\.body\.style\.overflow = prev;/.test(H), true);
+/* 迴歸：開啟當下要把 data 快照起來。
+   若直接把 data 傳進去，資料載入後的第二次更新會換掉 series 的身分，
+   播放 effect 重跑 → 從頭重播。實跑時確實重現過。 */
+chk('回放吃的是開啟當下的快照，不是即時的 data',
+  /rows=\{replaySnapshot\}/.test(H), true);
+chk('   └ 快照在按下按鈕時取得', /onClick=\{\(\) => setReplaySnapshot\(data\)\}/.test(H), true);
+chk('   └ 關閉時清掉快照', /onClose=\{\(\) => setReplaySnapshot\(null\)\}/.test(H), true);
+
+console.log('');
+console.log(fail === 0 ? '>>> 全部通過' : '>>> ' + fail + ' 組失敗');
+process.exit(fail === 0 ? 0 : 1);
