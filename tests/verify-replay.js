@@ -132,11 +132,13 @@ const deps = grab('    const parseYMD = (val) => {', '    const formatYMD')
 const M = eval(deps + `; ({
   toReplaySeries, buildReplayEvents, pickReplayEvent, buildReplayGaps,
   isReplayGap, truncateReplayNote, calcReplayDuration, replayDayDiff,
+  attachMarketExtremes,
   K: { STEP: ASSET_REPLAY_MILESTONE_STEP, TIERS: ASSET_REPLAY_DRAWDOWN_TIERS,
        MIN_DD: ASSET_REPLAY_SEGMENT_MIN_DRAWDOWN, GAP: ASSET_REPLAY_GAP_DAYS,
        NOTE: ASSET_REPLAY_NOTE_MAX, HOLD: ASSET_REPLAY_EVENT_HOLD_MS,
        MIN_MS: ASSET_REPLAY_MIN_MS, MAX_MS: ASSET_REPLAY_MAX_MS,
-       PRIORITY: ASSET_REPLAY_EVENT_PRIORITY }
+       PRIORITY: ASSET_REPLAY_EVENT_PRIORITY,
+       AS_OF: TWSE_EXTREME_AS_OF, TWSE: TWSE_EXTREME_DAYS }
 })`);
 const K = M.K;
 
@@ -154,12 +156,21 @@ chk('備註字數上限', K.NOTE, 20);
 chk('斷點字卡停留毫秒', K.HOLD, 600);
 chk('播放時間下限（毫秒）', K.MIN_MS, 8000);
 chk('播放時間上限（毫秒）', K.MAX_MS, 20000);
-chk('優先度：最後一筆最高', K.PRIORITY.final, 7);
+chk('優先度：最後一筆最高', K.PRIORITY.final, 8);
 chk('優先度：收復前高 > 大跌', K.PRIORITY.recover > K.PRIORITY.crash, true);
 chk('優先度：大跌 > 整數關卡', K.PRIORITY.crash > K.PRIORITY.milestone, true);
 chk('優先度：整數關卡 > 谷底', K.PRIORITY.milestone > K.PRIORITY.trough, true);
 chk('優先度：谷底 > 跨年', K.PRIORITY.trough > K.PRIORITY.year, true);
-chk('優先度：跨年 > 備註', K.PRIORITY.year > K.PRIORITY.note, true);
+chk('優先度：跨年 > 台股大漲大跌', K.PRIORITY.year > K.PRIORITY.market, true);
+chk('優先度：台股大漲大跌 > 備註', K.PRIORITY.market > K.PRIORITY.note, true);
+chk('台股快照資料日期', K.AS_OF, '2026/11/04');
+chk('台股快照筆數（漲跌各十）', K.TWSE.length, 20);
+chk('   └ 跌點十筆', K.TWSE.filter((r) => r[1] < 0).length, 10);
+chk('   └ 漲點十筆', K.TWSE.filter((r) => r[1] > 0).length, 10);
+chk('   └ 日期皆為 YYYYMMDD', K.TWSE.every((r) => /^\d{8}$/.test(r[0])), true);
+chk('   └ 無重複日期', new Set(K.TWSE.map((r) => r[0])).size, 20);
+chk('   └ 跌點榜第一（2026/07/17）', K.TWSE[0].join('|'), '20260717|-2953.71|-6.47|1');
+chk('   └ 漲點榜第一（2025/04/10）', K.TWSE.filter((r) => r[1] > 0)[0].join('|'), '20250410|1608.27|9.25|1');
 
 console.log('');
 console.log('【假序列 S1】9 筆｜兩段回檔、兩次收復、兩次跨年、3 個空檔');
@@ -175,7 +186,7 @@ const S1_ROWS = [
   { 日期: '20260101', 總資產: 20000000, 備註: '年終結算：含質押借款與投入本金，毛資產口徑已確認' }
 ];
 const s1 = M.toReplaySeries(S1_ROWS);
-const e1 = M.buildReplayEvents(s1);
+const e1 = M.buildReplayEvents(s1, []);   // 注入空清單：這組只驗 ①～⑦
 
 console.log('  — 序列正規化（只讀 日期／總資產／備註）');
 chk('筆數', s1.length, 9);
@@ -275,7 +286,7 @@ const S2_ROWS = [
   { 日期: '20260705', 總資產: 11300000, 備註: '' }
 ];
 const s2 = M.toReplaySeries(S2_ROWS);
-const e2 = M.buildReplayEvents(s2);
+const e2 = M.buildReplayEvents(s2, []);   // 同上
 
 chk('無空檔', JSON.stringify(M.buildReplayGaps(s2)), '[]');
 chk('i0 事件（第一筆也算首次 ≥ 1000 萬）', types(e2, 0), 'milestone');
@@ -296,6 +307,101 @@ chk('全序列收復次數（淺回檔那次不算）',
   e2.reduce((a, l) => a + l.filter((x) => x.type === 'recover').length, 0), 1);
 chk('全序列谷底次數（淺回檔那段無谷底）',
   e2.reduce((a, l) => a + l.filter((x) => x.type === 'trough').length, 0), 1);
+
+console.log('');
+console.log('【假序列 S3】台股大漲大跌的掛載規則（注入自訂清單，與寫死快照無關）');
+/* 手推：
+   資產紀錄 i0 20260301／i1 20260401／i2 20260501／i3 20260601（間隔 31／30／31 天，無空檔）
+   注入 6 筆台股紀錄：
+     A 20260304 −1494.77 點 → 之後第一筆是 i1（20260401）
+     B 20260311 +1342.32 點 → 之後第一筆也是 i1 → 與 A 同格，
+                              取漲跌點絕對值較大者 → A 留下、B 捨棄
+     C 20260501   +500.00 點 → 與 i2 同日 → 掛 i2
+     D 20260215 −9999.00 點 → 早於第一筆 → 區間外，略過
+     E 20260701   +888.00 點 → 晚於最後一筆 → 區間外，略過
+     F 20260301   −777.00 點 → 與 i0 同日 → 第一筆「只有同日才掛」，成立 → 掛 i0
+   其他事件：i0 的 1000 萬觸發關卡；全程遞增無回檔、同年、無備註；i3 是最後一筆。
+   故 i0 = 關卡＋台股（關卡勝，⑤ > ②）、i1 = 台股、i2 = 台股、i3 = 最後一筆。 */
+const S3_ROWS = [
+  { 日期: '20260301', 總資產: 10000000, 備註: '' },
+  { 日期: '20260401', 總資產: 10200000, 備註: '' },
+  { 日期: '20260501', 總資產: 10400000, 備註: '' },
+  { 日期: '20260601', 總資產: 10600000, 備註: '' }
+];
+const S3_DAYS = [
+  ['20260304', -1494.77, -4.35, 6],
+  ['20260311', 1342.32, 4.10, 4],
+  ['20260501', 500.00, 1.00, 9],
+  ['20260215', -9999.00, -9.00, 1],
+  ['20260701', 888.00, 2.00, 3],
+  ['20260301', -777.00, -1.00, 5]
+];
+const s3 = M.toReplaySeries(S3_ROWS);
+const e3 = M.buildReplayEvents(s3, S3_DAYS);
+
+chk('i0 事件（關卡＋同日台股）', types(e3, 0), 'milestone,market');
+chk('i0 勝出者（關卡壓過台股）', winner(e3, 0), 'milestone');
+chk('i0 掛的是同日那筆', find(e3, 0, 'market').date, '20260301');
+chk('i1 事件', types(e3, 1), 'market');
+chk('i1 勝出者', winner(e3, 1), 'market');
+chk('i1 掛到「之後第一筆」（3/04 → 4/01）', find(e3, 1, 'market').date, '20260304');
+chk('   └ 同格取絕對值較大者（捨棄 3/11 的 +1342）', find(e3, 1, 'market').points, -1494.77);
+chk('   └ 跌幅%', find(e3, 1, 'market').pct, -4.35);
+chk('   └ 排名', find(e3, 1, 'market').rank, 6);
+chk('i2 事件（與資產紀錄同日）', types(e3, 2), 'market');
+chk('i2 掛的是 5/01', find(e3, 2, 'market').date, '20260501');
+chk('i3 事件（最後一筆，無台股）', types(e3, 3), 'final');
+chk('區間外的兩筆被略過（總數 3 不是 5）',
+  e3.reduce((a, l) => a + l.filter((x) => x.type === 'market').length, 0), 3);
+chk('   └ 早於第一筆的 2/15 沒掛上',
+  JSON.stringify(e3).indexOf('20260215'), -1);
+chk('   └ 晚於最後一筆的 7/01 沒掛上',
+  JSON.stringify(e3).indexOf('20260701'), -1);
+chk('第一筆非同日則不掛',
+  M.buildReplayEvents(s3, [['20260215', -9999, -9, 1]])
+    .reduce((a, l) => a + l.filter((x) => x.type === 'market').length, 0), 0);
+chk('注入空清單 → 完全沒有台股事件',
+  M.buildReplayEvents(s3, []).reduce((a, l) => a + l.filter((x) => x.type === 'market').length, 0), 0);
+chk('注入 null → 當作沒有，不得炸掉',
+  M.buildReplayEvents(s3, null).reduce((a, l) => a + l.filter((x) => x.type === 'market').length, 0), 0);
+chk('單筆序列不掛台股',
+  M.attachMarketExtremes(M.toReplaySeries([S3_ROWS[0]]), [[]], S3_DAYS)[0].length, 0);
+
+console.log('');
+console.log('【假序列 S4】不帶第二引數 → 吃寫死的 TWSE 快照');
+/* 手推：資產紀錄 i0 20240701／i1 20240901／i2 20250501
+   落在 20240701～20250501 區間內的寫死紀錄：
+     20240805 −1807.21、20240807 +794.26 → 之後第一筆都是 i1（20240901）
+       → 同格取絕對值較大者 → 20240805
+     20250407 −2065.87、20250409 −1068.19、20250410 +1608.27、20250423 +845.71
+       → 之後第一筆都是 i2（20250501）→ 取 20250407
+     20210518 早於區間、20251120 及之後的全部晚於區間 → 略過
+   其他事件：間隔 62／242 天 → 兩段都是空檔；
+     i2 是 2025 第一筆 → 跨年，剛結束的 2024 最後一筆 = i1 110 萬，
+     2023 無資料 → 對比第一筆 100 萬 → 增減 +10 萬；
+     全部 < 500 萬 → 無關卡；i2 是最後一筆。 */
+const s4 = M.toReplaySeries([
+  { 日期: '20240701', 總資產: 1000000, 備註: '' },
+  { 日期: '20240901', 總資產: 1100000, 備註: '' },
+  { 日期: '20250501', 總資產: 1200000, 備註: '' }
+]);
+const e4 = M.buildReplayEvents(s4);
+
+chk('空檔索引（62 天與 242 天）', JSON.stringify(M.buildReplayGaps(s4)), '[1,2]');
+chk('i0 事件', types(e4, 0), '');
+chk('i1 事件', types(e4, 1), 'market');
+chk('i1 掛到 2024/08/05（史上第 3 大跌點）', find(e4, 1, 'market').date, '20240805');
+chk('   └ 跌點', find(e4, 1, 'market').points, -1807.21);
+chk('   └ 跌幅%', find(e4, 1, 'market').pct, -8.35);
+chk('   └ 同格的 08/07 漲點被蓋掉', JSON.stringify(e4).indexOf('20240807'), -1);
+chk('i2 事件（跨年＋台股＋最後一筆）', types(e4, 2), 'year,market,final');
+chk('i2 勝出者（最後一筆最高）', winner(e4, 2), 'final');
+chk('i2 掛到 2025/04/07（史上第 2 大跌點）', find(e4, 2, 'market').date, '20250407');
+chk('   └ 跌點', find(e4, 2, 'market').points, -2065.87);
+chk('   └ 同格另外三筆被蓋掉',
+  ['20250409', '20250410', '20250423'].every((d) => JSON.stringify(e4).indexOf(d) < 0), true);
+chk('i2 跨年增減仍正確（110 萬 − 100 萬）', find(e4, 2, 'year').delta, 100000);
+chk('全序列台股事件數', e4.reduce((a, l) => a + l.filter((x) => x.type === 'market').length, 0), 2);
 
 console.log('');
 console.log('【空檔判定邊界】');
@@ -329,15 +435,16 @@ chk('空值 → 下限（不得為 NaN）', M.calcReplayDuration(null), 8000);
 console.log('');
 console.log('【優先度：同一筆多事件只顯示最高者】');
 const ALL = [
-  { type: 'note' }, { type: 'year' }, { type: 'trough' },
+  { type: 'note' }, { type: 'market' }, { type: 'year' }, { type: 'trough' },
   { type: 'milestone' }, { type: 'crash' }, { type: 'recover' }, { type: 'final' }
 ];
-chk('七種齊發 → 最後一筆', M.pickReplayEvent(ALL).type, 'final');
-chk('去掉最後一筆 → 收復前高', M.pickReplayEvent(ALL.slice(0, 6)).type, 'recover');
-chk('去掉收復 → 大跌', M.pickReplayEvent(ALL.slice(0, 5)).type, 'crash');
-chk('去掉大跌 → 整數關卡', M.pickReplayEvent(ALL.slice(0, 4)).type, 'milestone');
-chk('去掉關卡 → 谷底', M.pickReplayEvent(ALL.slice(0, 3)).type, 'trough');
-chk('去掉谷底 → 跨年', M.pickReplayEvent(ALL.slice(0, 2)).type, 'year');
+chk('八種齊發 → 最後一筆', M.pickReplayEvent(ALL).type, 'final');
+chk('去掉最後一筆 → 收復前高', M.pickReplayEvent(ALL.slice(0, 7)).type, 'recover');
+chk('去掉收復 → 大跌', M.pickReplayEvent(ALL.slice(0, 6)).type, 'crash');
+chk('去掉大跌 → 整數關卡', M.pickReplayEvent(ALL.slice(0, 5)).type, 'milestone');
+chk('去掉關卡 → 谷底', M.pickReplayEvent(ALL.slice(0, 4)).type, 'trough');
+chk('去掉谷底 → 跨年', M.pickReplayEvent(ALL.slice(0, 3)).type, 'year');
+chk('去掉跨年 → 台股大漲大跌', M.pickReplayEvent(ALL.slice(0, 2)).type, 'market');
 chk('只剩備註 → 備註', M.pickReplayEvent(ALL.slice(0, 1)).type, 'note');
 chk('空清單 → null', M.pickReplayEvent([]), null);
 chk('非陣列 → null', M.pickReplayEvent(undefined), null);
@@ -348,7 +455,7 @@ chk('空陣列 → 無序列', M.toReplaySeries([]).length, 0);
 chk('非陣列 → 無序列', M.toReplaySeries(null).length, 0);
 chk('空陣列 → 無事件', M.buildReplayEvents([]).length, 0);
 chk('單筆 → 不產生任何事件（含 final）',
-  JSON.stringify(M.buildReplayEvents(M.toReplaySeries([S1_ROWS[0]]))), '[[]]');
+  JSON.stringify(M.buildReplayEvents(M.toReplaySeries([S1_ROWS[0]]), [])), '[[]]');
 chk('單筆 → 無空檔', M.buildReplayGaps(M.toReplaySeries([S1_ROWS[0]])).length, 0);
 chk('總資產為空字串 → 當 0 不當 NaN',
   M.toReplaySeries([{ 日期: '20260101', 總資產: '', 備註: '' }])[0].value, 0);
@@ -360,7 +467,7 @@ chk('全程 0 資產不觸發關卡或大跌',
   JSON.stringify(M.buildReplayEvents(M.toReplaySeries([
     { 日期: '20260101', 總資產: 0, 備註: '' },
     { 日期: '20260201', 總資產: 0, 備註: '' }
-  ])).map((l) => l.map((x) => x.type).join('|'))), '["","final"]');
+  ]), []).map((l) => l.map((x) => x.type).join('|'))), '["","final"]');
 
 console.log('');
 console.log('【非範圍：沒有動到既有內容】');
@@ -383,6 +490,10 @@ chk('回放吃的是開啟當下的快照，不是即時的 data',
   /rows=\{replaySnapshot\}/.test(H), true);
 chk('   └ 快照在按下按鈕時取得', /onClick=\{\(\) => setReplaySnapshot\(data\)\}/.test(H), true);
 chk('   └ 關閉時清掉快照', /onClose=\{\(\) => setReplaySnapshot\(null\)\}/.test(H), true);
+chk('台股資料是寫死快照，未新增任何抓取請求',
+  /TWSE_EXTREME_DAYS[\s\S]{0,1500}?(fetch\(|gasRouter)/.test(H), false);
+chk('畫面會標註台股快照的資料日期',
+  /資料截至 ' \+ TWSE_EXTREME_AS_OF/.test(H), true);
 
 console.log('');
 console.log(fail === 0 ? '>>> 全部通過' : '>>> ' + fail + ' 組失敗');

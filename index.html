@@ -403,7 +403,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/11/04 17:44';
+    const APP_VERSION = '2026/11/05 06:40';
 
     /* ===================================================================
        共用工具
@@ -5011,10 +5011,38 @@ Build the wall first. Attack second.`)}
     const ASSET_REPLAY_MIN_MS = 8000;                       // 播放時間下限
     const ASSET_REPLAY_MAX_MS = 20000;                      // 播放時間上限
     /* 同一筆有多個事件時只顯示優先度最高者：
-       最後一筆 > 收復前高 > 大跌 > 整數關卡 > 谷底 > 跨年 > 備註 */
+       最後一筆 > 收復前高 > 大跌 > 整數關卡 > 谷底 > 跨年 > 台股大漲大跌 > 備註 */
     const ASSET_REPLAY_EVENT_PRIORITY = {
-        final: 7, recover: 6, crash: 5, milestone: 4, trough: 3, year: 2, note: 1
+        final: 8, recover: 7, crash: 6, milestone: 5, trough: 4, year: 3, market: 2, note: 1
     };
+
+    /* 台股前十大漲點／跌點紀錄（來源：TWSE，Boss 2026/11/04 提供的快照）。
+       刻意寫死不自動更新：後端不得更動（鐵律0），TWSE 也不開放瀏覽器直接抓。
+       日後要更新，換掉下面這份陣列與 TWSE_EXTREME_AS_OF 即可，畫面會跟著改。
+       欄位：[日期 YYYYMMDD, 漲跌點, 漲跌幅%, 該榜排名] */
+    const TWSE_EXTREME_AS_OF = '2026/11/04';
+    const TWSE_EXTREME_DAYS = [
+        ['20260717', -2953.71, -6.47, 1],
+        ['20250407', -2065.87, -9.69, 2],
+        ['20240805', -1807.21, -8.35, 3],
+        ['20260626', -1683.59, -3.64, 4],
+        ['20260608', -1568.16, -3.48, 5],
+        ['20260304', -1494.77, -4.35, 6],
+        ['20260309', -1489.12, -4.43, 7],
+        ['20260610', -1487.90, -3.31, 8],
+        ['20260707', -1077.28, -2.31, 9],
+        ['20250409', -1068.19, -5.78, 10],
+        ['20250410', 1608.27, 9.25, 1],
+        ['20260408', 1531.56, 4.61, 2],
+        ['20260401', 1451.83, 4.58, 3],
+        ['20260311', 1342.32, 4.10, 4],
+        ['20260224', 927.56, 2.75, 5],
+        ['20251120', 846.24, 3.18, 6],
+        ['20250423', 845.71, 4.50, 7],
+        ['20260305', 844.06, 2.57, 8],
+        ['20240807', 794.26, 3.87, 9],
+        ['20210518', 792.09, 5.16, 10]
+    ];
 
     // 兩個 timestamp 相差幾天（整數）
     const replayDayDiff = (fromTs, toTs) => {
@@ -5066,10 +5094,36 @@ Build the wall first. Attack second.`)}
         }).filter((p) => Number.isFinite(p.ts));
     };
 
+    /* 把台股大漲大跌日掛到「該日之後的第一筆」資產紀錄上。
+       回放是順著時間走的，所以某天大跌、Boss 月底才記一筆，會在月底那格跳出來。
+       落在第一筆之前或最後一筆之後的一律略過（區間外，沒有對應的格子可掛）。
+       同一格掛到多個就只留漲跌點絕對值最大的那個，避免堆一堆看不到的事件。 */
+    const attachMarketExtremes = (series, events, days) => {
+        const n = Array.isArray(series) ? series.length : 0;
+        if (n < 2 || !Array.isArray(days)) return events;
+        const best = {};
+        for (let k = 0; k < days.length; k++) {
+            const row = days[k];
+            if (!row) continue;
+            const ts = parseYMD(row[0]).getTime();
+            if (!Number.isFinite(ts)) continue;
+            if (ts < series[0].ts || ts > series[n - 1].ts) continue;
+            let idx = -1;
+            for (let i = 0; i < n; i++) { if (series[i].ts >= ts) { idx = i; break; } }
+            if (idx < 0) continue;
+            // 第一筆只有「日期剛好相同」才掛，否則那天其實在回放區間之外
+            if (idx === 0 && series[0].ts !== ts) continue;
+            const ev = { type: 'market', date: row[0], points: row[1], pct: row[2], rank: row[3] };
+            if (!best[idx] || Math.abs(ev.points) > Math.abs(best[idx].points)) best[idx] = ev;
+        }
+        Object.keys(best).forEach((i) => { events[i].push(best[i]); });
+        return events;
+    };
+
     /* 斷點事件偵測。
        series：[{ ts, value, year, note }]，已由舊到新排序。
        回傳與 series 等長的陣列，每格是該筆觸發的事件清單（可能為空）。 */
-    const buildReplayEvents = (series) => {
+    const buildReplayEvents = (series, marketDays) => {
         const n = Array.isArray(series) ? series.length : 0;
         const events = [];
         for (let i = 0; i < n; i++) events.push([]);
@@ -5151,6 +5205,9 @@ Build the wall first. Attack second.`)}
                 delta: yearLast[closedYear] - basis, basisIsFirst: !hasBasis
             });
         }
+
+        // ⑧ 台股大漲大跌（預設吃寫死的快照，測試可自行注入）
+        attachMarketExtremes(series, events, marketDays === undefined ? TWSE_EXTREME_DAYS : marketDays);
 
         // ⑥ 備註
         for (let i = 0; i < n; i++) {
@@ -5453,6 +5510,16 @@ Build the wall first. Attack second.`)}
                     + Math.abs(Math.round(ev.delta / 10000)).toLocaleString() + ' 萬'
                     + (ev.basisIsFirst ? '（對比第一筆）' : '')
             };
+            if (ev.type === 'market') {
+                const up = ev.points > 0;
+                return {
+                    tone: up ? REPLAY_GREEN : REPLAY_RED,
+                    main: '台股 ' + (up ? '+' : '−') + Math.abs(Math.round(ev.points)).toLocaleString() + ' 點',
+                    sub: (up ? '+' : '−') + Math.abs(ev.pct).toFixed(2) + '%　'
+                        + formatYMD(ev.date) + ' 史上第 ' + ev.rank + ' 大' + (up ? '漲' : '跌') + '點',
+                    foot: '台股前十大紀錄｜資料截至 ' + TWSE_EXTREME_AS_OF
+                };
+            }
             if (ev.type === 'note') return { tone: '#FFFFFF', main: ev.text, sub: '備註' };
             return null;
         };
@@ -5506,6 +5573,9 @@ Build the wall first. Attack second.`)}
                                 <div className="font-mono font-extrabold text-3xl sm:text-4xl text-center px-4"
                                      style={{ color: ct.tone, textShadow: '0 0 20px ' + ct.tone }}>{ct.main}</div>
                                 <div className="font-mono text-sm mt-2 text-center px-4" style={{ color: 'rgba(255,255,255,0.75)' }}>{ct.sub}</div>
+                                {ct.foot && (
+                                    <div className="font-mono text-[10px] mt-2 text-center px-4" style={{ color: 'rgba(255,255,255,0.35)' }}>{ct.foot}</div>
+                                )}
                             </div>
                         )}
                     </div>
