@@ -237,9 +237,18 @@ chk('拆分：金額 0 → ok:false', M.splitByMarketValue(0, 100, 100).ok, fals
 chk('拆分：負市值視為 0', M.splitByMarketValue(1000, -5, 100).v631, 1000);
 chk('現價日期：未填 → null', M.priceAgeDays('', Date.now()), null);
 chk('現價日期：亂填 → null', M.priceAgeDays('abc', Date.now()), null);
-chk('現價日期：今天 → 0 天', M.priceAgeDays(new Date().toISOString().slice(0, 10), Date.now()), 0);
+/* 日期字串一律用「本機」日期組，不可用 toISOString（那是 UTC 日期）。
+   priceAgeDays 比的是 startOfLocalDayUTC(now)，也就是本機日的起點；
+   台灣 UTC+8，本機 00:00–08:00 這段時間 UTC 還停在前一天，
+   用 toISOString 會固定少一天，讓這兩條在半夜必定失敗。 */
+const localYMD = (ts) => {
+  const d = new Date(ts);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+       + '-' + String(d.getDate()).padStart(2, '0');
+};
+chk('現價日期：今天 → 0 天', M.priceAgeDays(localYMD(Date.now()), Date.now()), 0);
 chk('現價日期：4 天前 → 4 天（> 3 會提示）',
-  M.priceAgeDays(new Date(Date.now() - 4 * 86400000).toISOString().slice(0, 10), Date.now()), 4);
+  M.priceAgeDays(localYMD(Date.now() - 4 * 86400000), Date.now()), 4);
 
 console.log('');
 console.log('【邊界防呆】0／空值／NaN／L=0／P1=0');
