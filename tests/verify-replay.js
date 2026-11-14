@@ -132,13 +132,14 @@ const deps = grab('    const parseYMD = (val) => {', '    const formatYMD')
 const M = eval(deps + `; ({
   toReplaySeries, buildReplayEvents, pickReplayEvent, buildReplayGaps,
   isReplayGap, truncateReplayNote, calcReplayDuration, replayDayDiff,
-  attachMarketExtremes,
+  attachMarketExtremes, replaySpawnCount, replayDpr,
   K: { STEP: ASSET_REPLAY_MILESTONE_STEP, TIERS: ASSET_REPLAY_DRAWDOWN_TIERS,
        MIN_DD: ASSET_REPLAY_SEGMENT_MIN_DRAWDOWN, GAP: ASSET_REPLAY_GAP_DAYS,
        NOTE: ASSET_REPLAY_NOTE_MAX, HOLD: ASSET_REPLAY_EVENT_HOLD_MS,
        MIN_MS: ASSET_REPLAY_MIN_MS, MAX_MS: ASSET_REPLAY_MAX_MS,
        PRIORITY: ASSET_REPLAY_EVENT_PRIORITY,
-       AS_OF: TWSE_EXTREME_AS_OF, TWSE: TWSE_EXTREME_DAYS }
+       AS_OF: TWSE_EXTREME_AS_OF, TWSE: TWSE_EXTREME_DAYS,
+       MAX_PARTICLES: ASSET_REPLAY_MAX_PARTICLES, MAX_DPR: ASSET_REPLAY_MAX_DPR }
 })`);
 const K = M.K;
 
@@ -468,6 +469,55 @@ chk('全程 0 資產不觸發關卡或大跌',
     { 日期: '20260101', 總資產: 0, 備註: '' },
     { 日期: '20260201', 總資產: 0, 備註: '' }
   ]), []).map((l) => l.map((x) => x.type).join('|'))), '["","final"]');
+
+console.log('');
+console.log('【資源上限】粒子總數與 devicePixelRatio');
+chk('粒子總數上限', K.MAX_PARTICLES, 400);
+chk('devicePixelRatio 上限', K.MAX_DPR, 2);
+/* 手推：還能生的數量 = min(想生的, 上限 − 現有)，再夾到 0 以上。 */
+chk('空的時候想生 40 → 生 40', M.replaySpawnCount(0, 40), 40);
+chk('已有 100 想生 40 → 生 40', M.replaySpawnCount(100, 40), 40);
+chk('已有 380 想生 40 → 只生 20（補到 400）', M.replaySpawnCount(380, 40), 20);
+chk('已有 400 想生 40 → 一顆都不生', M.replaySpawnCount(400, 40), 0);
+chk('已有 500（超量）→ 不生，且不得回負數', M.replaySpawnCount(500, 40), 0);
+chk('想生 0 → 0', M.replaySpawnCount(100, 0), 0);
+chk('想生負數 → 0', M.replaySpawnCount(100, -5), 0);
+chk('現有為空值 → 當 0 不當 NaN', M.replaySpawnCount(null, 40), 40);
+chk('結尾一次想生 120，空的時候全給', M.replaySpawnCount(0, 120), 120);
+/* 手推：dpr 夾在 1～2；小於 1、非數字、空值一律當 1。 */
+chk('dpr 1 → 1', M.replayDpr(1), 1);
+chk('dpr 2 → 2', M.replayDpr(2), 2);
+chk('dpr 3（高 DPI）→ 夾到 2', M.replayDpr(3), 2);
+chk('dpr 1.5 → 1.5（未被夾）', M.replayDpr(1.5), 1.5);
+chk('dpr 0.75 → 1', M.replayDpr(0.75), 1);
+chk('dpr 0 → 1', M.replayDpr(0), 1);
+chk('dpr undefined → 1', M.replayDpr(undefined), 1);
+chk('dpr NaN → 1', M.replayDpr(NaN), 1);
+
+console.log('');
+console.log('【配色：紅漲綠跌】');
+chk('較第一筆 正值紅、負值綠',
+  /color: pct >= 0 \? REPLAY_RED : REPLAY_GREEN/.test(H), true);
+chk('台股字卡 漲紅跌綠', /tone: up \? REPLAY_RED : REPLAY_GREEN,/.test(H), true);
+chk('大跌字卡 主字為閃電色', /tone: REPLAY_BOLT, glow: REPLAY_BOLT_GLOW, subTone: REPLAY_GREEN/.test(H), true);
+chk('   └ 閃電核心色 #BFD8FF', /const REPLAY_BOLT = '#BFD8FF';/.test(H), true);
+chk('   └ 閃電外暈色 #7AA2FF', /const REPLAY_BOLT_GLOW = '#7AA2FF';/.test(H), true);
+chk('谷底仍為綠', /type: 'trough'[\s\S]{0,120}?tone: REPLAY_GREEN|tone: REPLAY_GREEN, main: '谷底'/.test(H), true);
+chk('金色用途未變（關卡／收復／跨年／結束）',
+  (H.match(/tone: REPLAY_GOLD/g) || []).length, 4);
+chk('字卡渲染吃 glow 與 subTone',
+  /textShadow: '0 0 20px ' \+ \(ct\.glow \|\| ct\.tone\)/.test(H)
+  && /color: ct\.subTone \|\| 'rgba\(255,255,255,0\.75\)'/.test(H), true);
+
+console.log('');
+console.log('【卸載清理】');
+chk('震動的 timeout 有被記下來', /timers\.push\(window\.setTimeout\(\(\) => setShake\(false\), 360\)\)/.test(H), true);
+chk('   └ 清理時全部 clearTimeout', /timers\.forEach\(\(id\) => window\.clearTimeout\(id\)\)/.test(H), true);
+chk('   └ 清理時歸零震動（不殘留到下次開啟）',
+  /cancelAnimationFrame\(raf\);[\s\S]{0,200}?setShake\(false\);/.test(H), true);
+chk('粒子生成有套上限', /const room = replaySpawnCount\(partsRef\.current\.length, count\);/.test(H), true);
+chk('兩處畫布都用夾過的 dpr', (H.match(/const dpr = replayDpr\(window\.devicePixelRatio\);/g) || []).length, 2);
+chk('已無未夾的 devicePixelRatio', /devicePixelRatio \|\| 1/.test(H), false);
 
 console.log('');
 console.log('【非範圍：沒有動到既有內容】');

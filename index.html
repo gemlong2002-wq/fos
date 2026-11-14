@@ -403,7 +403,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/11/05 06:40';
+    const APP_VERSION = '2026/11/14 22:07';
 
     /* ===================================================================
        共用工具
@@ -5010,6 +5010,8 @@ Build the wall first. Attack second.`)}
     const ASSET_REPLAY_MS_PER_POINT = 220;                  // 每筆的推進時間
     const ASSET_REPLAY_MIN_MS = 8000;                       // 播放時間下限
     const ASSET_REPLAY_MAX_MS = 20000;                      // 播放時間上限
+    const ASSET_REPLAY_MAX_PARTICLES = 400;                 // 粒子總數上限
+    const ASSET_REPLAY_MAX_DPR = 2;                         // devicePixelRatio 上限
     /* 同一筆有多個事件時只顯示優先度最高者：
        最後一筆 > 收復前高 > 大跌 > 整數關卡 > 谷底 > 跨年 > 台股大漲大跌 > 備註 */
     const ASSET_REPLAY_EVENT_PRIORITY = {
@@ -5071,6 +5073,21 @@ Build the wall first. Attack second.`)}
         const s = String(note == null ? '' : note).trim();
         if (!s) return '';
         return s.length > ASSET_REPLAY_NOTE_MAX ? s.slice(0, ASSET_REPLAY_NOTE_MAX) + '…' : s;
+    };
+
+    /* 這次還能生幾顆粒子：位子不夠就少生，絕不超過總數上限。
+       （連續重播時粒子會累積，沒有上限會一路吃掉效能） */
+    const replaySpawnCount = (current, want) => {
+        const cur = Math.max(0, Number(current) || 0);
+        const w = Math.max(0, Number(want) || 0);
+        return Math.max(0, Math.min(w, ASSET_REPLAY_MAX_PARTICLES - cur));
+    };
+
+    // 繪圖用的 devicePixelRatio：夾在 1～2，避免高 DPI 螢幕畫布過大
+    const replayDpr = (raw) => {
+        const v = Number(raw);
+        if (!Number.isFinite(v) || v < 1) return 1;
+        return Math.min(ASSET_REPLAY_MAX_DPR, v);
     };
 
     // 播放總時間：依筆數線性調整，夾在 8～20 秒
@@ -5242,6 +5259,8 @@ Build the wall first. Attack second.`)}
     const REPLAY_RED = '#FF3B47';
     const REPLAY_GREEN = '#2BD47D';
     const REPLAY_GOLD = '#F5C542';
+    const REPLAY_BOLT = '#BFD8FF';        // 大跌字卡主字（＝日後閃電核心色）
+    const REPLAY_BOLT_GLOW = '#7AA2FF';   // 大跌字卡光暈（＝日後閃電外暈色）
 
     const AssetReplayModal = ({ rows, onClose }) => {
         const series = useMemo(() => toReplaySeries(rows), [rows]);
@@ -5281,6 +5300,7 @@ Build the wall first. Attack second.`)}
             const n = series.length;
             const perPoint = calcReplayDuration(n) / (n - 1);
             let raf = 0, last = 0, acc = 0, i = 0, hold = 0, dead = false;
+            const timers = [];   // 震動復原用的 timeout，卸載／重播時一併清掉
             setIdx(0);
             setPlaying(true);
             const first = pickReplayEvent(events[0]);
@@ -5307,7 +5327,10 @@ Build the wall first. Attack second.`)}
                     setCard(ev);
                     if (ev) {
                         hold = ASSET_REPLAY_EVENT_HOLD_MS;
-                        if (ev.type === 'crash') { setShake(true); window.setTimeout(() => setShake(false), 360); }
+                        if (ev.type === 'crash') {
+                            setShake(true);
+                            timers.push(window.setTimeout(() => setShake(false), 360));
+                        }
                         if (ev.type === 'milestone' || ev.type === 'recover' || ev.type === 'final') {
                             spawnBurst(ev.type === 'final' ? 120 : 40);
                         }
@@ -5317,7 +5340,12 @@ Build the wall first. Attack second.`)}
                 raf = requestAnimationFrame(tick);
             };
             raf = requestAnimationFrame(tick);
-            return () => { dead = true; cancelAnimationFrame(raf); };
+            return () => {
+                dead = true;
+                cancelAnimationFrame(raf);
+                timers.forEach((id) => window.clearTimeout(id));
+                setShake(false);   // 播到一半關掉時，不讓震動狀態殘留到下次開啟
+            };
         }, [runId, enough, reduced, series, events]);
 
         // 煙火／紙屑：自行用 canvas 實作，不引入函式庫
@@ -5327,7 +5355,8 @@ Build the wall first. Attack second.`)}
             const w = cv.clientWidth, h = cv.clientHeight;
             const cx = w / 2, cy = h * 0.42;
             const palette = [REPLAY_GOLD, REPLAY_RED, REPLAY_GREEN, '#FFFFFF'];
-            for (let k = 0; k < count; k++) {
+            const room = replaySpawnCount(partsRef.current.length, count);
+            for (let k = 0; k < room; k++) {
                 const a = Math.random() * Math.PI * 2;
                 const sp = 2 + Math.random() * 4.5;
                 partsRef.current.push({
@@ -5346,7 +5375,7 @@ Build the wall first. Attack second.`)}
             let raf = 0, dead = false;
             const draw = () => {
                 if (dead) return;
-                const dpr = window.devicePixelRatio || 1;
+                const dpr = replayDpr(window.devicePixelRatio);
                 const w = cv.clientWidth, h = cv.clientHeight;
                 if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
                 const ctx = cv.getContext('2d');
@@ -5377,7 +5406,7 @@ Build the wall first. Attack second.`)}
         useEffect(() => {
             const cv = lineRef.current;
             if (!cv || !series.length) return;
-            const dpr = window.devicePixelRatio || 1;
+            const dpr = replayDpr(window.devicePixelRatio);
             const w = cv.clientWidth, h = cv.clientHeight;
             if (!w || !h) return;
             if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
@@ -5501,7 +5530,11 @@ Build the wall first. Attack second.`)}
             if (!ev) return null;
             if (ev.type === 'final') return { tone: REPLAY_GOLD, main: '回放結束', sub: '最新一筆' };
             if (ev.type === 'recover') return { tone: REPLAY_GOLD, main: '收復前高', sub: '歷時 ' + ev.days + ' 天' };
-            if (ev.type === 'crash') return { tone: REPLAY_RED, main: '−' + Math.round(ev.tier * 100) + '%', sub: '自前高回檔 ' + (ev.drawdown * 100).toFixed(1) + '%' };
+            if (ev.type === 'crash') return {
+                tone: REPLAY_BOLT, glow: REPLAY_BOLT_GLOW, subTone: REPLAY_GREEN,
+                main: '−' + Math.round(ev.tier * 100) + '%',
+                sub: '自前高回檔 ' + (ev.drawdown * 100).toFixed(1) + '%'
+            };
             if (ev.type === 'milestone') return { tone: REPLAY_GOLD, main: (ev.level / 10000).toLocaleString() + ' 萬', sub: '關卡達成' };
             if (ev.type === 'trough') return { tone: REPLAY_GREEN, main: '谷底', sub: '回檔 ' + (ev.drawdown * 100).toFixed(1) + '%' };
             if (ev.type === 'year') return {
@@ -5513,7 +5546,7 @@ Build the wall first. Attack second.`)}
             if (ev.type === 'market') {
                 const up = ev.points > 0;
                 return {
-                    tone: up ? REPLAY_GREEN : REPLAY_RED,
+                    tone: up ? REPLAY_RED : REPLAY_GREEN,
                     main: '台股 ' + (up ? '+' : '−') + Math.abs(Math.round(ev.points)).toLocaleString() + ' 點',
                     sub: (up ? '+' : '−') + Math.abs(ev.pct).toFixed(2) + '%　'
                         + formatYMD(ev.date) + ' 史上第 ' + ev.rank + ' 大' + (up ? '漲' : '跌') + '點',
@@ -5546,7 +5579,7 @@ Build the wall first. Attack second.`)}
                         <div className="grid grid-cols-3 gap-2 mt-5 font-mono text-xs">
                             <div>
                                 <div style={{ color: 'rgba(255,255,255,0.45)' }}>較第一筆</div>
-                                <div className="text-base font-bold" style={{ color: pct >= 0 ? REPLAY_GREEN : REPLAY_RED }}>
+                                <div className="text-base font-bold" style={{ color: pct >= 0 ? REPLAY_RED : REPLAY_GREEN }}>
                                     {(pct >= 0 ? '+' : '') + pct.toFixed(1)}%
                                 </div>
                             </div>
@@ -5571,8 +5604,9 @@ Build the wall first. Attack second.`)}
                         {ct && (
                             <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex flex-col items-center pointer-events-none">
                                 <div className="font-mono font-extrabold text-3xl sm:text-4xl text-center px-4"
-                                     style={{ color: ct.tone, textShadow: '0 0 20px ' + ct.tone }}>{ct.main}</div>
-                                <div className="font-mono text-sm mt-2 text-center px-4" style={{ color: 'rgba(255,255,255,0.75)' }}>{ct.sub}</div>
+                                     style={{ color: ct.tone, textShadow: '0 0 20px ' + (ct.glow || ct.tone) }}>{ct.main}</div>
+                                <div className="font-mono text-sm mt-2 text-center px-4"
+                                     style={{ color: ct.subTone || 'rgba(255,255,255,0.75)' }}>{ct.sub}</div>
                                 {ct.foot && (
                                     <div className="font-mono text-[10px] mt-2 text-center px-4" style={{ color: 'rgba(255,255,255,0.35)' }}>{ct.foot}</div>
                                 )}
