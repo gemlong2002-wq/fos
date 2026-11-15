@@ -139,9 +139,20 @@
       60% { transform: translateX(-3px); }
       80% { transform: translateX(3px); }
     }
+    @keyframes replayShakeHard {
+      0%, 100% { transform: translate(0, 0); }
+      15% { transform: translate(-10px, 4px); }
+      30% { transform: translate(9px, -5px); }
+      45% { transform: translate(-7px, -3px); }
+      60% { transform: translate(7px, 4px); }
+      80% { transform: translate(-4px, 2px); }
+    }
     .replay-shake { animation: replayShake 360ms ease-in-out; }
+    .replay-shake-1 { animation: replayShake 260ms ease-in-out; }
+    .replay-shake-2 { animation: replayShakeHard 420ms ease-in-out; }
+    .replay-shake-3 { animation: replayShakeHard 700ms ease-in-out; }
     @media (prefers-reduced-motion: reduce) {
-      .replay-shake { animation: none; }
+      .replay-shake, .replay-shake-1, .replay-shake-2, .replay-shake-3 { animation: none; }
     }
 
     /* ============ Amber 樣式 — 裸元素選擇器一律收進 .amber-scope，避免外洩 ============ */
@@ -403,7 +414,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/11/14 22:07';
+    const APP_VERSION = '2026/11/15 12:42';
 
     /* ===================================================================
        共用工具
@@ -5011,6 +5022,7 @@ Build the wall first. Attack second.`)}
     const ASSET_REPLAY_MIN_MS = 8000;                       // 播放時間下限
     const ASSET_REPLAY_MAX_MS = 20000;                      // 播放時間上限
     const ASSET_REPLAY_MAX_PARTICLES = 400;                 // 粒子總數上限
+    const ASSET_REPLAY_BURST_RESERVE = 160;                 // 保留給煙火火花的配額
     const ASSET_REPLAY_MAX_DPR = 2;                         // devicePixelRatio 上限
     /* 同一筆有多個事件時只顯示優先度最高者：
        最後一筆 > 收復前高 > 大跌 > 整數關卡 > 谷底 > 跨年 > 台股大漲大跌 > 備註 */
@@ -5250,6 +5262,145 @@ Build the wall first. Attack second.`)}
         return best;
     };
 
+    /* ── 第 2 輪新增的純函式：補間、閃電路徑、結尾總結 ──────────────
+       同樣不依賴 React 與元件內變數，見 tests/verify-replay.js。 */
+
+    // 線性內插；t 夾在 0～1，t 非數值回傳 a，端點非數值回傳 0
+    const replayLerp = (a, b, t) => {
+        const av = Number(a), bv = Number(b), tv = Number(t);
+        if (!Number.isFinite(av) || !Number.isFinite(bv)) return 0;
+        if (!Number.isFinite(tv)) return av;
+        const tc = tv < 0 ? 0 : (tv > 1 ? 1 : tv);
+        return av + (bv - av) * tc;
+    };
+
+    /* 連續進度 → 已抵達的索引 i 與「到下一筆」的比例 frac。
+       越界一律夾回序列範圍；抵達最後一筆之後 frac 固定 0（沒有下一筆可補間）。 */
+    const replayProgress = (prog, n) => {
+        const len = Math.max(0, Math.floor(Number(n) || 0));
+        if (len <= 1) return { i: 0, frac: 0 };
+        const p = Number(prog);
+        if (!Number.isFinite(p) || p <= 0) return { i: 0, frac: 0 };
+        if (p >= len - 1) return { i: len - 1, frac: 0 };
+        const i = Math.floor(p);
+        return { i: i, frac: p - i };
+    };
+
+    /* 大跌級距 → 閃電規格。
+       −10%：1 道、輕震；−20%：連劈 2 道、震動加強；
+       −30%：3 道且帶 1～2 條分岔、殘留電弧 400ms、長震動。 */
+    const replayBoltSpec = (tier) => {
+        const t = Number(tier) || 0;
+        if (t >= 0.30) return { bolts: 3, branches: 2, gapMs: 150, shakeMs: 700, arcMs: 400, level: 3 };
+        if (t >= 0.20) return { bolts: 2, branches: 0, gapMs: 150, shakeMs: 420, arcMs: 0, level: 2 };
+        return { bolts: 1, branches: 0, gapMs: 0, shakeMs: 260, arcMs: 0, level: 1 };
+    };
+
+    /* 閃電路徑（中點位移法）。rnd 可注入，測試時給固定值即為確定性輸出。
+       · 起點釘在 (x0,y0)、終點釘在 (x1,y1)，不受夾擠影響
+       · 每遞迴一層，垂直於線段的抖動幅度減半
+       · 中間點夾在 0～opts.w / 0～opts.h 之內
+       · opts.branches 為分岔上限，實際產生 1～上限條（上限 0 則不分岔） */
+    const buildLightningPath = (x0, y0, x1, y1, opts, rnd) => {
+        const o = opts || {};
+        const wRaw = Number(o.w), hRaw = Number(o.h);
+        const w = Number.isFinite(wRaw) ? wRaw : Infinity;
+        const h = Number.isFinite(hRaw) ? hRaw : Infinity;
+        const depth = Math.max(0, Math.min(6, Math.floor(Number(o.depth) || 0)));
+        const spread = Number(o.spread) || 0;
+        const r = typeof rnd === 'function' ? rnd : Math.random;
+        const clampX = (v) => Math.max(0, Math.min(w, v));
+        const clampY = (v) => Math.max(0, Math.min(h, v));
+
+        let pts = [{ x: x0, y: y0 }, { x: x1, y: y1 }];
+        for (let d = 0; d < depth; d++) {
+            const amp = spread / Math.pow(2, d);
+            const next = [pts[0]];
+            for (let k = 1; k < pts.length; k++) {
+                const a = pts[k - 1], b = pts[k];
+                const dx = b.x - a.x, dy = b.y - a.y;
+                const len = Math.sqrt(dx * dx + dy * dy) || 1;
+                const off = (r() - 0.5) * 2 * amp;
+                next.push({
+                    x: clampX((a.x + b.x) / 2 + (-dy / len) * off),
+                    y: clampY((a.y + b.y) / 2 + (dx / len) * off)
+                });
+                next.push(b);
+            }
+            pts = next;
+        }
+        pts[0] = { x: x0, y: y0 };
+        pts[pts.length - 1] = { x: x1, y: y1 };
+
+        const maxBr = Math.max(0, Math.floor(Number(o.branches) || 0));
+        const branches = [];
+        if (maxBr > 0 && pts.length >= 3) {
+            const count = Math.max(1, Math.min(maxBr, 1 + Math.floor(r() * maxBr)));
+            for (let b = 0; b < count; b++) {
+                const at = 1 + Math.floor(r() * (pts.length - 2));
+                const from = pts[at];
+                const sideLen = (spread || 20) * (0.8 + r());
+                const dir = r() < 0.5 ? -1 : 1;
+                branches.push([
+                    { x: from.x, y: from.y },
+                    { x: clampX(from.x + dir * sideLen * 0.7), y: clampY(from.y + sideLen * 0.6) }
+                ]);
+            }
+        }
+        return { points: pts, branches: branches };
+    };
+
+    /* 結尾總結面板的數字。只吃已產生的 series 與 events，不重推事件。
+       · years／months：日曆月差；訖日的「日」小於起日的「日」就不滿一個月
+       · peakCount（創歷史新高次數）：第 2 筆起超越「它之前的最高值」的次數，
+         第一筆本身不算「創新高」
+       · survivedCount（撐過 ≥10% 回檔次數）：recover 事件數——回檔達 10%
+         門檻後又收復前高才算撐過，淺回檔與尚未收復的都不計
+       · deepestDd：全序列對「當下前高」的最大回檔 */
+    const buildReplaySummary = (series, events) => {
+        const n = Array.isArray(series) ? series.length : 0;
+        if (n < 2) {
+            return {
+                fromTs: 0, toTs: 0, years: 0, months: 0, days: 0,
+                firstValue: 0, lastValue: 0, deltaWan: 0, pct: 0,
+                deepestDd: 0, peakCount: 0, survivedCount: 0
+            };
+        }
+        const a = new Date(series[0].ts), b = new Date(series[n - 1].ts);
+        let months = (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth());
+        if (b.getDate() < a.getDate()) months -= 1;
+        if (months < 0) months = 0;
+
+        let peak = series[0].value, deepest = 0, peakCount = 0;
+        for (let i = 0; i < n; i++) {
+            const v = series[i].value;
+            if (i > 0 && v > peak) peakCount += 1;
+            if (v > peak) peak = v;
+            if (peak > 0) {
+                const dd = (peak - v) / peak;
+                if (dd > deepest) deepest = dd;
+            }
+        }
+        let survived = 0;
+        if (Array.isArray(events)) {
+            for (let i = 0; i < events.length; i++) {
+                const list = events[i];
+                if (!Array.isArray(list)) continue;
+                for (let k = 0; k < list.length; k++) if (list[k].type === 'recover') survived += 1;
+            }
+        }
+        const first = series[0].value, last = series[n - 1].value;
+        return {
+            fromTs: series[0].ts, toTs: series[n - 1].ts,
+            years: Math.floor(months / 12), months: months % 12,
+            days: replayDayDiff(series[0].ts, series[n - 1].ts),
+            firstValue: first, lastValue: last,
+            deltaWan: Math.round((last - first) / 10000),
+            pct: first > 0 ? (last - first) / first * 100 : 0,
+            deepestDd: deepest, peakCount: peakCount, survivedCount: survived
+        };
+    };
+
     /* ===================================================================
        資產回放（ASSET）｜全螢幕動畫視窗
        純讀取：只吃 AssetTerminal 已載入的 data，不發任何請求、不寫入後端。
@@ -5262,10 +5413,49 @@ Build the wall first. Attack second.`)}
     const REPLAY_BOLT = '#BFD8FF';        // 大跌字卡主字（＝日後閃電核心色）
     const REPLAY_BOLT_GLOW = '#7AA2FF';   // 大跌字卡光暈（＝日後閃電外暈色）
 
+    const REPLAY_RAIN = 'rgba(176,198,230,0.55)';   // 回檔雨絲
+
+    /* 畫布的實際像素尺寸：全檔只有這裡讀 devicePixelRatio，一律經過上限夾擠。
+       回傳 null 表示這一幀還沒有版型（寬或高為 0），不要畫。 */
+    const replayFitCanvas = (cv) => {
+        if (!cv) return null;
+        const dpr = replayDpr(window.devicePixelRatio);
+        const w = cv.clientWidth, h = cv.clientHeight;
+        if (!w || !h) return null;
+        const pw = Math.round(w * dpr), ph = Math.round(h * dpr);
+        if (cv.width !== pw || cv.height !== ph) { cv.width = pw; cv.height = ph; }
+        const ctx = cv.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, w, h);
+        return { ctx: ctx, w: w, h: h, dpr: dpr };
+    };
+
+    /* 折線的座標換算：折線 canvas 與特效 canvas 共用同一組 X／Y，
+       特效只要再加上兩個畫布的位移，就會對在折線頭上（工單 C）。 */
+    const replayGeom = (w, h, series) => {
+        const padL = 10, padR = 10, padT = 16, padB = 26;
+        const t0 = series[0].ts, tN = series[series.length - 1].ts;
+        const span = Math.max(1, tN - t0);
+        let lo = Infinity, hi = -Infinity;
+        for (let k = 0; k < series.length; k++) {
+            if (series[k].value < lo) lo = series[k].value;
+            if (series[k].value > hi) hi = series[k].value;
+        }
+        if (!(hi > lo)) hi = lo + 1;
+        const range = (hi - lo) * 1.12;
+        const base = lo - (hi - lo) * 0.06;
+        return {
+            padL: padL, padR: padR, padT: padT, padB: padB, t0: t0, tN: tN,
+            xAt: (ts) => padL + (ts - t0) / span * (w - padL - padR),
+            yAt: (v) => padT + (1 - (v - base) / range) * (h - padT - padB)
+        };
+    };
+
     const AssetReplayModal = ({ rows, onClose }) => {
         const series = useMemo(() => toReplaySeries(rows), [rows]);
         const events = useMemo(() => buildReplayEvents(series), [series]);
         const gaps = useMemo(() => buildReplayGaps(series), [series]);
+        const summary = useMemo(() => buildReplaySummary(series, events), [series, events]);
         const enough = series.length >= 2;
         const reduced = useMemo(() => !!(typeof window !== 'undefined' && window.matchMedia
             && window.matchMedia('(prefers-reduced-motion: reduce)').matches), []);
@@ -5273,12 +5463,40 @@ Build the wall first. Attack second.`)}
         const lastIdx = Math.max(0, series.length - 1);
         const [idx, setIdx] = useState(reduced ? lastIdx : 0);
         const [card, setCard] = useState(null);
-        const [shake, setShake] = useState(false);
+        const [shakeLv, setShakeLv] = useState(0);
         const [playing, setPlaying] = useState(enough && !reduced);
+        const [paused, setPaused] = useState(false);
+        const [showSummary, setShowSummary] = useState(reduced && enough);
         const [runId, setRunId] = useState(0);
+
         const lineRef = useRef(null);
         const fxRef = useRef(null);
-        const partsRef = useRef([]);
+        const flashElRef = useRef(null);
+        const dimElRef = useRef(null);
+        const bigRef = useRef(null);
+        const pctRef = useRef(null);
+        const cumRef = useRef(null);
+
+        const partsRef = useRef([]);          // 火花／雨絲／紙屑（共用上限與清理）
+        const rocketsRef = useRef([]);        // 升空中的煙火彈
+        const pendingRocketsRef = useRef([]); // 排程中的煙火彈（結尾連發）
+        const ringsRef = useRef([]);          // 折線頭的金色光環
+        const boltsRef = useRef([]);          // 已劈下的閃電
+        const pendingBoltsRef = useRef([]);   // 排程中的連劈
+        const farBoltRef = useRef(null);      // 台股跌點的遠方閃電
+        const goldLineRef = useRef(null);     // 關卡的短暫金線
+        const flashUntilRef = useRef(0);      // 白閃到何時
+        const dimUntilRef = useRef(0);        // 壓暗到何時
+        const paperUntilRef = useRef(0);      // 紙屑雨到何時
+        const rainRef = useRef(false);        // 回檔氣氛開關
+        const rainAlphaRef = useRef(0);       // 暗角／雨量的漸變
+        const peakRef = useRef(0);            // 已抵達的前高（不用內插值）
+        const progRef = useRef(0);            // 連續進度（可為小數）
+        const pausedRef = useRef(false);
+        const headRef = useRef({ x: 0, y: 0, ok: false });   // 折線頭在特效畫布的座標
+        const timersRef = useRef([]);
+
+        useEffect(() => { pausedRef.current = paused; }, [paused]);
 
         // Esc 關閉
         useEffect(() => {
@@ -5294,211 +5512,598 @@ Build the wall first. Attack second.`)}
             return () => { document.body.style.overflow = prev; };
         }, []);
 
-        // 播放主迴圈
+        /* 大字總資產／較第一筆％／累積萬數直接寫 DOM：
+           這三個要每一格都更新，走 React state 等於 60fps 重繪整個元件。 */
+        const writeHead = (val) => {
+            const first = series.length ? series[0].value : 0;
+            const pct = first > 0 ? (val - first) / first * 100 : 0;
+            const wan = Math.round((val - first) / 10000);
+            if (bigRef.current) bigRef.current.textContent = Math.round(val).toLocaleString();
+            if (pctRef.current) {
+                pctRef.current.textContent = (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%';
+                pctRef.current.style.color = pct >= 0 ? REPLAY_RED : REPLAY_GREEN;
+            }
+            if (cumRef.current) {
+                cumRef.current.textContent = '累積 ' + (wan >= 0 ? '+' : '−')
+                    + Math.abs(wan).toLocaleString() + ' 萬';
+            }
+        };
+
+        // 粒子生成一律經過上限檢查（工單 I 沿用）
+        /* reserve：背景型粒子（雨絲、紙屑）要留配額給煙火火花，
+           否則結尾的紙屑雨會先把 400 顆吃光，煙火就一顆火花都生不出來。
+           總數上限仍由 replaySpawnCount 把關，reserve 只是再收一層。 */
+        const pushParts = (count, make, reserve) => {
+            const room = replaySpawnCount(partsRef.current.length, count);
+            const keep = Math.max(0, ASSET_REPLAY_MAX_PARTICLES
+                - (Number(reserve) || 0) - partsRef.current.length);
+            const n = Math.min(room, keep);
+            for (let k = 0; k < n; k++) partsRef.current.push(make(k));
+        };
+
+        const spawnBurst = (count, x, y, colors) => {
+            const palette = colors || [REPLAY_GOLD, REPLAY_RED, REPLAY_GREEN, '#FFFFFF'];
+            pushParts(count, (k) => {
+                const a = Math.random() * Math.PI * 2;
+                const sp = 2 + Math.random() * 4.5;
+                return {
+                    kind: 'spark', x: x, y: y,
+                    vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1.2,
+                    life: 1, decay: 0.012, color: palette[k % palette.length],
+                    size: 1.5 + Math.random() * 2.5, spin: (Math.random() - 0.5) * 0.3
+                };
+            });
+        };
+
+        // 播放＋繪製主迴圈（折線、特效、頭部數字都在同一幀算，座標才會一致）
         useEffect(() => {
             if (!enough || reduced) return;
             const n = series.length;
             const perPoint = calcReplayDuration(n) / (n - 1);
-            let raf = 0, last = 0, acc = 0, i = 0, hold = 0, dead = false;
-            const timers = [];   // 震動復原用的 timeout，卸載／重播時一併清掉
+            let raf = 0, last = 0, hold = 0, dead = false, fired = 0, done = false;
+            const timers = timersRef.current;
+
+            progRef.current = 0;
+            peakRef.current = series[0].value;
+            rainRef.current = false;
+            rainAlphaRef.current = 0;
             setIdx(0);
             setPlaying(true);
-            const first = pickReplayEvent(events[0]);
-            setCard(first);
-            if (first) hold = ASSET_REPLAY_EVENT_HOLD_MS;
+            setShowSummary(false);
+
+            const addTimer = (fn, ms) => { timers.push(window.setTimeout(fn, ms)); };   // 震動復原等 timeout 一律登記
+
+            const strike = (spec, now) => {
+                const cv = fxRef.current;
+                const hd = headRef.current;
+                if (!cv || !hd.ok) return;
+                const w = cv.clientWidth, h = cv.clientHeight;
+                const x0 = w * 0.1 + Math.random() * w * 0.8;
+                const path = buildLightningPath(x0, 0, hd.x, hd.y, {
+                    w: w, h: h, depth: 5,
+                    spread: Math.min(90, w * 0.22), branches: spec.branches
+                }, Math.random);
+                boltsRef.current.push({
+                    path: path, born: now, ttl: 240,
+                    arcUntil: now + spec.arcMs, x: hd.x, y: hd.y
+                });
+                flashUntilRef.current = Math.max(flashUntilRef.current, now + 80);
+                dimUntilRef.current = Math.max(dimUntilRef.current, now + 80 + 240);
+            };
+
+            // 抵達第 j 筆時觸發：回傳是否要停留
+            const fire = (j, now) => {
+                const v = series[j].value;
+                const prevPeak = peakRef.current;
+                if (v >= prevPeak) {
+                    peakRef.current = v;
+                    rainRef.current = false;
+                } else if (prevPeak > 0
+                    && (prevPeak - v) / prevPeak >= ASSET_REPLAY_SEGMENT_MIN_DRAWDOWN) {
+                    rainRef.current = true;
+                }
+
+                const ev = pickReplayEvent(events[j]);
+                setCard(ev && ev.type === 'final' ? null : ev);
+                if (!ev) return false;
+                const hd = headRef.current;
+
+                if (ev.type === 'crash') {
+                    const spec = replayBoltSpec(ev.tier);
+                    for (let k = 0; k < spec.bolts; k++) {
+                        pendingBoltsRef.current.push({ at: now + k * spec.gapMs, spec: spec });
+                    }
+                    setShakeLv(spec.level);
+                    addTimer(() => setShakeLv(0), spec.shakeMs);
+                } else if (ev.type === 'market' && ev.points < 0) {
+                    // 遠方閃電：細、淡、不震動、不白閃
+                    const cv = fxRef.current;
+                    if (cv) {
+                        const w = cv.clientWidth, h = cv.clientHeight;
+                        const sx = w * 0.08 + Math.random() * w * 0.84;
+                        farBoltRef.current = {
+                            path: buildLightningPath(sx, 0, sx + (Math.random() - 0.5) * w * 0.2,
+                                h * (0.3 + Math.random() * 0.25),
+                                { w: w, h: h, depth: 4, spread: 26, branches: 0 }, Math.random),
+                            born: now, ttl: 420
+                        };
+                    }
+                } else if (ev.type === 'milestone') {
+                    goldLineRef.current = { value: ev.level, until: now + 1400 };
+                    if (hd.ok) {
+                        ringsRef.current.push({ x: hd.x, y: hd.y, born: now, ttl: 760 });
+                        rocketsRef.current.push({
+                            x: hd.x, y: (fxRef.current ? fxRef.current.clientHeight : 600),
+                            vy: -7.5 - Math.random() * 2, targetY: Math.max(12, hd.y - 60)
+                        });
+                    }
+                } else if (ev.type === 'recover') {
+                    // 前高金線碎成金色火花，雨停
+                    rainRef.current = false;
+                    const cv = fxRef.current;
+                    if (cv && hd.ok) {
+                        const w = cv.clientWidth;
+                        pushParts(60, () => {
+                            const px = Math.random() * w;
+                            return {
+                                kind: 'spark', x: px, y: hd.y,
+                                vx: (Math.random() - 0.5) * 3, vy: -1 - Math.random() * 2.5,
+                                life: 1, decay: 0.016, color: REPLAY_GOLD,
+                                size: 1 + Math.random() * 1.8, spin: (Math.random() - 0.5) * 0.4
+                            };
+                        });
+                    }
+                } else if (ev.type === 'final') {
+                    const cv = fxRef.current;
+                    const w = cv ? cv.clientWidth : 360;
+                    const h = cv ? cv.clientHeight : 640;
+                    const shots = 3 + Math.floor(Math.random() * 3);   // 3～5 發
+                    for (let k = 0; k < shots; k++) {
+                        pendingRocketsRef.current.push({
+                            at: now + k * (1500 / shots),
+                            x: w * (0.18 + 0.64 * (k + 0.5) / shots),
+                            targetY: h * (0.22 + Math.random() * 0.2)
+                        });
+                    }
+                    paperUntilRef.current = now + 1500;
+                    setShowSummary(true);
+                }
+                return true;
+            };
+
+            // ── 繪製：折線 ─────────────────────────────────────────
+            const drawLine = (prog) => {
+                const cv = lineRef.current;
+                const fit = replayFitCanvas(cv);
+                if (!fit) return null;
+                const ctx = fit.ctx, w = fit.w, h = fit.h;
+
+                const g = replayGeom(w, h, series);
+                const pr = replayProgress(prog, series.length);
+                const i = pr.i;
+                const nextP = i < series.length - 1 ? series[i + 1] : series[i];
+                const headTs = replayLerp(series[i].ts, nextP.ts, pr.frac);
+                const headVal = replayLerp(series[i].value, nextP.value, pr.frac);
+                const hx = g.xAt(headTs), hy = g.yAt(headVal);
+
+                // 下方漸層填色（含補間中的那一小段）
+                if (i > 0 || pr.frac > 0) {
+                    const grad = ctx.createLinearGradient(0, g.padT, 0, h - g.padB);
+                    grad.addColorStop(0, 'rgba(255,59,71,0.34)');
+                    grad.addColorStop(1, 'rgba(255,59,71,0)');
+                    ctx.beginPath();
+                    ctx.moveTo(g.xAt(series[0].ts), h - g.padB);
+                    for (let k = 0; k <= i; k++) ctx.lineTo(g.xAt(series[k].ts), g.yAt(series[k].value));
+                    ctx.lineTo(hx, hy);
+                    ctx.lineTo(hx, h - g.padB);
+                    ctx.closePath();
+                    ctx.fillStyle = grad;
+                    ctx.fill();
+                }
+
+                // 線段：空檔畫虛線；最後一段只畫到折線頭
+                ctx.lineWidth = 2;
+                ctx.lineJoin = 'round';
+                ctx.lineCap = 'round';
+                ctx.shadowColor = REPLAY_RED;
+                ctx.shadowBlur = 12;
+                for (let k = 1; k <= i; k++) {
+                    const isGap = gaps.indexOf(k) >= 0;
+                    ctx.beginPath();
+                    ctx.setLineDash(isGap ? [5, 5] : []);
+                    ctx.strokeStyle = isGap ? 'rgba(255,59,71,0.45)' : REPLAY_RED;
+                    ctx.moveTo(g.xAt(series[k - 1].ts), g.yAt(series[k - 1].value));
+                    ctx.lineTo(g.xAt(series[k].ts), g.yAt(series[k].value));
+                    ctx.stroke();
+                }
+                if (pr.frac > 0) {
+                    const isGap = gaps.indexOf(i + 1) >= 0;
+                    ctx.beginPath();
+                    ctx.setLineDash(isGap ? [5, 5] : []);
+                    ctx.strokeStyle = isGap ? 'rgba(255,59,71,0.45)' : REPLAY_RED;
+                    ctx.moveTo(g.xAt(series[i].ts), g.yAt(series[i].value));
+                    ctx.lineTo(hx, hy);
+                    ctx.stroke();
+                }
+                ctx.setLineDash([]);
+                ctx.shadowBlur = 0;
+
+                // 空檔標註：貼著 X 軸放，避開中央字卡與折線
+                ctx.font = '10px ui-monospace, monospace';
+                ctx.textAlign = 'center';
+                for (let gi = 0; gi < gaps.length; gi++) {
+                    const k = gaps[gi];
+                    if (k > i) continue;
+                    const mx = (g.xAt(series[k - 1].ts) + g.xAt(series[k].ts)) / 2;
+                    ctx.save();
+                    ctx.setLineDash([3, 4]);
+                    ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.moveTo(mx, g.padT);
+                    ctx.lineTo(mx, h - g.padB - 12);
+                    ctx.stroke();
+                    ctx.restore();
+                    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                    ctx.fillText('無紀錄', mx, h - g.padB - 2);
+                }
+
+                // 回檔氣氛：前高金色虛線
+                if (rainAlphaRef.current > 0.02 && peakRef.current > 0) {
+                    const py = g.yAt(peakRef.current);
+                    ctx.save();
+                    ctx.globalAlpha = Math.min(1, rainAlphaRef.current);
+                    ctx.setLineDash([6, 5]);
+                    ctx.strokeStyle = REPLAY_GOLD;
+                    ctx.lineWidth = 1.2;
+                    ctx.beginPath();
+                    ctx.moveTo(g.padL, py);
+                    ctx.lineTo(w - g.padR, py);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    ctx.fillStyle = REPLAY_GOLD;
+                    ctx.textAlign = 'left';
+                    ctx.fillText('前高 ' + Math.round(peakRef.current / 10000).toLocaleString() + ' 萬',
+                        g.padL + 2, Math.max(g.padT + 9, py - 4));
+                    ctx.restore();
+                }
+
+                // 關卡的短暫金色水平線
+                const gl = goldLineRef.current;
+                if (gl && gl.until > (window.performance ? performance.now() : Date.now())) {
+                    const ly = g.yAt(gl.value);
+                    ctx.save();
+                    ctx.globalAlpha = 0.85;
+                    ctx.strokeStyle = REPLAY_GOLD;
+                    ctx.lineWidth = 1.6;
+                    ctx.shadowColor = REPLAY_GOLD;
+                    ctx.shadowBlur = 10;
+                    ctx.beginPath();
+                    ctx.moveTo(Math.max(g.padL, hx - 70), ly);
+                    ctx.lineTo(Math.min(w - g.padR, hx + 70), ly);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+
+                // 折線頭
+                ctx.beginPath();
+                ctx.fillStyle = REPLAY_RED;
+                ctx.shadowColor = REPLAY_RED;
+                ctx.shadowBlur = 16;
+                ctx.arc(hx, hy, 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+
+                // X 軸兩端日期
+                ctx.fillStyle = 'rgba(255,255,255,0.45)';
+                ctx.textAlign = 'left';
+                ctx.fillText(formatYMD(new Date(g.t0)), g.padL, h - 8);
+                ctx.textAlign = 'right';
+                ctx.fillText(formatYMD(new Date(g.tN)), w - g.padR, h - 8);
+
+                writeHead(headVal);
+                return { x: hx, y: hy, cv: cv };
+            };
+
+            // ── 繪製：特效（錨點＝折線頭換算到特效畫布的座標） ─────
+            const strokePath = (ctx, pts, width, color, blur) => {
+                ctx.beginPath();
+                ctx.moveTo(pts[0].x, pts[0].y);
+                for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k].x, pts[k].y);
+                ctx.lineWidth = width;
+                ctx.strokeStyle = color;
+                ctx.shadowColor = color;
+                ctx.shadowBlur = blur;
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+            };
+
+            const drawFx = (now, dt) => {
+                const fit = replayFitCanvas(fxRef.current);
+                if (!fit) return;
+                const ctx = fit.ctx, w = fit.w, h = fit.h;
+
+                // 回檔氣氛的濃度漸變
+                const want = rainRef.current ? 1 : 0;
+                const step = dt / 600;
+                rainAlphaRef.current = want > rainAlphaRef.current
+                    ? Math.min(1, rainAlphaRef.current + step)
+                    : Math.max(0, rainAlphaRef.current - step);
+                const mood = rainAlphaRef.current;
+
+                // 暗角
+                if (mood > 0.02) {
+                    const vg = ctx.createRadialGradient(w / 2, h * 0.45, Math.min(w, h) * 0.25,
+                        w / 2, h * 0.45, Math.max(w, h) * 0.75);
+                    vg.addColorStop(0, 'rgba(0,0,0,0)');
+                    vg.addColorStop(1, 'rgba(0,0,0,' + (0.72 * mood).toFixed(3) + ')');
+                    ctx.fillStyle = vg;
+                    ctx.fillRect(0, 0, w, h);
+                }
+
+                // 雨絲
+                if (mood > 0.3) {
+                    pushParts(Math.round(3 * mood), () => ({
+                        kind: 'rain', x: Math.random() * w, y: -12,
+                        vx: -0.6, vy: 9 + Math.random() * 4,
+                        life: 1, decay: 0.02, color: REPLAY_RAIN,
+                        size: 7 + Math.random() * 7, spin: 0
+                    }), ASSET_REPLAY_BURST_RESERVE);
+                }
+
+                // 紙屑雨（結尾）
+                if (paperUntilRef.current > now) {
+                    pushParts(4, (k) => ({
+                        kind: 'paper', x: Math.random() * w, y: -14,
+                        vx: (Math.random() - 0.5) * 1.6, vy: 1.4 + Math.random() * 1.6,
+                        life: 1, decay: 0.0055,
+                        color: [REPLAY_GOLD, REPLAY_RED, REPLAY_GREEN, '#FFFFFF'][k % 4],
+                        size: 2 + Math.random() * 2.5, spin: (Math.random() - 0.5) * 0.5
+                    }), ASSET_REPLAY_BURST_RESERVE);
+                }
+
+                // 排程中的連劈與結尾煙火
+                for (let k = pendingBoltsRef.current.length - 1; k >= 0; k--) {
+                    if (pendingBoltsRef.current[k].at <= now) {
+                        strike(pendingBoltsRef.current[k].spec, now);
+                        pendingBoltsRef.current.splice(k, 1);
+                    }
+                }
+                for (let k = pendingRocketsRef.current.length - 1; k >= 0; k--) {
+                    const r = pendingRocketsRef.current[k];
+                    if (r.at <= now) {
+                        rocketsRef.current.push({
+                            x: r.x, y: h, vy: -7.5 - Math.random() * 2, targetY: r.targetY
+                        });
+                        pendingRocketsRef.current.splice(k, 1);
+                    }
+                }
+
+                // 煙火彈：由底部升空，到定點才炸開
+                for (let k = rocketsRef.current.length - 1; k >= 0; k--) {
+                    const r = rocketsRef.current[k];
+                    r.y += r.vy;
+                    r.vy += 0.06;
+                    ctx.save();
+                    ctx.globalAlpha = 0.9;
+                    ctx.fillStyle = REPLAY_GOLD;
+                    ctx.shadowColor = REPLAY_GOLD;
+                    ctx.shadowBlur = 12;
+                    ctx.fillRect(r.x - 1, r.y - 6, 2, 12);
+                    ctx.restore();
+                    if (r.y <= r.targetY || r.vy >= 0) {
+                        spawnBurst(50, r.x, r.y);
+                        rocketsRef.current.splice(k, 1);
+                    }
+                }
+
+                // 金色光環：由折線頭擴散
+                for (let k = ringsRef.current.length - 1; k >= 0; k--) {
+                    const rg = ringsRef.current[k];
+                    const p = (now - rg.born) / rg.ttl;
+                    if (p >= 1) { ringsRef.current.splice(k, 1); continue; }
+                    ctx.save();
+                    ctx.globalAlpha = 1 - p;
+                    ctx.strokeStyle = REPLAY_GOLD;
+                    ctx.lineWidth = 2.5 * (1 - p) + 0.5;
+                    ctx.shadowColor = REPLAY_GOLD;
+                    ctx.shadowBlur = 14;
+                    ctx.beginPath();
+                    ctx.arc(rg.x, rg.y, 8 + p * 90, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+
+                // 遠方閃電（台股跌點）：細、淡、不震動
+                const fb = farBoltRef.current;
+                if (fb) {
+                    const p = (now - fb.born) / fb.ttl;
+                    if (p >= 1) farBoltRef.current = null;
+                    else {
+                        ctx.save();
+                        ctx.globalAlpha = 0.3 * (1 - p);
+                        strokePath(ctx, fb.path.points, 1, REPLAY_BOLT_GLOW, 8);
+                        ctx.restore();
+                    }
+                }
+
+                // 閃電：白色核心＋藍紫外暈，落點殘留電弧
+                for (let k = boltsRef.current.length - 1; k >= 0; k--) {
+                    const bl = boltsRef.current[k];
+                    const p = (now - bl.born) / bl.ttl;
+                    const arcLeft = bl.arcUntil - now;
+                    if (p >= 1 && arcLeft <= 0) { boltsRef.current.splice(k, 1); continue; }
+                    if (p < 1) {
+                        const a = 1 - p;
+                        ctx.save();
+                        ctx.globalAlpha = a * 0.55;
+                        strokePath(ctx, bl.path.points, 7, REPLAY_BOLT_GLOW, 26);
+                        ctx.globalAlpha = a;
+                        strokePath(ctx, bl.path.points, 2.2, '#FFFFFF', 14);
+                        for (let b = 0; b < bl.path.branches.length; b++) {
+                            ctx.globalAlpha = a * 0.75;
+                            strokePath(ctx, bl.path.branches[b], 1.4, REPLAY_BOLT, 10);
+                        }
+                        ctx.restore();
+                    }
+                    if (arcLeft > 0) {
+                        ctx.save();
+                        ctx.globalAlpha = 0.35 + 0.35 * Math.random();
+                        ctx.strokeStyle = REPLAY_BOLT;
+                        ctx.shadowColor = REPLAY_BOLT_GLOW;
+                        ctx.shadowBlur = 12;
+                        ctx.lineWidth = 1.2;
+                        for (let s = 0; s < 3; s++) {
+                            ctx.beginPath();
+                            ctx.moveTo(bl.x, bl.y);
+                            ctx.lineTo(bl.x + (Math.random() - 0.5) * 26, bl.y + (Math.random() - 0.5) * 26);
+                            ctx.stroke();
+                        }
+                        ctx.restore();
+                    }
+                }
+
+                // 粒子：火花／雨絲／紙屑共用同一個陣列與上限
+                const ps = partsRef.current;
+                for (let k = ps.length - 1; k >= 0; k--) {
+                    const p = ps[k];
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    if (p.kind === 'spark') { p.vy += 0.09; p.vx *= 0.99; }
+                    p.life -= p.decay;
+                    if (p.life <= 0 || p.y > h + 24) { ps.splice(k, 1); continue; }
+                    ctx.globalAlpha = Math.max(0, p.life);
+                    if (p.kind === 'rain') {
+                        ctx.strokeStyle = p.color;
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.moveTo(p.x, p.y);
+                        ctx.lineTo(p.x + p.vx * 1.2, p.y + p.size);
+                        ctx.stroke();
+                    } else {
+                        ctx.fillStyle = p.color;
+                        ctx.save();
+                        ctx.translate(p.x, p.y);
+                        ctx.rotate(p.spin * (1 - p.life) * 12);
+                        ctx.fillRect(-p.size, -p.size * 0.5, p.size * 2, p.size);
+                        ctx.restore();
+                    }
+                }
+                ctx.globalAlpha = 1;
+
+                // 白閃與隨後的壓暗：直接寫 DOM 的 opacity，不走 state
+                if (flashElRef.current) {
+                    const left = flashUntilRef.current - now;
+                    flashElRef.current.style.opacity = left > 0 ? String(Math.min(0.85, left / 80 * 0.85)) : '0';
+                }
+                if (dimElRef.current) {
+                    const left = dimUntilRef.current - now;
+                    const on = left > 0 && flashUntilRef.current - now <= 0;
+                    dimElRef.current.style.opacity = on ? String(Math.min(0.45, left / 240 * 0.45)) : '0';
+                }
+            };
 
             const tick = (t) => {
                 if (dead) return;
                 if (!last) last = t;
-                const dt = t - last;
+                let dt = t - last;
                 last = t;
-                if (hold > 0) {
-                    hold -= dt;
-                    raf = requestAnimationFrame(tick);
-                    return;
-                }
-                if (i >= n - 1) { setPlaying(false); return; }
-                acc += dt;
-                while (acc >= perPoint && i < n - 1) {
-                    acc -= perPoint;
-                    i += 1;
-                    setIdx(i);
-                    const ev = pickReplayEvent(events[i]);
-                    setCard(ev);
-                    if (ev) {
-                        hold = ASSET_REPLAY_EVENT_HOLD_MS;
-                        if (ev.type === 'crash') {
-                            setShake(true);
-                            timers.push(window.setTimeout(() => setShake(false), 360));
+                if (dt > 100) dt = 100;   // 切到背景分頁回來不要一次暴衝
+
+                if (!pausedRef.current && !done) {
+                    if (hold > 0) {
+                        hold -= dt;
+                    } else {
+                        progRef.current = Math.min(n - 1, progRef.current + dt / perPoint);
+                        const arrived = Math.floor(progRef.current + 1e-9);
+                        while (fired < arrived) {
+                            fired += 1;
+                            progRef.current = fired;   // 抵達就停在該筆上，事件與座標才對得起來
+                            setIdx(fired);
+                            if (fire(fired, t)) { hold = ASSET_REPLAY_EVENT_HOLD_MS; break; }
                         }
-                        if (ev.type === 'milestone' || ev.type === 'recover' || ev.type === 'final') {
-                            spawnBurst(ev.type === 'final' ? 120 : 40);
+                        if (progRef.current >= n - 1 && fired >= n - 1) {
+                            done = true;
+                            setPlaying(false);
                         }
-                        break;
                     }
                 }
+
+                const head = drawLine(progRef.current);
+                if (head && fxRef.current) {
+                    const a = head.cv.getBoundingClientRect();
+                    const b = fxRef.current.getBoundingClientRect();
+                    headRef.current = { x: head.x + (a.left - b.left), y: head.y + (a.top - b.top), ok: true };
+                }
+                drawFx(t, dt);
                 raf = requestAnimationFrame(tick);
             };
+
+            /* 先畫一幀把折線頭的座標算出來，再觸發第一筆的事件；
+               否則 headRef 還是 ok:false，第 0 筆的錨點相依特效會被吞掉。 */
+            const head0 = drawLine(0);
+            if (head0 && fxRef.current) {
+                const a0 = head0.cv.getBoundingClientRect();
+                const b0 = fxRef.current.getBoundingClientRect();
+                headRef.current = { x: head0.x + (a0.left - b0.left), y: head0.y + (a0.top - b0.top), ok: true };
+            }
+            // 第一筆的事件照舊在開頭觸發
+            if (fire(0, window.performance ? performance.now() : 0)) hold = ASSET_REPLAY_EVENT_HOLD_MS;
             raf = requestAnimationFrame(tick);
+
             return () => {
                 dead = true;
                 cancelAnimationFrame(raf);
                 timers.forEach((id) => window.clearTimeout(id));
-                setShake(false);   // 播到一半關掉時，不讓震動狀態殘留到下次開啟
+                timersRef.current = [];
+                partsRef.current = [];
+                rocketsRef.current = [];
+                pendingRocketsRef.current = [];
+                ringsRef.current = [];
+                boltsRef.current = [];
+                pendingBoltsRef.current = [];
+                farBoltRef.current = null;
+                goldLineRef.current = null;
+                flashUntilRef.current = 0;
+                dimUntilRef.current = 0;
+                paperUntilRef.current = 0;
+                rainRef.current = false;
+                rainAlphaRef.current = 0;
+                setShakeLv(0);   // 播到一半關掉時，不讓震動狀態殘留到下次開啟
+                if (flashElRef.current) flashElRef.current.style.opacity = '0';
+                if (dimElRef.current) dimElRef.current.style.opacity = '0';
             };
-        }, [runId, enough, reduced, series, events]);
+        }, [runId, enough, reduced, series, events, gaps]);
 
-        // 煙火／紙屑：自行用 canvas 實作，不引入函式庫
-        const spawnBurst = (count) => {
-            const cv = fxRef.current;
-            if (!cv) return;
-            const w = cv.clientWidth, h = cv.clientHeight;
-            const cx = w / 2, cy = h * 0.42;
-            const palette = [REPLAY_GOLD, REPLAY_RED, REPLAY_GREEN, '#FFFFFF'];
-            const room = replaySpawnCount(partsRef.current.length, count);
-            for (let k = 0; k < room; k++) {
-                const a = Math.random() * Math.PI * 2;
-                const sp = 2 + Math.random() * 4.5;
-                partsRef.current.push({
-                    x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1.2,
-                    life: 1, color: palette[k % palette.length],
-                    size: 1.5 + Math.random() * 2.5, spin: (Math.random() - 0.5) * 0.3
-                });
-            }
-        };
-
-        // 粒子繪製迴圈
+        /* reduced-motion：不跑迴圈，只靜態畫出最後一格（無任何特效），
+           但總結面板照樣顯示（工單 G）。 */
         useEffect(() => {
-            if (reduced) return;
-            const cv = fxRef.current;
-            if (!cv) return;
-            let raf = 0, dead = false;
-            const draw = () => {
-                if (dead) return;
-                const dpr = replayDpr(window.devicePixelRatio);
-                const w = cv.clientWidth, h = cv.clientHeight;
-                if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
-                const ctx = cv.getContext('2d');
-                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-                ctx.clearRect(0, 0, w, h);
-                const ps = partsRef.current;
-                for (let k = ps.length - 1; k >= 0; k--) {
-                    const p = ps[k];
-                    p.x += p.vx; p.y += p.vy; p.vy += 0.09; p.vx *= 0.99;
-                    p.life -= 0.012;
-                    if (p.life <= 0) { ps.splice(k, 1); continue; }
-                    ctx.globalAlpha = Math.max(0, p.life);
-                    ctx.fillStyle = p.color;
-                    ctx.save();
-                    ctx.translate(p.x, p.y);
-                    ctx.rotate(p.spin * (1 - p.life) * 12);
-                    ctx.fillRect(-p.size, -p.size * 0.5, p.size * 2, p.size);
-                    ctx.restore();
-                }
-                ctx.globalAlpha = 1;
-                raf = requestAnimationFrame(draw);
-            };
-            raf = requestAnimationFrame(draw);
-            return () => { dead = true; cancelAnimationFrame(raf); partsRef.current = []; };
-        }, [reduced]);
-
-        // 折線：發光線＋下方漸層填色，由左至右畫到 idx
-        useEffect(() => {
-            const cv = lineRef.current;
-            if (!cv || !series.length) return;
-            const dpr = replayDpr(window.devicePixelRatio);
-            const w = cv.clientWidth, h = cv.clientHeight;
-            if (!w || !h) return;
-            if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
-            const ctx = cv.getContext('2d');
-            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            ctx.clearRect(0, 0, w, h);
-
-            const padL = 10, padR = 10, padT = 16, padB = 26;
-            const t0 = series[0].ts, tN = series[series.length - 1].ts;
-            const span = Math.max(1, tN - t0);
-            let lo = Infinity, hi = -Infinity;
-            for (let k = 0; k < series.length; k++) {
-                if (series[k].value < lo) lo = series[k].value;
-                if (series[k].value > hi) hi = series[k].value;
-            }
-            if (!(hi > lo)) { hi = lo + 1; }
-            const range = (hi - lo) * 1.12;
-            const base = lo - (hi - lo) * 0.06;
-            const X = (p) => padL + (p.ts - t0) / span * (w - padL - padR);
-            const Y = (p) => padT + (1 - (p.value - base) / range) * (h - padT - padB);
-
-            const upto = Math.min(idx, series.length - 1);
-
-            // 下方漸層填色
-            if (upto > 0) {
-                const g = ctx.createLinearGradient(0, padT, 0, h - padB);
-                g.addColorStop(0, 'rgba(255,59,71,0.34)');
-                g.addColorStop(1, 'rgba(255,59,71,0)');
-                ctx.beginPath();
-                ctx.moveTo(X(series[0]), h - padB);
-                for (let k = 0; k <= upto; k++) ctx.lineTo(X(series[k]), Y(series[k]));
-                ctx.lineTo(X(series[upto]), h - padB);
-                ctx.closePath();
-                ctx.fillStyle = g;
-                ctx.fill();
-            }
-
-            // 線段：空檔畫虛線
+            if (!reduced || !enough) return;
+            const fit = replayFitCanvas(lineRef.current);
+            if (!fit) return;
+            const ctx = fit.ctx, w = fit.w, h = fit.h;
+            const g = replayGeom(w, h, series);
             ctx.lineWidth = 2;
             ctx.lineJoin = 'round';
             ctx.lineCap = 'round';
-            ctx.shadowColor = REPLAY_RED;
-            ctx.shadowBlur = 12;
-            for (let k = 1; k <= upto; k++) {
+            for (let k = 1; k < series.length; k++) {
                 const isGap = gaps.indexOf(k) >= 0;
                 ctx.beginPath();
                 ctx.setLineDash(isGap ? [5, 5] : []);
                 ctx.strokeStyle = isGap ? 'rgba(255,59,71,0.45)' : REPLAY_RED;
-                ctx.moveTo(X(series[k - 1]), Y(series[k - 1]));
-                ctx.lineTo(X(series[k]), Y(series[k]));
+                ctx.moveTo(g.xAt(series[k - 1].ts), g.yAt(series[k - 1].value));
+                ctx.lineTo(g.xAt(series[k].ts), g.yAt(series[k].value));
                 ctx.stroke();
             }
             ctx.setLineDash([]);
-            ctx.shadowBlur = 0;
-
-            // 空檔標註：貼著 X 軸放，避開中央字卡與折線
             ctx.font = '10px ui-monospace, monospace';
-            ctx.textAlign = 'center';
-            for (let gi = 0; gi < gaps.length; gi++) {
-                const k = gaps[gi];
-                if (k > upto) continue;
-                const mx = (X(series[k - 1]) + X(series[k])) / 2;
-                ctx.save();
-                ctx.setLineDash([3, 4]);
-                ctx.strokeStyle = 'rgba(255,255,255,0.14)';
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-                ctx.moveTo(mx, padT);
-                ctx.lineTo(mx, h - padB - 12);
-                ctx.stroke();
-                ctx.restore();
-                ctx.fillStyle = 'rgba(255,255,255,0.5)';
-                ctx.fillText('無紀錄', mx, h - padB - 2);
-            }
-
-            // 當前點
-            const cur = series[upto];
-            ctx.beginPath();
-            ctx.fillStyle = REPLAY_RED;
-            ctx.shadowColor = REPLAY_RED;
-            ctx.shadowBlur = 16;
-            ctx.arc(X(cur), Y(cur), 4, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.shadowBlur = 0;
-
-            // X 軸兩端日期
             ctx.fillStyle = 'rgba(255,255,255,0.45)';
             ctx.textAlign = 'left';
-            ctx.fillText(formatYMD(new Date(t0)), padL, h - 8);
+            ctx.fillText(formatYMD(new Date(g.t0)), g.padL, h - 8);
             ctx.textAlign = 'right';
-            ctx.fillText(formatYMD(new Date(tN)), w - padR, h - 8);
-        }, [idx, series, gaps]);
+            ctx.fillText(formatYMD(new Date(g.tN)), w - g.padR, h - 8);
+            writeHead(series[series.length - 1].value);
+        }, [reduced, enough, series, gaps]);
 
         if (!enough) {
             return (
@@ -5514,7 +6119,8 @@ Build the wall first. Attack second.`)}
 
         const cur = series[idx];
         const first = series[0].value;
-        let peak = series[0].value;   // 播到目前為止的歷史高點
+        const pct = first > 0 ? (cur.value - first) / first * 100 : 0;
+        let peak = series[0].value;   // 播到目前為止的歷史高點（只算已抵達的紀錄）
         let deepest = 0;              // 播到目前為止的最深回檔
         for (let k = 0; k <= idx; k++) {
             if (series[k].value > peak) peak = series[k].value;
@@ -5523,8 +6129,6 @@ Build the wall first. Attack second.`)}
                 if (dd > deepest) deepest = dd;
             }
         }
-        const pct = first > 0 ? (cur.value - first) / first * 100 : 0;
-        const cumWan = Math.round((cur.value - first) / 10000);
 
         const cardText = (ev) => {
             if (!ev) return null;
@@ -5557,31 +6161,45 @@ Build the wall first. Attack second.`)}
             return null;
         };
         const ct = cardText(card);
+        const sumRow = (label, value, color) => (
+            <div className="flex items-baseline justify-between">
+                <span style={{ color: 'rgba(255,255,255,0.5)' }}>{label}</span>
+                <span className="font-bold" style={{ color: color || '#FFFFFF' }}>{value}</span>
+            </div>
+        );
+        const shakeCls = shakeLv ? ' replay-shake-' + shakeLv : '';
 
         return (
-            <div className={"fixed inset-0 z-[1200] overflow-hidden" + (shake ? ' replay-shake' : '')}
-                 style={{ background: REPLAY_BG }}>
-                <canvas ref={fxRef} className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 2 }}></canvas>
+            <div className={"fixed inset-0 z-[1200] overflow-hidden" + shakeCls}
+                 style={{ background: REPLAY_BG }}
+                 onClick={() => { if (playing) setPaused((v) => !v); }}>
+                <canvas ref={fxRef} className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 4 }}></canvas>
+                <div ref={flashElRef} className="absolute inset-0 pointer-events-none"
+                     style={{ zIndex: 5, background: '#FFFFFF', opacity: 0 }}></div>
+                <div ref={dimElRef} className="absolute inset-0 pointer-events-none"
+                     style={{ zIndex: 5, background: '#000000', opacity: 0 }}></div>
 
-                <button onClick={onClose} aria-label="關閉資產回放"
+                <button onClick={(e) => { e.stopPropagation(); onClose(); }} aria-label="關閉資產回放"
                         className="absolute top-4 right-4 w-11 h-11 rounded-full font-mono text-xl leading-none"
-                        style={{ color: '#fff', background: 'rgba(255,255,255,0.1)', zIndex: 4 }}>✕</button>
+                        style={{ color: '#fff', background: 'rgba(255,255,255,0.1)', zIndex: 6 }}>✕</button>
+
+                {paused && (
+                    <div className="absolute top-5 left-4 px-3 py-1 rounded-full font-mono text-xs pointer-events-none"
+                         style={{ zIndex: 6, color: REPLAY_BG, background: 'rgba(255,255,255,0.85)' }}>❙❙ 已暫停</div>
+                )}
 
                 <div className="relative h-full w-full flex flex-col px-5 pt-14 pb-6 max-w-md mx-auto" style={{ zIndex: 3 }}>
                     <div className="shrink-0 text-center">
-                        <div className="font-mono font-bold tracking-tight text-5xl sm:text-6xl"
-                             style={{ color: REPLAY_RED, textShadow: '0 0 18px rgba(255,59,71,0.65)' }}>
-                            {cur.value.toLocaleString()}
-                        </div>
+                        <div ref={bigRef} className="font-mono font-bold tracking-tight text-5xl sm:text-6xl"
+                             style={{ color: REPLAY_RED, textShadow: '0 0 18px rgba(255,59,71,0.65)' }}></div>
                         <div className="font-mono text-sm mt-2" style={{ color: 'rgba(255,255,255,0.6)' }}>
                             {formatYMD(new Date(cur.ts))}
                         </div>
                         <div className="grid grid-cols-3 gap-2 mt-5 font-mono text-xs">
                             <div>
                                 <div style={{ color: 'rgba(255,255,255,0.45)' }}>較第一筆</div>
-                                <div className="text-base font-bold" style={{ color: pct >= 0 ? REPLAY_RED : REPLAY_GREEN }}>
-                                    {(pct >= 0 ? '+' : '') + pct.toFixed(1)}%
-                                </div>
+                                <div ref={pctRef} className="text-base font-bold"
+                                     style={{ color: pct >= 0 ? REPLAY_RED : REPLAY_GREEN }}></div>
                             </div>
                             <div>
                                 <div style={{ color: 'rgba(255,255,255,0.45)' }}>歷史高點</div>
@@ -5601,7 +6219,24 @@ Build the wall first. Attack second.`)}
 
                     <div className="flex-grow min-h-0 relative mt-4">
                         <canvas ref={lineRef} className="absolute inset-0 w-full h-full"></canvas>
-                        {ct && (
+                        {showSummary ? (
+                            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 px-1 pointer-events-none">
+                                <div className="rounded-2xl px-4 py-4 font-mono text-xs space-y-2"
+                                     style={{ background: 'rgba(13,13,13,0.82)', border: '1px solid rgba(245,197,66,0.4)' }}>
+                                    <div className="text-center font-bold text-sm pb-1" style={{ color: REPLAY_GOLD }}>回放總結</div>
+                                    {sumRow('期間', formatYMD(new Date(summary.fromTs)) + ' → ' + formatYMD(new Date(summary.toTs)))}
+                                    {sumRow('歷時', summary.years + ' 年 ' + summary.months + ' 個月')}
+                                    {sumRow('累積',
+                                        (summary.deltaWan >= 0 ? '+' : '−') + Math.abs(summary.deltaWan).toLocaleString() + ' 萬（'
+                                        + (summary.pct >= 0 ? '+' : '') + summary.pct.toFixed(1) + '%）',
+                                        summary.deltaWan >= 0 ? REPLAY_RED : REPLAY_GREEN)}
+                                    {sumRow('最深回檔', (summary.deepestDd > 0 ? '−' : '')
+                                        + (summary.deepestDd * 100).toFixed(1) + '%', REPLAY_GREEN)}
+                                    {sumRow('創歷史新高', summary.peakCount + ' 次', REPLAY_GOLD)}
+                                    {sumRow('撐過 ≥10% 回檔', summary.survivedCount + ' 次', REPLAY_GOLD)}
+                                </div>
+                            </div>
+                        ) : ct && (
                             <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex flex-col items-center pointer-events-none">
                                 <div className="font-mono font-extrabold text-3xl sm:text-4xl text-center px-4"
                                      style={{ color: ct.tone, textShadow: '0 0 20px ' + (ct.glow || ct.tone) }}>{ct.main}</div>
@@ -5615,11 +6250,15 @@ Build the wall first. Attack second.`)}
                     </div>
 
                     <div className="shrink-0 text-center mt-4">
-                        <div className="font-mono font-bold text-xl" style={{ color: REPLAY_GOLD }}>
-                            累積 {(cumWan >= 0 ? '+' : '−') + Math.abs(cumWan).toLocaleString()} 萬
-                        </div>
+                        <div ref={cumRef} className="font-mono font-bold text-xl" style={{ color: REPLAY_GOLD }}></div>
                         {!reduced && (
-                            <button onClick={() => { partsRef.current = []; setCard(null); setRunId((v) => v + 1); }}
+                            <button onClick={(e) => {
+                                        e.stopPropagation();
+                                        setPaused(false);
+                                        setCard(null);
+                                        setShowSummary(false);
+                                        setRunId((v) => v + 1);
+                                    }}
                                     disabled={playing}
                                     className="mt-4 px-6 py-2 rounded-full font-mono text-sm"
                                     style={{
@@ -5628,6 +6267,11 @@ Build the wall first. Attack second.`)}
                                     }}>
                                 ↻ 重播
                             </button>
+                        )}
+                        {playing && (
+                            <div className="font-mono text-[10px] mt-2" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                                點畫面可暫停／繼續
+                            </div>
                         )}
                     </div>
                 </div>

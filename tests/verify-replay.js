@@ -133,6 +133,7 @@ const M = eval(deps + `; ({
   toReplaySeries, buildReplayEvents, pickReplayEvent, buildReplayGaps,
   isReplayGap, truncateReplayNote, calcReplayDuration, replayDayDiff,
   attachMarketExtremes, replaySpawnCount, replayDpr,
+  replayLerp, replayProgress, replayBoltSpec, buildLightningPath, buildReplaySummary,
   K: { STEP: ASSET_REPLAY_MILESTONE_STEP, TIERS: ASSET_REPLAY_DRAWDOWN_TIERS,
        MIN_DD: ASSET_REPLAY_SEGMENT_MIN_DRAWDOWN, GAP: ASSET_REPLAY_GAP_DAYS,
        NOTE: ASSET_REPLAY_NOTE_MAX, HOLD: ASSET_REPLAY_EVENT_HOLD_MS,
@@ -511,12 +512,22 @@ chk('字卡渲染吃 glow 與 subTone',
 
 console.log('');
 console.log('【卸載清理】');
-chk('震動的 timeout 有被記下來', /timers\.push\(window\.setTimeout\(\(\) => setShake\(false\), 360\)\)/.test(H), true);
+/* 第 2 輪把震動改成分級（−10／−20／−30 各自的 shakeMs），
+   登記 timeout 的寫法改為 addTimer；判定的性質與預期值不變。 */
+chk('震動的 timeout 有被記下來',
+  /const addTimer = \(fn, ms\) => \{ timers\.push\(window\.setTimeout\(fn, ms\)\); \}/.test(H), true);
+chk('   └ 震動復原走 addTimer（依級距時間）',
+  /addTimer\(\(\) => setShakeLv\(0\), spec\.shakeMs\)/.test(H), true);
 chk('   └ 清理時全部 clearTimeout', /timers\.forEach\(\(id\) => window\.clearTimeout\(id\)\)/.test(H), true);
 chk('   └ 清理時歸零震動（不殘留到下次開啟）',
-  /cancelAnimationFrame\(raf\);[\s\S]{0,200}?setShake\(false\);/.test(H), true);
+  /cancelAnimationFrame\(raf\);[\s\S]{0,900}?setShakeLv\(0\);/.test(H), true);
 chk('粒子生成有套上限', /const room = replaySpawnCount\(partsRef\.current\.length, count\);/.test(H), true);
-chk('兩處畫布都用夾過的 dpr', (H.match(/const dpr = replayDpr\(window\.devicePixelRatio\);/g) || []).length, 2);
+/* 第 2 輪多了一處畫布（reduced 的靜態畫面），三處改成共用一個尺寸函式，
+   斷言從「數有幾處」改為「只有那個共用函式讀得到 devicePixelRatio」。 */
+chk('畫布尺寸一律走夾過 dpr 的共用函式',
+  /const replayFitCanvas = \(cv\) => \{[\s\S]{0,160}?const dpr = replayDpr\(window\.devicePixelRatio\);/.test(H), true);
+chk('   └ 全檔只有共用函式讀 devicePixelRatio',
+  (H.match(/window\.devicePixelRatio/g) || []).length, 1);
 chk('已無未夾的 devicePixelRatio', /devicePixelRatio \|\| 1/.test(H), false);
 
 console.log('');
@@ -544,6 +555,189 @@ chk('台股資料是寫死快照，未新增任何抓取請求',
   /TWSE_EXTREME_DAYS[\s\S]{0,1500}?(fetch\(|gasRouter)/.test(H), false);
 chk('畫面會標註台股快照的資料日期',
   /資料截至 ' \+ TWSE_EXTREME_AS_OF/.test(H), true);
+
+console.log('');
+console.log('【第 2 輪 B｜滑順補間】replayLerp / replayProgress');
+/* 手推：lerp = a + (b−a)×t，t 夾在 0～1。 */
+chk('t=0 → 起點', M.replayLerp(0, 100, 0), 0);
+chk('t=0.5 → 中點', M.replayLerp(0, 100, 0.5), 50);
+chk('t=1 → 終點', M.replayLerp(0, 100, 1), 100);
+chk('反向 t=0.25：100→0 取 75', M.replayLerp(100, 0, 0.25), 75);
+chk('兩筆資產值取中點（480萬→520萬）', M.replayLerp(4800000, 5200000, 0.5), 5000000);
+chk('t=−1（越界）→ 夾成 0 → 起點', M.replayLerp(0, 100, -1), 0);
+chk('t=2（越界）→ 夾成 1 → 終點', M.replayLerp(0, 100, 2), 100);
+chk('t 非數值 → 回傳起點', M.replayLerp(7, 100, NaN), 7);
+chk('端點非數值 → 0（不回 NaN）', M.replayLerp(NaN, 100, 0.5), 0);
+chk('兩端相同 → 不管 t 都是該值', M.replayLerp(5, 5, 0.37), 5);
+
+/* 手推：i = floor(prog)、frac = prog − i；
+   prog ≥ 最後一筆索引時沒有「下一筆」可補間 → frac 固定 0。 */
+const pg = (p, n) => { const r = M.replayProgress(p, n); return r.i + '|' + r.frac; };
+chk('prog 0（9 筆）→ i=0 frac=0', pg(0, 9), '0|0');
+chk('prog 0.5 → i=0 frac=0.5', pg(0.5, 9), '0|0.5');
+chk('prog 3.25 → i=3 frac=0.25', pg(3.25, 9), '3|0.25');
+chk('prog 8（最後一筆）→ i=8 frac=0', pg(8, 9), '8|0');
+chk('prog 8.9（越界）→ 夾回 i=8 frac=0', pg(8.9, 9), '8|0');
+chk('prog 負數 → i=0 frac=0', pg(-2, 9), '0|0');
+chk('prog NaN → i=0 frac=0', pg(NaN, 9), '0|0');
+chk('只有 1 筆 → i=0 frac=0', pg(4, 1), '0|0');
+chk('0 筆 → i=0 frac=0', pg(4, 0), '0|0');
+
+console.log('');
+console.log('【第 2 輪 D｜閃電】replayBoltSpec / buildLightningPath');
+/* 手推（出自工單 D）：
+   −10% → 1 道、無分岔、輕震；−20% → 2 道、間隔 150ms、震動加強；
+   −30% → 3 道、1～2 條分岔、殘留電弧 400ms、長震動。 */
+const spec = (t) => { const o = M.replayBoltSpec(t); return [o.bolts, o.branches, o.gapMs, o.shakeMs, o.arcMs].join('|'); };
+chk('−10% 級距', spec(0.10), '1|0|0|260|0');
+chk('−20% 級距', spec(0.20), '2|0|150|420|0');
+chk('−30% 級距', spec(0.30), '3|2|150|700|400');
+chk('比 −30% 更深（0.45）→ 仍套 −30% 規格', spec(0.45), '3|2|150|700|400');
+chk('未達 −20%（0.15）→ 套 −10% 規格', spec(0.15), '1|0|0|260|0');
+chk('0 → 套最輕規格', spec(0), '1|0|0|260|0');
+chk('級距 3 的道數 > 級距 1', M.replayBoltSpec(0.30).bolts > M.replayBoltSpec(0.10).bolts, true);
+chk('只有級距 3 有分岔', M.replayBoltSpec(0.20).branches, 0);
+chk('只有級距 3 有殘留電弧', M.replayBoltSpec(0.20).arcMs, 0);
+
+/* 手推：rnd 固定回 0.5 → 位移 = (0.5−0.5)×2×amp = 0 → 中點不偏移，
+   路徑退化成等分的直線。深度 d 的點數 = 2^d + 1。
+   由 (0,0) 劈到 (100,200)、depth=2：
+     d=0 → (0,0) (50,100) (100,200)
+     d=1 → (0,0) (25,50) (50,100) (75,150) (100,200) */
+const mid = () => 0.5;
+const L2 = M.buildLightningPath(0, 0, 100, 200, { w: 100, h: 200, depth: 2, spread: 40, branches: 0 }, mid);
+chk('depth=2 → 5 個點（2^2+1）', L2.points.length, 5);
+chk('起點釘在頂端 (0,0)', L2.points[0].x + ',' + L2.points[0].y, '0,0');
+chk('終點等於目標座標 (100,200)', L2.points[4].x + ',' + L2.points[4].y, '100,200');
+chk('rnd=0.5 → 中間點不偏移（等分直線）',
+  L2.points.map((p) => p.x + ',' + p.y).join(' '), '0,0 25,50 50,100 75,150 100,200');
+chk('depth=0 → 只有起終點 2 個', M.buildLightningPath(0, 0, 100, 200, { depth: 0 }, mid).points.length, 2);
+chk('depth=3 → 9 個點', M.buildLightningPath(0, 0, 100, 200, { depth: 3, spread: 40 }, mid).points.length, 9);
+chk('無分岔設定 → 0 條', L2.branches.length, 0);
+/* 手推：branches 為上限，實際 = max(1, min(上限, 1+floor(rnd×上限)))。
+   rnd=0.5、上限 2 → 1+floor(1) = 2 條；rnd=0、上限 2 → 1+0 = 1 條。 */
+chk('級距 3（上限 2）rnd=0.5 → 2 條分岔',
+  M.buildLightningPath(0, 0, 100, 200, { w: 100, h: 200, depth: 3, spread: 40, branches: 2 }, mid).branches.length, 2);
+chk('級距 3（上限 2）rnd=0 → 1 條分岔',
+  M.buildLightningPath(0, 0, 100, 200, { w: 100, h: 200, depth: 3, spread: 40, branches: 2 }, () => 0).branches.length, 1);
+chk('上限 1 → 1 條',
+  M.buildLightningPath(0, 0, 100, 200, { w: 100, h: 200, depth: 3, spread: 40, branches: 1 }, mid).branches.length, 1);
+/* 手推：rnd 固定回 1 → 位移 = (1−0.5)×2×amp = amp。
+   由 (50,0) 垂直劈到 (50,200)、depth=1、spread=1000：
+   dx=0 dy=200 len=200 → 中點 x = 50 + (−200/200)×1000 = −950 → 夾到 0。 */
+const LC = M.buildLightningPath(50, 0, 50, 200, { w: 100, h: 200, depth: 1, spread: 1000, branches: 0 }, () => 1);
+chk('超出畫布的中間點被夾到左緣 0', LC.points[1].x, 0);
+chk('所有點都落在畫布範圍內',
+  LC.points.every((p) => p.x >= 0 && p.x <= 100 && p.y >= 0 && p.y <= 200), true);
+chk('   └ 起終點不受夾擠影響',
+  LC.points[0].x + ',' + LC.points[0].y + ' ' + LC.points[2].x + ',' + LC.points[2].y, '50,0 50,200');
+
+console.log('');
+console.log('【第 2 輪 G｜結尾總結】buildReplaySummary');
+/* 手推 S1（9 筆，20240101 → 20260101，480 萬 → 2000 萬）：
+   · 歷時：2024/01→2026/01 = 24 個月，訖日的「日」= 起日的「日」→ 不扣
+           → 2 年 0 個月；天數 = 366（2024 閏年）+ 365 = 731 天
+   · 累積 = (2000−480) 萬 = +1520 萬；% = 1520/480 = 316.666667%
+   · 最深回檔：前高 1150 萬（i6）→ i7 700 萬
+       = (1150−700)/1150 = 39.130435%（深於第一段的 31.818182%）
+   · 創歷史新高次數（第一筆不算）：i1 520、i2 1000、i3 1100、i6 1150、
+       i8 2000 → 5 次
+   · 撐過 ≥10% 回檔 = recover 事件數 = i6、i8 → 2 次 */
+const sum1 = M.buildReplaySummary(s1, e1);
+chk('S1 起日 ts 等於第一筆', sum1.fromTs, s1[0].ts);
+chk('S1 訖日 ts 等於最後一筆', sum1.toTs, s1[8].ts);
+chk('S1 歷時 年', sum1.years, 2);
+chk('S1 歷時 月', sum1.months, 0);
+chk('S1 歷時 天', sum1.days, 731);
+chk('S1 累積萬數', sum1.deltaWan, 1520);
+near('S1 累積 %', sum1.pct, 316.666667, 1e-5);
+near('S1 最深回檔', sum1.deepestDd, 0.391304, 1e-5);
+chk('S1 創歷史新高次數', sum1.peakCount, 5);
+chk('S1 撐過 ≥10% 回檔次數', sum1.survivedCount, 2);
+
+/* 手推 S2（7 筆，20260105 → 20260705，1000 萬 → 1130 萬）：
+   · 歷時：2026/01→2026/07 = 6 個月，日相同不扣 → 0 年 6 個月
+           天數：1/5 是第 5 天、7/5 是第 186 天（31+28+31+30+31+30+5）
+           → 181 天
+   · 累積 = +130 萬；% = 130/1000 = 13.0%
+   · 最深回檔：前高 1100 萬（i1）→ i3 950 萬
+       = (1100−950)/1100 = 13.636364%
+   · 創歷史新高：i1 1100、i4 1120、i6 1130 → 3 次
+   · 撐過 ≥10% 回檔 = recover 事件數 = 只有 i4（i6 的淺回檔不算）→ 1 次 */
+const sum2 = M.buildReplaySummary(s2, e2);
+chk('S2 歷時 年', sum2.years, 0);
+chk('S2 歷時 月', sum2.months, 6);
+chk('S2 歷時 天', sum2.days, 181);
+chk('S2 累積萬數', sum2.deltaWan, 130);
+near('S2 累積 %', sum2.pct, 13, 1e-9);
+near('S2 最深回檔', sum2.deepestDd, 0.136364, 1e-5);
+chk('S2 創歷史新高次數', sum2.peakCount, 3);
+chk('S2 撐過 ≥10% 回檔次數（淺回檔的收復不算）', sum2.survivedCount, 1);
+chk('不足兩筆 → 全部歸零', JSON.stringify(M.buildReplaySummary([], [])),
+  JSON.stringify({ fromTs: 0, toTs: 0, years: 0, months: 0, days: 0,
+    firstValue: 0, lastValue: 0, deltaWan: 0, pct: 0,
+    deepestDd: 0, peakCount: 0, survivedCount: 0 }));
+chk('   └ 只有 1 筆也歸零', M.buildReplaySummary([s1[0]], [[]]).days, 0);
+chk('events 給 null 也不炸', M.buildReplaySummary(s1, null).survivedCount, 0);
+
+console.log('');
+console.log('【第 2 輪 B～H 佈線】');
+chk('B 折線頭依時間內插座標',
+  /const headTs = replayLerp\(series\[i\]\.ts, nextP\.ts, pr\.frac\);/.test(H)
+  && /const headVal = replayLerp\(series\[i\]\.value, nextP\.value, pr\.frac\);/.test(H), true);
+chk('B 大字／％／累積萬數改走內插後直接寫 DOM',
+  /const writeHead = \(val\) => \{/.test(H) && /writeHead\(headVal\);/.test(H), true);
+chk('B 日期只在抵達該筆時切換（吃 idx，不吃內插值）',
+  /const cur = series\[idx\];/.test(H) && /formatYMD\(new Date\(cur\.ts\)\)/.test(H), true);
+chk('B 歷史高點／最深回檔只算已抵達的紀錄',
+  /for \(let k = 0; k <= idx; k\+\+\) \{/.test(H), true);
+chk('B 空檔段照樣畫虛線（含補間中的那一段）',
+  /const isGap = gaps\.indexOf\(i \+ 1\) >= 0;/.test(H), true);
+chk('C 特效錨點＝折線頭換算到特效畫布的座標',
+  /headRef\.current = \{ x: head\.x \+ \(a\.left - b\.left\), y: head\.y \+ \(a\.top - b\.top\), ok: true \};/.test(H), true);
+chk('D 閃電由頂端隨機 X 劈到折線頭',
+  /buildLightningPath\(x0, 0, hd\.x, hd\.y, \{/.test(H), true);
+chk('D 白色核心＋藍紫外暈',
+  /strokePath\(ctx, bl\.path\.points, 7, REPLAY_BOLT_GLOW, 26\);/.test(H)
+  && /strokePath\(ctx, bl\.path\.points, 2\.2, '#FFFFFF', 14\);/.test(H), true);
+chk('D 白閃約 80ms 後接短暫壓暗',
+  /flashUntilRef\.current, now \+ 80\)/.test(H) && /dimUntilRef\.current, now \+ 80 \+ 240\)/.test(H), true);
+chk('D 連劈依級距排程（gapMs）',
+  /pendingBoltsRef\.current\.push\(\{ at: now \+ k \* spec\.gapMs, spec: spec \}\);/.test(H), true);
+chk('D 台股跌點只畫遠方閃電，不震動不白閃',
+  /ev\.type === 'market' && ev\.points < 0/.test(H), true);
+chk('E 前高畫成金色水平虛線並標字',
+  /ctx\.fillText\('前高 ' \+ Math\.round\(peakRef\.current \/ 10000\)\.toLocaleString\(\) \+ ' 萬'/.test(H), true);
+chk('E 暗角與雨絲依回檔濃度漸變',
+  /kind: 'rain'/.test(H) && /createRadialGradient/.test(H), true);
+chk('E 收復前高時雨停', /rainRef\.current = false;/.test(H), true);
+chk('F 煙火由底部升空，到定點才炸開',
+  /x: r\.x, y: h, vy: -7\.5 - Math\.random\(\) \* 2, targetY: r\.targetY/.test(H), true);
+chk('F 折線頭擴散金色光環',
+  /ringsRef\.current\.push\(\{ x: hd\.x, y: hd\.y, born: now, ttl: 760 \}\);/.test(H), true);
+chk('F 關卡金額畫短暫金線',
+  /goldLineRef\.current = \{ value: ev\.level, until: now \+ 1400 \};/.test(H), true);
+chk('G 結尾 3～5 發不同位置的煙火',
+  /const shots = 3 \+ Math\.floor\(Math\.random\(\) \* 3\);/.test(H), true);
+chk('G 結尾紙屑雨 1.5 秒', /paperUntilRef\.current = now \+ 1500;/.test(H), true);
+chk('G 結尾改顯示總結面板', /setShowSummary\(true\);/.test(H) && /回放總結/.test(H), true);
+chk('G reduced-motion 也顯示總結面板', /useState\(reduced && enough\)/.test(H), true);
+chk('H 點畫面暫停／繼續（播放中才作用）',
+  /onClick=\{\(\) => \{ if \(playing\) setPaused\(\(v\) => !v\); \}\}/.test(H), true);
+chk('H ✕ 與重播鈕不會誤觸暫停',
+  (H.match(/e\.stopPropagation\(\);/g) || []).length >= 2, true);
+chk('H 暫停時顯示「已暫停」標示', /❙❙ 已暫停/.test(H), true);
+chk('H 暫停只凍結折線與計時，粒子照畫',
+  /if \(!pausedRef\.current && !done\) \{/.test(H), true);
+chk('I 新特效的粒子一律經過上限檢查',
+  /const room = replaySpawnCount\(partsRef\.current\.length, count\);/.test(H)
+  && (H.match(/pushParts\(/g) || []).length >= 4, true);
+chk('I 卸載時清掉所有特效佇列',
+  /boltsRef\.current = \[\];[\s\S]{0,400}?rainAlphaRef\.current = 0;/.test(H), true);
+chk('I 卸載時歸零白閃與壓暗的 opacity',
+  /if \(flashElRef\.current\) flashElRef\.current\.style\.opacity = '0';/.test(H), true);
+chk('未新增任何函式庫（閃電／煙火全自繪）',
+  (H.match(/<script src=/g) || []).length, 5);
 
 console.log('');
 console.log(fail === 0 ? '>>> 全部通過' : '>>> ' + fail + ' 組失敗');
