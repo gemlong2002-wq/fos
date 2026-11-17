@@ -135,6 +135,7 @@ const M = eval(deps + `; ({
   attachMarketExtremes, replaySpawnCount, replayDpr,
   replayLerp, replayProgress, replayBoltSpec, buildLightningPath, buildReplaySummary,
   buildReplayAthCounts, buildReplayMinorMarks, calcReplayStepDurations,
+  buildAthStreaks, replayComboTier,
   K: { STEP: ASSET_REPLAY_MILESTONE_STEP, TIERS: ASSET_REPLAY_DRAWDOWN_TIERS,
        MIN_DD: ASSET_REPLAY_SEGMENT_MIN_DRAWDOWN, GAP: ASSET_REPLAY_GAP_DAYS,
        NOTE: ASSET_REPLAY_NOTE_MAX, HOLD: ASSET_REPLAY_EVENT_HOLD_MS,
@@ -146,7 +147,9 @@ const M = eval(deps + `; ({
        ATH_SPARKS: ASSET_REPLAY_ATH_SPARKS, SLOW: ASSET_REPLAY_SLOW_FACTOR,
        FAST: ASSET_REPLAY_FAST_FACTOR, RADIUS: ASSET_REPLAY_SLOW_RADIUS,
        FLAT: ASSET_REPLAY_FLAT_RATIO, FINAL_MS: ASSET_REPLAY_FINAL_SLOW_MS,
-       FINAL_GLOW_MS: ASSET_REPLAY_FINAL_GLOW_MS }
+       FINAL_GLOW_MS: ASSET_REPLAY_FINAL_GLOW_MS,
+       COMBO: ASSET_REPLAY_COMBO_TIERS, COMBO_MIN: ASSET_REPLAY_COMBO_MIN,
+       COMBO_FADE: ASSET_REPLAY_COMBO_FADE_MS }
 })`);
 const K = M.K;
 
@@ -1002,6 +1005,66 @@ chk('畫面：明細區可內部捲動（overflow-y-auto＋maxHeight）',
 chk('畫面：電腦版表格欄位',
   /前高 → 收復<\/th>[\s\S]{0,200}?回檔深度<\/th>[\s\S]{0,200}?跌到谷底<\/th>[\s\S]{0,200}?爬回前高<\/th>[\s\S]{0,200}?合計<\/th>/.test(H), true);
 chk('畫面：進行中列', (H.match(/進行中/g) || []).length >= 2, true);
+console.log('');
+console.log('【第 5 輪｜連續創新高（連擊）buildAthStreaks／replayComboTier】');
+/* 定義：沿用 buildReplayAthCounts 的創高判定（第 2 筆起嚴格大於之前最高值）。
+   連擊數 combo[i]＝到第 i 筆為止連續「每一筆都創新高」的筆數，該筆未創高則 0；
+   最長段＝combo 最大值那段，同長度取最早；起日＝段首筆、迄日＝段末筆。
+
+   S1 值（萬）：480 520 1000 1100 900 750 1150 700 2000
+     創高：i1、i2、i3、i6、i8（上方 B 已手推 [0,1,2,3,0,0,4,0,5]）
+     連擊：i0 0；i1 1；i2 2；i3 3；i4 900 未創高 → 斷（0）；i5 0；
+           i6 創高、前一筆 0 → 1；i7 斷 → 0；i8 → 1
+     → [0,1,2,3,0,0,1,0,1]，斷點 i4、i7
+     最長段 = 3 筆，i1～i3 → 20240201 → 20240401 */
+const st1 = M.buildAthStreaks(s1);
+chk('S1 每筆連擊數', JSON.stringify(st1.combo), '[0,1,2,3,0,0,1,0,1]');
+chk('S1 斷點（連擊由 >0 變 0 的筆）',
+  JSON.stringify(st1.combo.map((k, i) => (i > 0 && st1.combo[i - 1] > 0 && k === 0) ? i : -1).filter((i) => i >= 0)), '[4,7]');
+chk('S1 最長連續創新高 筆數', st1.longest.length, 3);
+chk('S1 最長段 起訖索引', st1.longest.startIndex + '|' + st1.longest.endIndex, '1|3');
+chk('S1 最長段 起迄日', d8(st1.longest.startTs) + '|' + d8(st1.longest.endTs), '20240201|20240401');
+chk('S1 總結面板帶最長段', sum1.longestStreak.length + '|' + d8(sum1.longestStreak.startTs) + '|' + d8(sum1.longestStreak.endTs),
+  '3|20240201|20240401');
+
+/* S2 值（萬）：1000 1100 990 950 1120 1080 1130
+     創高：i1（1100>1000）、i4（1120>1100）、i6（1130>1120）；其餘皆未超過前最高
+     連擊：[0,1,0,0,1,0,1]，斷點 i2、i5
+     最長段 = 1 筆，三段同長 → 取最早 i1 → 20260205 → 20260205 */
+const st2 = M.buildAthStreaks(s2);
+chk('S2 每筆連擊數', JSON.stringify(st2.combo), '[0,1,0,0,1,0,1]');
+chk('S2 斷點', JSON.stringify(st2.combo.map((k, i) => (i > 0 && st2.combo[i - 1] > 0 && k === 0) ? i : -1).filter((i) => i >= 0)), '[2,5]');
+chk('S2 最長段 1 筆（同長取最早）', st2.longest.length + '|' + st2.longest.startIndex + '|' + st2.longest.endIndex, '1|1|1');
+chk('S2 最長段 起迄日', d8(st2.longest.startTs) + '|' + d8(st2.longest.endTs), '20260205|20260205');
+chk('S2 總結面板帶最長段', sum2.longestStreak.length, 1);
+
+/* 完全沒有創高（持平）→ 連擊全 0、最長段 null；單筆、空序列同理 */
+const flat3 = M.toReplaySeries([
+  { 日期: '20260101', 總資產: 1000000 }, { 日期: '20260201', 總資產: 1000000 }, { 日期: '20260301', 總資產: 900000 }]);
+chk('無創高 → 連擊全 0', JSON.stringify(M.buildAthStreaks(flat3).combo), '[0,0,0]');
+chk('無創高 → 最長段 null', M.buildAthStreaks(flat3).longest, null);
+chk('空序列 → 空連擊、null', JSON.stringify(M.buildAthStreaks([])), '{"combo":[],"longest":null}');
+
+/* 分級（常數集中於 ASSET_REPLAY_COMBO_TIERS）：<2 不顯示；2～3 金；4～6 橘；≥7 紅＋火焰 */
+chk('分級：0、1 不顯示', [0, 1].map(M.replayComboTier).join(','), '0,0');
+chk('分級：2、3 → 1（金）', [2, 3].map(M.replayComboTier).join(','), '1,1');
+chk('分級：4、6 → 2（橘）', [4, 6].map(M.replayComboTier).join(','), '2,2');
+chk('分級：7、20 → 3（紅）', [7, 20].map(M.replayComboTier).join(','), '3,3');
+chk('分級顏色：金／橘 #FF9F2E／紅 #FF3B47', K.COMBO.map((t) => t.color).join(','), '#F5C542,#FF9F2E,#FF3B47');
+chk('分級字級遞增、只有最高級有火焰',
+  K.COMBO[0].size < K.COMBO[1].size && K.COMBO[1].size < K.COMBO[2].size
+  && K.COMBO.map((t) => t.flame).join(',') === 'false,false,true', true);
+chk('連擊 ≥2 才顯示', K.COMBO_MIN, 2);
+chk('斷連擊淡出 400ms', K.COMBO_FADE, 400);
+chk('畫面：×K COMBO 字樣', /×\{combo\.k\} COMBO/.test(H), true);
+chk('畫面：斷連擊縮小淡出、總數不歸零（只清 combo，不動 athN）',
+  /setCombo\(\{ k: was, out: true \}\);/.test(H) && !/if \(!\(athCounts\[j\] > 0\) && comboRef\.current > 0\) \{[\s\S]{0,400}?setAthN/.test(H), true);
+chk('畫面：連擊不觸發停留／震動（fire 內未對 combo 呼叫 setShakeLv 或 hold）',
+  !/setCombo[\s\S]{0,200}?setShakeLv/.test(H), true);
+chk('畫面：彈跳 1.3 倍', /50% \{ transform: scale\(1\.3\); \}/.test(H), true);
+chk('畫面：reduced-motion 停用彈跳／淡出／火焰',
+  /\.replay-pop, \.replay-combo-out, \.replay-flame \{ animation: none; \}/.test(H), true);
+chk('畫面：總結面板「最長連續創新高」', /sumRow\('最長連續創新高'/.test(H), true);
 console.log('');
 console.log(fail === 0 ? '>>> 全部通過' : '>>> ' + fail + ' 組失敗');
 process.exit(fail === 0 ? 0 : 1);
