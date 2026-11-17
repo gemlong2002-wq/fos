@@ -920,5 +920,88 @@ chk('G 特效畫布經 replayFitCanvas', /replayFitCanvas\(fxRef\.current\)/.tes
 chk('G 回放區所有 canvas 都是 lineRef／fxRef（無其他畫布）', (RZ.match(/<canvas ref=\{(lineRef|fxRef)\}/g) || []).length,
   (RZ.match(/<canvas /g) || []).length);
 console.log('');
+console.log('【第 4 輪｜總結面板：每次收復前高的歷程（buildReplaySummary.recoveries／ongoing）】');
+/* 定義（沿用既有事件，不另寫判定）：
+   · 每個 recover 事件一段；谷底＝該段的 trough 事件；前高＝收復當下生效的前高筆
+   · daysDown＝前高日→谷底日、daysUp＝谷底日→收復日、daysTotal＝前高日→收復日
+   · ongoing：最後一個 trough 之後沒有 recover 才有，否則 null
+
+   S1（見檔頭）：
+   第 1 段：前高 i3 20240401（1100 萬）、谷底 i5 20240801（750 萬）、收復 i6 20250101
+     depth = (1100−750)/1100 = 31.8182%
+     daysDown 20240401→20240801 = 30(4月)+31(5月)+30(6月)+31(7月) = 122
+     daysUp   20240801→20250101 = 31+30+31+30+31（8～12 月）= 153
+     daysTotal = 122 + 153 = 275（＝檔頭手推的 recover N = 275）
+   第 2 段：前高 i6 20250101（1150 萬）、谷底 i7 20250201（700 萬）、收復 i8 20260101
+     depth = (1150−700)/1150 = 39.1304%
+     daysDown 20250101→20250201 = 31
+     daysUp   20250201→20260101 = 365 − 31 = 334
+     daysTotal = 365（＝檔頭手推的 N = 365）
+   最後一筆 i8 為創新高 → 沒有未收復的段 → ongoing = null */
+const rec1 = sum1.recoveries || [];
+const d8 = (ts) => { const d = new Date(ts); return '' + d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0'); };
+chk('S1 收復段數', rec1.length, 2);
+chk('S1 段1 前高／谷底／收復日', [rec1[0].peakDate, rec1[0].troughDate, rec1[0].recoverDate].map(d8).join('|'), '20240401|20240801|20250101');
+near('S1 段1 回檔深度', rec1[0].depth, 0.318182, 1e-5);
+chk('S1 段1 跌到谷底／爬回前高／合計', [rec1[0].daysDown, rec1[0].daysUp, rec1[0].daysTotal].join('|'), '122|153|275');
+chk('S1 段2 前高／谷底／收復日', [rec1[1].peakDate, rec1[1].troughDate, rec1[1].recoverDate].map(d8).join('|'), '20250101|20250201|20260101');
+near('S1 段2 回檔深度', rec1[1].depth, 0.391304, 1e-5);
+chk('S1 段2 跌到谷底／爬回前高／合計', [rec1[1].daysDown, rec1[1].daysUp, rec1[1].daysTotal].join('|'), '31|334|365');
+chk('S1 每段 daysDown + daysUp = daysTotal', rec1.every((r) => r.daysDown + r.daysUp === r.daysTotal), true);
+chk('S1 daysTotal 等於 recover 字卡的天數',
+  [find(e1, 6, 'recover').days, find(e1, 8, 'recover').days].join('|'), rec1.map((r) => r.daysTotal).join('|'));
+chk('S1 段數＝撐過次數', rec1.length, sum1.survivedCount);
+chk('S1 無未收復段 → ongoing = null', sum1.ongoing, null);
+
+/* S2（見檔頭）：
+   第 1 段：前高 i1 20260205（1100 萬）、谷底 i3 20260405（950 萬）、收復 i4 20260505
+     depth = (1100−950)/1100 = 13.6364%
+     daysDown 20260205→20260405：2/05→3/05 = 28（2026 年 2 月非閏）、3/05→4/05 = 31 → 59
+     daysUp   20260405→20260505 = 30
+     daysTotal = 89（＝檔頭手推 N = 89）
+   第 2 段 i5 只回檔 3.5714% < 10% → 沒有 trough／recover，不列入；
+   i6 回到前高之上 → 最後沒有未收復段 → ongoing = null */
+const rec2 = sum2.recoveries || [];
+chk('S2 收復段數（淺回檔不列）', rec2.length, 1);
+chk('S2 段1 前高／谷底／收復日', [rec2[0].peakDate, rec2[0].troughDate, rec2[0].recoverDate].map(d8).join('|'), '20260205|20260405|20260505');
+near('S2 段1 回檔深度', rec2[0].depth, 0.136364, 1e-5);
+chk('S2 段1 跌到谷底／爬回前高／合計', [rec2[0].daysDown, rec2[0].daysUp, rec2[0].daysTotal].join('|'), '59|30|89');
+chk('S2 daysTotal 等於 recover 字卡的天數', find(e2, 4, 'recover').days, rec2[0].daysTotal);
+chk('S2 ongoing = null', sum2.ongoing, null);
+
+/* ongoing 有值：取 S1 前 6 筆（i0～i5，停在第 1 段谷底）
+   前高 i3 20240401（1100 萬）、谷底 i5 20240801（750 萬，也是最後一筆）
+     depth = currentDepth = (1100−750)/1100 = 31.8182%
+     daysSincePeak = 20240401→20240801 = 122
+   沒有任何收復 → recoveries = [] */
+const s1h = s1.slice(0, 6);
+const sum1h = M.buildReplaySummary(s1h, M.buildReplayEvents(s1h, []));
+chk('S1 前 6 筆：無收復段', (sum1h.recoveries || []).length, 0);
+chk('S1 前 6 筆：ongoing 前高日／谷底日', [sum1h.ongoing.peakDate, sum1h.ongoing.troughDate].map(d8).join('|'), '20240401|20240801');
+near('S1 前 6 筆：ongoing 最深', sum1h.ongoing.depth, 0.318182, 1e-5);
+near('S1 前 6 筆：ongoing 目前回檔', sum1h.ongoing.currentDepth, 0.318182, 1e-5);
+chk('S1 前 6 筆：ongoing 已過天數', sum1h.ongoing.daysSincePeak, 122);
+
+/* ongoing 有值且「目前回檔」淺於「最深」：S2 前 4 筆＋一筆 20260505 1050 萬
+   前高 i1 20260205（1100 萬）、谷底 i3 20260405（950 萬）、最後一筆 1050 萬仍低於前高 → 未收復
+     depth = (1100−950)/1100 = 13.6364%
+     currentDepth = (1100−1050)/1100 = 4.5455%
+     daysSincePeak = 20260205→20260505 = 28 + 31 + 30 = 89 */
+const s2o = M.toReplaySeries(S2_ROWS.slice(0, 4).concat([{ 日期: '20260505', 總資產: 10500000, 備註: '' }]));
+const sum2o = M.buildReplaySummary(s2o, M.buildReplayEvents(s2o, []));
+chk('S2 變體：無收復段', (sum2o.recoveries || []).length, 0);
+chk('S2 變體：ongoing 前高日／谷底日', [sum2o.ongoing.peakDate, sum2o.ongoing.troughDate].map(d8).join('|'), '20260205|20260405');
+near('S2 變體：ongoing 最深', sum2o.ongoing.depth, 0.136364, 1e-5);
+near('S2 變體：ongoing 目前回檔', sum2o.ongoing.currentDepth, 0.0454545, 1e-5);
+chk('S2 變體：ongoing 已過天數', sum2o.ongoing.daysSincePeak, 89);
+
+chk('events 給 null 也不炸（明細為空）',
+  JSON.stringify([M.buildReplaySummary(s1, null).recoveries, M.buildReplaySummary(s1, null).ongoing]), '[[],null]');
+chk('畫面：明細區可內部捲動（overflow-y-auto＋maxHeight）',
+  /className="overflow-y-auto overscroll-contain pr-1" style=\{\{ maxHeight: wide \? '11rem' : '7\.5rem', pointerEvents: 'auto' \}\}/.test(H), true);
+chk('畫面：電腦版表格欄位',
+  /前高 → 收復<\/th>[\s\S]{0,200}?回檔深度<\/th>[\s\S]{0,200}?跌到谷底<\/th>[\s\S]{0,200}?爬回前高<\/th>[\s\S]{0,200}?合計<\/th>/.test(H), true);
+chk('畫面：進行中列', (H.match(/進行中/g) || []).length >= 2, true);
+console.log('');
 console.log(fail === 0 ? '>>> 全部通過' : '>>> ' + fail + ' 組失敗');
 process.exit(fail === 0 ? 0 : 1);

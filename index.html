@@ -421,7 +421,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/11/17 14:33';
+    const APP_VERSION = '2026/11/17 14:43';
 
     /* ===================================================================
        共用工具
@@ -5412,6 +5412,7 @@ Build the wall first. Attack second.`)}
             }
         }
         const first = series[0].value, last = series[n - 1].value;
+        const hist = buildReplayRecoveryHistory(series, events);
         return {
             fromTs: series[0].ts, toTs: series[n - 1].ts,
             years: Math.floor(months / 12), months: months % 12,
@@ -5419,8 +5420,70 @@ Build the wall first. Attack second.`)}
             firstValue: first, lastValue: last,
             deltaWan: Math.round((last - first) / 10000),
             pct: first > 0 ? (last - first) / first * 100 : 0,
-            deepestDd: deepest, peakCount: peakCount, survivedCount: survived
+            deepestDd: deepest, peakCount: peakCount, survivedCount: survived,
+            recoveries: hist.recoveries, ongoing: hist.ongoing
         };
+    };
+
+    /* 每次收復前高的歷程（總結面板明細用）。一律從既有事件推，不另寫判定：
+       · 段落邊界＝ recover 事件（收復筆）與 trough 事件（谷底筆）；兩者都只在
+         回檔 ≥ ASSET_REPLAY_SEGMENT_MIN_DRAWDOWN 時才由 buildReplayEvents 產生
+       · 前高筆＝與 buildReplayEvents 相同的「前高」追蹤（value ≥ 前高即更新），
+         取收復／谷底當下生效的那一筆
+       · recoveries：每個 recover 事件一筆，配對它之前、上一個 recover 之後的 trough
+           depth＝該段最深回檔（trough 事件的 drawdown）
+           daysDown＝前高日→谷底日，daysUp＝谷底日→收復日，daysTotal＝前高日→收復日
+           （daysTotal 即 recover 事件的 days，三者皆為整數天，daysDown + daysUp = daysTotal）
+       · ongoing：最後一個 trough 之後沒有 recover → 最後一段尚未收復
+           depth＝該段最深、currentDepth＝最後一筆相對前高、daysSincePeak＝前高日→最後一筆日 */
+    const buildReplayRecoveryHistory = (series, events) => {
+        const n = Array.isArray(series) ? series.length : 0;
+        const out = { recoveries: [], ongoing: null };
+        if (n < 2 || !Array.isArray(events)) return out;
+
+        // 每一筆「處理當下」生效的前高筆（與 buildReplayEvents 的 peakValue 追蹤一致）
+        const peakAt = [];
+        let pk = 0;
+        for (let i = 0; i < n; i++) {
+            peakAt.push(pk);
+            if (i > 0 && series[i].value >= series[pk].value) pk = i;
+        }
+
+        const has = (i, type) => Array.isArray(events[i]) && events[i].some((e) => e && e.type === type);
+        const ev = (i, type) => (Array.isArray(events[i]) ? events[i].filter((e) => e && e.type === type)[0] : null) || null;
+
+        let lastRecover = -1;
+        for (let r = 0; r < n; r++) {
+            if (!has(r, 'recover')) continue;
+            let t = -1;
+            for (let k = r - 1; k > lastRecover; k--) { if (has(k, 'trough')) { t = k; break; } }
+            const p = peakAt[r];
+            if (t >= 0) {
+                out.recoveries.push({
+                    peakDate: series[p].ts, troughDate: series[t].ts, recoverDate: series[r].ts,
+                    depth: ev(t, 'trough').drawdown,
+                    daysDown: replayDayDiff(series[p].ts, series[t].ts),
+                    daysUp: replayDayDiff(series[t].ts, series[r].ts),
+                    daysTotal: replayDayDiff(series[p].ts, series[r].ts)
+                });
+            }
+            lastRecover = r;
+        }
+
+        // 最後一個 recover 之後還有 trough → 尚未收復的最後一段
+        let t = -1;
+        for (let k = n - 1; k > lastRecover; k--) { if (has(k, 'trough')) { t = k; break; } }
+        if (t >= 0) {
+            const p = peakAt[t];
+            const pv = series[p].value, lv = series[n - 1].value;
+            out.ongoing = {
+                peakDate: series[p].ts, troughDate: series[t].ts,
+                depth: ev(t, 'trough').drawdown,
+                currentDepth: pv > 0 ? (pv - lv) / pv : 0,
+                daysSincePeak: replayDayDiff(series[p].ts, series[n - 1].ts)
+            };
+        }
+        return out;
     };
 
     /* ── 第 3 輪新增的純函式：創新高、小關卡、不等速節奏 ──────────
@@ -6403,6 +6466,79 @@ Build the wall first. Attack second.`)}
             </div>
         );
 
+        /* 每次收復前高的歷程：電腦版表格、手機版小卡；筆數多時明細區內部捲動，不撐破面板 */
+        const recList = Array.isArray(summary.recoveries) ? summary.recoveries : [];
+        const recOngoing = summary.ongoing || null;
+        const ddText = (v) => '−' + (v * 100).toFixed(1) + '%';
+        const dayText = (v) => v + ' 天';
+        const ymd = (ts) => formatYMD(new Date(ts));
+        const recoveryDetail = (recList.length || recOngoing) ? (
+            <div className="pt-2 mt-1" style={{ borderTop: '1px solid rgba(255,255,255,0.12)' }}>
+                <div className="pb-1" style={{ color: 'rgba(255,255,255,0.5)' }}>每次收復前高的歷程</div>
+                <div className="overflow-y-auto overscroll-contain pr-1" style={{ maxHeight: wide ? '11rem' : '7.5rem', pointerEvents: 'auto' }}
+                     onClick={(e) => e.stopPropagation()}>
+                    {wide ? (
+                        <table className="w-full text-left text-xs" style={{ borderCollapse: 'collapse' }}>
+                            <thead>
+                                <tr style={{ color: 'rgba(255,255,255,0.45)' }}>
+                                    <th className="font-normal pr-2 pb-1 whitespace-nowrap">#</th>
+                                    <th className="font-normal pr-2 pb-1 whitespace-nowrap">前高 → 收復</th>
+                                    <th className="font-normal pr-2 pb-1 text-right whitespace-nowrap">回檔深度</th>
+                                    <th className="font-normal pr-2 pb-1 text-right whitespace-nowrap">跌到谷底</th>
+                                    <th className="font-normal pr-2 pb-1 text-right whitespace-nowrap">爬回前高</th>
+                                    <th className="font-normal pb-1 text-right whitespace-nowrap">合計</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {recList.map((r, k) => (
+                                    <tr key={'rec-' + k}>
+                                        <td className="pr-2 py-0.5" style={{ color: REPLAY_GOLD }}>{k + 1}</td>
+                                        <td className="pr-2 py-0.5 whitespace-nowrap leading-tight">{ymd(r.peakDate)}<br />{'→ ' + ymd(r.recoverDate)}</td>
+                                        <td className="pr-2 py-0.5 text-right whitespace-nowrap" style={{ color: REPLAY_GREEN }}>{ddText(r.depth)}</td>
+                                        <td className="pr-2 py-0.5 text-right whitespace-nowrap">{dayText(r.daysDown)}</td>
+                                        <td className="pr-2 py-0.5 text-right whitespace-nowrap">{dayText(r.daysUp)}</td>
+                                        <td className="py-0.5 text-right font-bold whitespace-nowrap" style={{ color: REPLAY_GOLD }}>{dayText(r.daysTotal)}</td>
+                                    </tr>
+                                ))}
+                                {recOngoing && (
+                                    <tr>
+                                        <td className="pr-2 py-0.5" style={{ color: REPLAY_GREEN }}>進行中</td>
+                                        <td className="py-0.5" colSpan={5}>
+                                            {'自 ' + ymd(recOngoing.peakDate) + ' 起已 ' + recOngoing.daysSincePeak + ' 天｜目前回檔 '
+                                                + ddText(recOngoing.currentDepth) + '｜最深 ' + ddText(recOngoing.depth)}
+                                        </td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    ) : (
+                        <div className="space-y-1.5">
+                            {recList.map((r, k) => (
+                                <div key={'rec-' + k} className="rounded-lg px-2.5 py-1.5" style={{ background: 'rgba(255,255,255,0.05)' }}>
+                                    <div className="flex justify-between">
+                                        <span style={{ color: REPLAY_GOLD }}>{'第 ' + (k + 1) + ' 次'}</span>
+                                        <span style={{ color: REPLAY_GREEN }}>{ddText(r.depth)}</span>
+                                    </div>
+                                    <div style={{ color: 'rgba(255,255,255,0.75)' }}>{ymd(r.peakDate) + ' → ' + ymd(r.recoverDate)}</div>
+                                    <div style={{ color: 'rgba(255,255,255,0.55)' }}>
+                                        {'跌到谷底 ' + dayText(r.daysDown) + '｜爬回前高 ' + dayText(r.daysUp) + '｜合計 '}
+                                        <span className="font-bold" style={{ color: REPLAY_GOLD }}>{dayText(r.daysTotal)}</span>
+                                    </div>
+                                </div>
+                            ))}
+                            {recOngoing && (
+                                <div className="rounded-lg px-2.5 py-1.5" style={{ background: 'rgba(43,212,125,0.08)', border: '1px solid rgba(43,212,125,0.35)' }}>
+                                    <div style={{ color: REPLAY_GREEN }}>進行中</div>
+                                    <div style={{ color: 'rgba(255,255,255,0.75)' }}>{'自 ' + ymd(recOngoing.peakDate) + ' 起已 ' + recOngoing.daysSincePeak + ' 天'}</div>
+                                    <div style={{ color: 'rgba(255,255,255,0.55)' }}>{'目前回檔 ' + ddText(recOngoing.currentDepth) + '｜最深 ' + ddText(recOngoing.depth)}</div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            </div>
+        ) : null;
+
         const summaryNode = (
             <div className={"rounded-2xl px-4 py-4 font-mono space-y-2 " + (wide ? 'text-sm' : 'text-xs')}
                  style={{ background: 'rgba(13,13,13,0.82)', border: '1px solid rgba(245,197,66,0.4)' }}>
@@ -6417,6 +6553,7 @@ Build the wall first. Attack second.`)}
                     + (summary.deepestDd * 100).toFixed(1) + '%', REPLAY_GREEN)}
                 {sumRow('創歷史新高', summary.peakCount + ' 次', REPLAY_GOLD)}
                 {sumRow('撐過 ≥10% 回檔', summary.survivedCount + ' 次', REPLAY_GOLD)}
+                {recoveryDetail}
             </div>
         );
 
