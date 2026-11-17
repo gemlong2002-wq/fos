@@ -134,13 +134,19 @@ const M = eval(deps + `; ({
   isReplayGap, truncateReplayNote, calcReplayDuration, replayDayDiff,
   attachMarketExtremes, replaySpawnCount, replayDpr,
   replayLerp, replayProgress, replayBoltSpec, buildLightningPath, buildReplaySummary,
+  buildReplayAthCounts, buildReplayMinorMarks, calcReplayStepDurations,
   K: { STEP: ASSET_REPLAY_MILESTONE_STEP, TIERS: ASSET_REPLAY_DRAWDOWN_TIERS,
        MIN_DD: ASSET_REPLAY_SEGMENT_MIN_DRAWDOWN, GAP: ASSET_REPLAY_GAP_DAYS,
        NOTE: ASSET_REPLAY_NOTE_MAX, HOLD: ASSET_REPLAY_EVENT_HOLD_MS,
        MIN_MS: ASSET_REPLAY_MIN_MS, MAX_MS: ASSET_REPLAY_MAX_MS,
        PRIORITY: ASSET_REPLAY_EVENT_PRIORITY,
        AS_OF: TWSE_EXTREME_AS_OF, TWSE: TWSE_EXTREME_DAYS,
-       MAX_PARTICLES: ASSET_REPLAY_MAX_PARTICLES, MAX_DPR: ASSET_REPLAY_MAX_DPR }
+       MAX_PARTICLES: ASSET_REPLAY_MAX_PARTICLES, MAX_DPR: ASSET_REPLAY_MAX_DPR,
+       SHOW_MARKET: ASSET_REPLAY_SHOW_MARKET, MINOR: ASSET_REPLAY_MINOR_STEP,
+       ATH_SPARKS: ASSET_REPLAY_ATH_SPARKS, SLOW: ASSET_REPLAY_SLOW_FACTOR,
+       FAST: ASSET_REPLAY_FAST_FACTOR, RADIUS: ASSET_REPLAY_SLOW_RADIUS,
+       FLAT: ASSET_REPLAY_FLAT_RATIO, FINAL_MS: ASSET_REPLAY_FINAL_SLOW_MS,
+       FINAL_GLOW_MS: ASSET_REPLAY_FINAL_GLOW_MS }
 })`);
 const K = M.K;
 
@@ -370,7 +376,7 @@ chk('單筆序列不掛台股',
   M.attachMarketExtremes(M.toReplaySeries([S3_ROWS[0]]), [[]], S3_DAYS)[0].length, 0);
 
 console.log('');
-console.log('【假序列 S4】不帶第二引數 → 吃寫死的 TWSE 快照');
+console.log('【假序列 S4】顯式傳入寫死的 TWSE 快照（第 3 輪起預設不掛台股，見下方 A）');
 /* 手推：資產紀錄 i0 20240701／i1 20240901／i2 20250501
    落在 20240701～20250501 區間內的寫死紀錄：
      20240805 −1807.21、20240807 +794.26 → 之後第一筆都是 i1（20240901）
@@ -387,7 +393,9 @@ const s4 = M.toReplaySeries([
   { 日期: '20240901', 總資產: 1100000, 備註: '' },
   { 日期: '20250501', 總資產: 1200000, 備註: '' }
 ]);
-const e4 = M.buildReplayEvents(s4);
+/* 第 3 輪結構調整：原本靠「不帶第二引數」吃預設快照；預設已改為不掛台股，
+   改成顯式傳入 K.TWSE，手推過程與預期值完全不變。 */
+const e4 = M.buildReplayEvents(s4, K.TWSE);
 
 chk('空檔索引（62 天與 242 天）', JSON.stringify(M.buildReplayGaps(s4)), '[1,2]');
 chk('i0 事件', types(e4, 0), '');
@@ -739,6 +747,178 @@ chk('I 卸載時歸零白閃與壓暗的 opacity',
 chk('未新增任何函式庫（閃電／煙火全自繪）',
   (H.match(/<script src=/g) || []).length, 5);
 
+console.log('');
+console.log('【第 3 輪 A｜關閉台股大漲大跌】');
+chk('A 常數 ASSET_REPLAY_SHOW_MARKET = false', K.SHOW_MARKET, false);
+/* 手推：s4 與上方 S4 相同。預設（不帶第二引數）在旗標為 false 時不掛任何台股事件，
+   其餘事件不受影響：i1 原本只有 market → 變空；i2 原本 year,market,final → year,final */
+const e4d = M.buildReplayEvents(s4);
+chk('A 預設不產生 market 事件',
+  e4d.reduce((a, l) => a + l.filter((x) => x.type === 'market').length, 0), 0);
+chk('A   └ i1 事件（台股拿掉後為空）', types(e4d, 1), '');
+chk('A   └ i2 事件（跨年＋最後一筆不受影響）', types(e4d, 2), 'year,final');
+chk('A 顯式傳入清單仍會掛（S4 傳 K.TWSE → 2 筆）',
+  e4.reduce((a, l) => a + l.filter((x) => x.type === 'market').length, 0), 2);
+chk('A 台股快照與 attachMarketExtremes 保留未刪', K.TWSE.length === 20 && typeof M.attachMarketExtremes === 'function', true);
+chk('A 遠方閃電也受旗標控制',
+  /ASSET_REPLAY_SHOW_MARKET && ev\.type === 'market' && ev\.points < 0/.test(H), true);
+
+console.log('');
+console.log('【第 3 輪 B｜創歷史新高 buildReplayAthCounts】');
+/* 定義：第 2 筆起「嚴格大於它之前所有紀錄的最高值」才算創高，回傳累計次數，否則 0。
+   S1 值（萬）：480 520 1000 1100 900 750 1150 700 2000
+     i1 520>480 → 1；i2 1000>520 → 2；i3 1100>1000 → 3；
+     i4 900、i5 750 未超過 1100 → 0；i6 1150>1100 → 4；i7 700 → 0；i8 2000>1150 → 5
+   → [0,1,2,3,0,0,4,0,5]，最後一個非 0 的數字 5 ＝ 總結面板的創高次數（上方已手推 5） */
+chk('B S1 每筆累計創高', JSON.stringify(M.buildReplayAthCounts(s1)), '[0,1,2,3,0,0,4,0,5]');
+chk('B   └ 最終次數與總結面板一致', Math.max.apply(null, M.buildReplayAthCounts(s1)), sum1.peakCount);
+/* 持平不算創高：100、100、100 → 只有「大於」才算 → 全 0 */
+chk('B 持平不算創高',
+  JSON.stringify(M.buildReplayAthCounts(M.toReplaySeries([
+    { 日期: '20260101', 總資產: 1000000 }, { 日期: '20260201', 總資產: 1000000 },
+    { 日期: '20260301', 總資產: 1000000 }]))), '[0,0,0]');
+chk('B 第一筆不算創高（單筆 → [0]）',
+  JSON.stringify(M.buildReplayAthCounts(M.toReplaySeries([S1_ROWS[0]]))), '[0]');
+chk('B 空／非陣列 → 空陣列', JSON.stringify(M.buildReplayAthCounts(null)), '[]');
+chk('B 火花上限 12', K.ATH_SPARKS, 12);
+chk('B 火花走 pushParts（受 replaySpawnCount 上限）',
+  /pushParts\(ASSET_REPLAY_ATH_SPARKS,/.test(H), true);
+chk('B 不放進事件清單（不停留、不搶字卡）',
+  JSON.stringify(e1).indexOf('"ath"'), -1);
+chk('B 優先度最低', Object.keys(K.PRIORITY).every((k) => k === 'ath' || K.PRIORITY[k] > K.PRIORITY.ath), true);
+chk('B 同筆有收復／大關卡／結尾時不另閃金光',
+  /ev\.type === 'recover' \|\| ev\.type === 'milestone' \|\| ev\.type === 'final'/.test(H)
+  && /if \(!big\) \{\s*athGlowUntilRef\.current = now \+ 300;/.test(H), true);
+chk('B 計數取累計值（同筆不重複計）', /setAthN\(athCounts\[j\]\);/.test(H), true);
+chk('B 畫面有 NEW HIGH ×N', /NEW HIGH ×\{athN\}/.test(H), true);
+
+console.log('');
+console.log('【第 3 輪 C｜小關卡 buildReplayMinorMarks】');
+chk('C 小關卡級距 100 萬', K.MINOR, 1000000);
+/* 定義：首次達到的最高 100 萬倍數；同一筆已觸發大關卡（事件內有 milestone）→ 該筆記 0，
+   但已達到的等級照樣往上記。S1 大關卡在 i1（500 萬）、i2（1000 萬）、i8（2000 萬）。
+     i0 480 萬 → 400 萬，首次且無大關卡 → 4,000,000
+     i1 520 萬 → 500 萬 > 400 萬，但同筆有大關卡 → 0（等級記到 500 萬）
+     i2 1000 萬 → 1000 萬，同筆有大關卡 → 0（記到 1000 萬）
+     i3 1100 萬 → 1100 萬 > 1000 萬，無大關卡 → 11,000,000
+     i4 900、i5 750 → 900／700 萬，未高於 1100 萬 → 0
+     i6 1150 萬 → 1100 萬，未高於已達的 1100 萬 → 0
+     i7 700 萬 → 0
+     i8 2000 萬 → 2000 萬，同筆有大關卡 → 0 */
+chk('C S1 每筆小關卡', JSON.stringify(M.buildReplayMinorMarks(s1, e1)),
+  '[4000000,0,0,11000000,0,0,0,0,0]');
+/* 不給事件清單（全部視為無大關卡）：i1 500 萬、i2 1000 萬 也會變成小關卡；
+   i8 2000 萬 也是 → [4000000,5000000,10000000,11000000,0,0,0,0,20000000] */
+chk('C 無事件清單時全部算小關卡', JSON.stringify(M.buildReplayMinorMarks(s1, null)),
+  '[4000000,5000000,10000000,11000000,0,0,0,0,20000000]');
+/* 未滿 100 萬：99 萬 → 0 */
+chk('C 未滿 100 萬不觸發', JSON.stringify(M.buildReplayMinorMarks(M.toReplaySeries([
+  { 日期: '20260101', 總資產: 990000 }, { 日期: '20260201', 總資產: 999999 }]), [[], []])), '[0,0]');
+chk('C 小關卡不停留、不出字卡（不在事件清單）', JSON.stringify(e1).indexOf('minor'), -1);
+chk('C 小關卡：小煙火＋線頭光環',
+  /ringsRef\.current\.push\(\{ x: hd\.x, y: hd\.y, born: now, ttl: 520, small: true \}\);/.test(H)
+  && /spawnBurst\(r\.small \? 18 : 50,/.test(H), true);
+
+console.log('');
+console.log('【第 3 輪 D｜不等速節奏 calcReplayStepDurations】');
+chk('D 常數：放慢 1.6／加速 0.6／前後 2 筆／平淡 1%／最後一段 1 秒',
+  [K.SLOW, K.FAST, K.RADIUS, K.FLAT, K.FINAL_MS].join('|'), '1.6|0.6|2|0.01|1000');
+/* 假序列 S5（14 筆，事件只放在 i4 備註、i13 最後一筆，用手填的事件清單）
+   值：i0 100萬 i1 100.5萬 i2 110萬 i3 110萬 i4 120萬 i5 120萬 i6 130萬
+       i7 140萬 i8 140萬 i9 141.4萬 i10 142萬 i11 200萬 i12 210萬 i13 220萬
+   總長 = calcReplayDuration(14) = max(8000, 14×220=3080) = 8000
+   最後一段 d13 = 1000，其餘預算 = 7000，依權重分配給 s=1..12：
+     事件附近（與 4 或 13 相距 ≤ 2）：s=2,3,4,5,6（近 4）、s=11,12（近 13）→ 1.6
+     s1：(100.5−100)/100 = 0.5% < 1% → 0.6
+     s7：(140−130)/130 = 7.69% → 1
+     s8：0% → 0.6
+     s9：(141.4−140)/140 = 1.0%，不小於 1% → 1（邊界）
+     s10：(142−141.4)/141.4 = 0.42% → 0.6
+   權重和 = 0.6 + 1.6×5 + 1 + 0.6 + 1 + 0.6 + 1.6×2 = 15
+   單位 = 7000 / 15 = 466.6667
+     0.6 → 280；1.6 → 746.6667；1 → 466.6667 */
+const S5 = M.toReplaySeries([
+  1000000, 1005000, 1100000, 1100000, 1200000, 1200000, 1300000,
+  1400000, 1400000, 1414000, 1420000, 2000000, 2100000, 2200000
+].map((v, k) => ({ 日期: String((2025 + Math.floor(k / 12)) * 10000 + (k % 12 + 1) * 100 + 1), 總資產: v, 備註: '' })));
+const E5 = S5.map(() => []);
+E5[4] = [{ type: 'note', text: 'x' }];
+E5[13] = [{ type: 'final' }];
+const D5 = M.calcReplayStepDurations(S5, E5);
+chk('D S5 長度', D5.length, 14);
+chk('D d0 固定 0', D5[0], 0);
+near('D s1 平淡 0.5% → 0.6 倍', D5[1], 280, 1e-6);
+near('D s2 事件附近 → 1.6 倍', D5[2], 746.6666667, 1e-6);
+near('D s4 事件本身 → 1.6 倍', D5[4], 746.6666667, 1e-6);
+near('D s6 事件後第 2 筆 → 1.6 倍', D5[6], 746.6666667, 1e-6);
+near('D s7 變動 7.69% → 1 倍', D5[7], 466.6666667, 1e-6);
+near('D s8 持平 → 0.6 倍', D5[8], 280, 1e-6);
+near('D s9 剛好 1%（不算平淡）→ 1 倍', D5[9], 466.6666667, 1e-6);
+near('D s10 0.42% → 0.6 倍', D5[10], 280, 1e-6);
+near('D s11 結尾前第 2 筆 → 1.6 倍', D5[11], 746.6666667, 1e-6);
+chk('D 最後一段慢動作 1 秒', D5[13], 1000);
+near('D 總長仍為 8000', D5.reduce((a, b) => a + b, 0), 8000, 1e-6);
+near('D 事件附近 ÷ 平淡 = 1.6 / 0.6', D5[2] / D5[1], 1.6 / 0.6, 1e-9);
+/* 假序列 S6（100 筆全部 100 萬持平，只有最後一筆有事件）
+   總長 = calcReplayDuration(100) = min(20000, 22000) = 20000；最後一段 1000，預算 19000
+   s=97,98 近最後一筆 → 1.6；s=1..96 持平 → 0.6
+   權重和 = 96×0.6 + 2×1.6 = 60.8；單位 = 19000 / 60.8 = 312.5
+   → 平淡段 187.5、近結尾 500、最後一段 1000；總和 96×187.5 + 2×500 + 1000 = 20000 */
+// 每 7 天一筆的真實日期
+const S6 = M.toReplaySeries(Array.from({ length: 100 }, (_, k) => {
+  const d = new Date(2020, 0, 1 + k * 7);
+  return { 日期: String(d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate()), 總資產: 1000000, 備註: '' };
+}));
+const E6 = S6.map(() => []);
+E6[99] = [{ type: 'final' }];
+const D6 = M.calcReplayStepDurations(S6, E6);
+chk('D S6 筆數', S6.length, 100);
+near('D S6 平淡段 187.5', D6[1], 187.5, 1e-9);
+near('D S6 s96 仍是平淡', D6[96], 187.5, 1e-9);
+near('D S6 s97 近結尾 500', D6[97], 500, 1e-9);
+chk('D S6 最後一段 1000', D6[99], 1000);
+near('D S6 總長 20000（上限）', D6.reduce((a, b) => a + b, 0), 20000, 1e-6);
+/* 2 筆：唯一一段就是最後一段 → [0, 8000]；1 筆 → [0]；空 → [] */
+chk('D 2 筆 → [0,8000]', JSON.stringify(M.calcReplayStepDurations(M.toReplaySeries([
+  { 日期: '20260101', 總資產: 1 }, { 日期: '20260201', 總資產: 2 }]), [[], [{ type: 'final' }]])), '[0,8000]');
+chk('D 1 筆 → [0]', JSON.stringify(M.calcReplayStepDurations(M.toReplaySeries([S1_ROWS[0]]), [[]])), '[0]');
+chk('D 空 → []', JSON.stringify(M.calcReplayStepDurations([], [])), '[]');
+chk('D 播放迴圈依段查時長', /const segMs = Math\.max\(1, stepDurs\[Math\.min\(n - 1, fired \+ 1\)\] \|\| 1\);/.test(H), true);
+
+console.log('');
+console.log('【第 3 輪 E／F｜結尾不蓋線、電腦版橫式】');
+chk('E 結尾曲線先發光 1 秒再出總結面板',
+  /finalGlowUntilRef\.current = now \+ ASSET_REPLAY_FINAL_GLOW_MS;/.test(H)
+  && /addTimer\(\(\) => \{ setShowSummary\(true\); \}, ASSET_REPLAY_FINAL_GLOW_MS\);/.test(H), true);
+chk('E 結尾發光時間 1 秒', K.FINAL_GLOW_MS, 1000);
+chk('E 手機總結面板放在曲線區塊之外（不覆蓋 canvas）',
+  /\{showSummary && \(\s*<div className="shrink-0 mt-3 pointer-events-none">\{summaryNode\}<\/div>/.test(H), true);
+chk('F 電腦版以 900px 為界', /const wideQuery = '\(min-width: 900px\)';/.test(H), true);
+chk('F 電腦版折線約 70%／右側欄約 30%',
+  /flex: '7 1 0%'/.test(H) && /flex: '3 1 0%'/.test(H), true);
+chk('F 電腦版大字以 clamp 隨寬度放大', /fontSize: 'clamp\(48px, 6\.2vw, 120px\)'/.test(H), true);
+chk('F 電腦版移除 max-w-md（無兩側大黑邊）',
+  /<div className="relative h-full w-full flex flex-col px-10 pt-16 pb-6"/.test(H), true);
+
+console.log('');
+console.log('【第 3 輪 G｜回放區所有 canvas 的尺寸都經 replayFitCanvas】');
+/* 範圍：回放視窗區塊（REPLAY_BG 宣告到 AssetTerminal 之前）。
+   · 尺寸只能在 replayFitCanvas 裡設定：全區塊的 .width = ／.height = 指派只有那一處
+   · getContext('2d') 也只有那一處（其他地方拿不到未經 dpr 夾擠的畫布）
+   · 兩張回放畫布（lineRef／fxRef）都經 replayFitCanvas 取得繪圖環境 */
+const RZ = H.slice(H.indexOf("const REPLAY_BG = '#0D0D0D';"), H.indexOf('    const AssetTerminal = ({ theme'));
+const FIT = RZ.slice(RZ.indexOf('const replayFitCanvas = (cv) => {'), RZ.indexOf('const replayGeom = '));
+chk('G 回放區有找到 replayFitCanvas', FIT.length > 0, true);
+chk('G 尺寸指派只出現在 replayFitCanvas',
+  (RZ.match(/\.(width|height) = /g) || []).length === (FIT.match(/\.(width|height) = /g) || []).length
+  && (FIT.match(/\.(width|height) = /g) || []).length === 2, true);
+chk('G getContext 只出現在 replayFitCanvas',
+  (RZ.match(/getContext\(/g) || []).length === 1 && /getContext\(/.test(FIT), true);
+chk('G 折線畫布經 replayFitCanvas', /replayFitCanvas\(lineRef\.current\)|const cv = lineRef\.current;\s*const fit = replayFitCanvas\(cv\);/.test(RZ), true);
+chk('G 特效畫布經 replayFitCanvas', /replayFitCanvas\(fxRef\.current\)/.test(RZ), true);
+/* 寬窄兩版各渲染一次 lineRef（同時只會掛一個），fxRef 在共用外層一次 → 原始碼共 3 處，全部都是這兩個 ref */
+chk('G 回放區所有 canvas 都是 lineRef／fxRef（無其他畫布）', (RZ.match(/<canvas ref=\{(lineRef|fxRef)\}/g) || []).length,
+  (RZ.match(/<canvas /g) || []).length);
 console.log('');
 console.log(fail === 0 ? '>>> 全部通過' : '>>> ' + fail + ' 組失敗');
 process.exit(fail === 0 ? 0 : 1);

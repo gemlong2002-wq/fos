@@ -151,8 +151,15 @@
     .replay-shake-1 { animation: replayShake 260ms ease-in-out; }
     .replay-shake-2 { animation: replayShakeHard 420ms ease-in-out; }
     .replay-shake-3 { animation: replayShakeHard 700ms ease-in-out; }
+    /* 創歷史新高計數：創高瞬間放大跳動 */
+    @keyframes replayPop {
+      0% { transform: scale(1); }
+      35% { transform: scale(1.45); }
+      100% { transform: scale(1); }
+    }
+    .replay-pop { animation: replayPop 420ms ease-out; display: inline-block; }
     @media (prefers-reduced-motion: reduce) {
-      .replay-shake, .replay-shake-1, .replay-shake-2, .replay-shake-3 { animation: none; }
+      .replay-shake, .replay-shake-1, .replay-shake-2, .replay-shake-3, .replay-pop { animation: none; }
     }
 
     /* ============ Amber 樣式 — 裸元素選擇器一律收進 .amber-scope，避免外洩 ============ */
@@ -414,7 +421,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/11/15 12:42';
+    const APP_VERSION = '2026/11/17 14:33';
 
     /* ===================================================================
        共用工具
@@ -5024,10 +5031,21 @@ Build the wall first. Attack second.`)}
     const ASSET_REPLAY_MAX_PARTICLES = 400;                 // 粒子總數上限
     const ASSET_REPLAY_BURST_RESERVE = 160;                 // 保留給煙火火花的配額
     const ASSET_REPLAY_MAX_DPR = 2;                         // devicePixelRatio 上限
+    /* 第 3 輪 */
+    const ASSET_REPLAY_SHOW_MARKET = false;                 // 台股大漲大跌字卡與遠方閃電（false＝關閉，資料保留可恢復）
+    const ASSET_REPLAY_MINOR_STEP = 1000000;                // 小關卡：每 100 萬（不停留、不出字卡）
+    const ASSET_REPLAY_ATH_SPARKS = 12;                     // 每次創歷史新高的火花上限
+    const ASSET_REPLAY_SLOW_FACTOR = 1.6;                   // 事件前後幾筆放慢的倍率
+    const ASSET_REPLAY_FAST_FACTOR = 0.6;                   // 平淡區段加速的倍率
+    const ASSET_REPLAY_SLOW_RADIUS = 2;                     // 事件前後幾筆算「事件附近」
+    const ASSET_REPLAY_FLAT_RATIO = 0.01;                   // 單筆變動 < 1% 算平淡
+    const ASSET_REPLAY_FINAL_SLOW_MS = 1000;                // 最後一段（最後一筆前 1 筆起）的慢動作
+    const ASSET_REPLAY_FINAL_GLOW_MS = 1000;                // 結尾曲線發光多久才出總結面板
     /* 同一筆有多個事件時只顯示優先度最高者：
-       最後一筆 > 收復前高 > 大跌 > 整數關卡 > 谷底 > 跨年 > 台股大漲大跌 > 備註 */
+       最後一筆 > 收復前高 > 大跌 > 整數關卡 > 谷底 > 跨年 > 台股大漲大跌 > 備註
+       （ath 創歷史新高優先度最低，且不放進事件清單：不停留、不搶字卡） */
     const ASSET_REPLAY_EVENT_PRIORITY = {
-        final: 8, recover: 7, crash: 6, milestone: 5, trough: 4, year: 3, market: 2, note: 1
+        final: 8, recover: 7, crash: 6, milestone: 5, trough: 4, year: 3, market: 2, note: 1, ath: 0
     };
 
     /* 台股前十大漲點／跌點紀錄（來源：TWSE，Boss 2026/11/04 提供的快照）。
@@ -5235,8 +5253,12 @@ Build the wall first. Attack second.`)}
             });
         }
 
-        // ⑧ 台股大漲大跌（預設吃寫死的快照，測試可自行注入）
-        attachMarketExtremes(series, events, marketDays === undefined ? TWSE_EXTREME_DAYS : marketDays);
+        /* ⑧ 台股大漲大跌：未傳清單時看 ASSET_REPLAY_SHOW_MARKET（目前 false → 不掛）；
+           明確傳入清單則照掛（測試與日後恢復用） */
+        const days = marketDays === undefined
+            ? (ASSET_REPLAY_SHOW_MARKET ? TWSE_EXTREME_DAYS : [])
+            : marketDays;
+        attachMarketExtremes(series, events, days);
 
         // ⑥ 備註
         for (let i = 0; i < n; i++) {
@@ -5401,6 +5423,92 @@ Build the wall first. Attack second.`)}
         };
     };
 
+    /* ── 第 3 輪新增的純函式：創新高、小關卡、不等速節奏 ──────────
+       這三樣都不放進 buildReplayEvents 的事件清單（不停留、不搶字卡），
+       另外回傳與 series 等長的陣列，由播放迴圈在抵達該筆時查表。 */
+
+    /* 創歷史新高：第 2 筆起「嚴格大於它之前所有紀錄的最高值」才算，
+       口徑與 buildReplaySummary 的 peakCount 相同。
+       回傳每筆的累計創高次數；該筆不是創高則為 0。 */
+    const buildReplayAthCounts = (series) => {
+        const n = Array.isArray(series) ? series.length : 0;
+        const out = [];
+        for (let i = 0; i < n; i++) out.push(0);
+        if (n < 2) return out;
+        let max = series[0].value, count = 0;
+        for (let i = 1; i < n; i++) {
+            const v = series[i].value;
+            if (v > max) { count += 1; out[i] = count; max = v; }
+        }
+        return out;
+    };
+
+    /* 小關卡（每 100 萬）：首次達到的最高 100 萬倍數，規則與大關卡相同。
+       同一筆已觸發大關卡（事件清單內有 milestone）時只留大關卡，小關卡記 0，
+       但已達到的小關卡等級照樣往上記，之後不會補發。
+       回傳每筆的小關卡金額；沒有則為 0。 */
+    const buildReplayMinorMarks = (series, events) => {
+        const n = Array.isArray(series) ? series.length : 0;
+        const out = [];
+        for (let i = 0; i < n; i++) out.push(0);
+        let fired = 0;
+        for (let i = 0; i < n; i++) {
+            const level = Math.floor(series[i].value / ASSET_REPLAY_MINOR_STEP) * ASSET_REPLAY_MINOR_STEP;
+            if (level >= ASSET_REPLAY_MINOR_STEP && level > fired) {
+                const list = Array.isArray(events) && Array.isArray(events[i]) ? events[i] : [];
+                const hasMajor = list.some((e) => e && e.type === 'milestone');
+                if (!hasMajor) out[i] = level;
+                fired = level;
+            }
+        }
+        return out;
+    };
+
+    /* 不等速節奏：回傳與 series 等長的毫秒陣列，d[s] 是「由第 s−1 筆走到第 s 筆」的時長，d[0] = 0。
+       · 總長沿用 calcReplayDuration（8～20 秒），事件停留另計
+       · 最後一段（最後一筆前 1 筆 → 最後一筆）固定 ASSET_REPLAY_FINAL_SLOW_MS 慢動作，
+         其餘時長依權重分配：
+           事件附近（抵達的那筆與任一有事件的筆相距 ≤ 2）→ 1.6
+           否則該段變動 < 1%（|v_s − v_{s−1}| / v_{s−1}）→ 0.6
+           其餘 → 1
+       · 「有事件」＝ pickReplayEvent 有結果（事件清單本身，不含創高與小關卡）
+       · 只有 2 筆時唯一一段就是最後一段，時長＝總長 */
+    const calcReplayStepDurations = (series, events) => {
+        const n = Array.isArray(series) ? series.length : 0;
+        const d = [];
+        for (let i = 0; i < n; i++) d.push(0);
+        if (n < 2) return d;
+        const total = calcReplayDuration(n);
+        if (n === 2) { d[1] = total; return d; }
+
+        const hasEv = [];
+        for (let j = 0; j < n; j++) {
+            hasEv.push(!!(Array.isArray(events) && pickReplayEvent(events[j])));
+        }
+        const weights = [];
+        let sumW = 0;
+        for (let s = 1; s <= n - 2; s++) {
+            let near = false;
+            for (let j = Math.max(0, s - ASSET_REPLAY_SLOW_RADIUS); j <= Math.min(n - 1, s + ASSET_REPLAY_SLOW_RADIUS); j++) {
+                if (hasEv[j]) { near = true; break; }
+            }
+            let w = 1;
+            if (near) w = ASSET_REPLAY_SLOW_FACTOR;
+            else {
+                const prev = series[s - 1].value, cur = series[s].value;
+                const ratio = prev > 0 ? Math.abs(cur - prev) / prev : Infinity;
+                if (ratio < ASSET_REPLAY_FLAT_RATIO) w = ASSET_REPLAY_FAST_FACTOR;
+            }
+            weights[s] = w;
+            sumW += w;
+        }
+        const finalMs = Math.min(ASSET_REPLAY_FINAL_SLOW_MS, total);
+        const budget = total - finalMs;
+        for (let s = 1; s <= n - 2; s++) d[s] = budget * weights[s] / sumW;
+        d[n - 1] = finalMs;
+        return d;
+    };
+
     /* ===================================================================
        資產回放（ASSET）｜全螢幕動畫視窗
        純讀取：只吃 AssetTerminal 已載入的 data，不發任何請求、不寫入後端。
@@ -5456,9 +5564,28 @@ Build the wall first. Attack second.`)}
         const events = useMemo(() => buildReplayEvents(series), [series]);
         const gaps = useMemo(() => buildReplayGaps(series), [series]);
         const summary = useMemo(() => buildReplaySummary(series, events), [series, events]);
+        const athCounts = useMemo(() => buildReplayAthCounts(series), [series]);
+        const minorMarks = useMemo(() => buildReplayMinorMarks(series, events), [series, events]);
+        const stepDurs = useMemo(() => calcReplayStepDurations(series, events), [series, events]);
         const enough = series.length >= 2;
         const reduced = useMemo(() => !!(typeof window !== 'undefined' && window.matchMedia
             && window.matchMedia('(prefers-reduced-motion: reduce)').matches), []);
+
+        // 電腦版橫式版面（寬度 ≥ 900px）；以下維持原本手機版
+        const wideQuery = '(min-width: 900px)';
+        const [wide, setWide] = useState(() => !!(typeof window !== 'undefined' && window.matchMedia
+            && window.matchMedia(wideQuery).matches));
+        useEffect(() => {
+            if (!window.matchMedia) return;
+            const mq = window.matchMedia(wideQuery);
+            const onChange = () => setWide(mq.matches);
+            if (mq.addEventListener) mq.addEventListener('change', onChange);
+            else if (mq.addListener) mq.addListener(onChange);
+            return () => {
+                if (mq.removeEventListener) mq.removeEventListener('change', onChange);
+                else if (mq.removeListener) mq.removeListener(onChange);
+            };
+        }, []);
 
         const lastIdx = Math.max(0, series.length - 1);
         const [idx, setIdx] = useState(reduced ? lastIdx : 0);
@@ -5468,6 +5595,8 @@ Build the wall first. Attack second.`)}
         const [paused, setPaused] = useState(false);
         const [showSummary, setShowSummary] = useState(reduced && enough);
         const [runId, setRunId] = useState(0);
+        const [athN, setAthN] = useState(reduced ? (summary.peakCount || 0) : 0);   // NEW HIGH ×N
+        const [athPop, setAthPop] = useState(0);                                    // 變動即重跑跳動動畫
 
         const lineRef = useRef(null);
         const fxRef = useRef(null);
@@ -5495,6 +5624,8 @@ Build the wall first. Attack second.`)}
         const pausedRef = useRef(false);
         const headRef = useRef({ x: 0, y: 0, ok: false });   // 折線頭在特效畫布的座標
         const timersRef = useRef([]);
+        const athGlowUntilRef = useRef(0);    // 大字總資產金色光暈到何時
+        const finalGlowUntilRef = useRef(0);  // 結尾整條曲線發光到何時
 
         useEffect(() => { pausedRef.current = paused; }, [paused]);
 
@@ -5518,7 +5649,13 @@ Build the wall first. Attack second.`)}
             const first = series.length ? series[0].value : 0;
             const pct = first > 0 ? (val - first) / first * 100 : 0;
             const wan = Math.round((val - first) / 10000);
-            if (bigRef.current) bigRef.current.textContent = Math.round(val).toLocaleString();
+            if (bigRef.current) {
+                bigRef.current.textContent = Math.round(val).toLocaleString();
+                const nowT = window.performance ? performance.now() : Date.now();
+                bigRef.current.style.textShadow = athGlowUntilRef.current > nowT
+                    ? '0 0 26px ' + REPLAY_GOLD + ', 0 0 10px ' + REPLAY_GOLD
+                    : '0 0 18px rgba(255,59,71,0.65)';
+            }
             if (pctRef.current) {
                 pctRef.current.textContent = (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%';
                 pctRef.current.style.color = pct >= 0 ? REPLAY_RED : REPLAY_GREEN;
@@ -5559,7 +5696,6 @@ Build the wall first. Attack second.`)}
         useEffect(() => {
             if (!enough || reduced) return;
             const n = series.length;
-            const perPoint = calcReplayDuration(n) / (n - 1);
             let raf = 0, last = 0, hold = 0, dead = false, fired = 0, done = false;
             const timers = timersRef.current;
 
@@ -5567,9 +5703,12 @@ Build the wall first. Attack second.`)}
             peakRef.current = series[0].value;
             rainRef.current = false;
             rainAlphaRef.current = 0;
+            athGlowUntilRef.current = 0;
+            finalGlowUntilRef.current = 0;
             setIdx(0);
             setPlaying(true);
             setShowSummary(false);
+            setAthN(0);
 
             const addTimer = (fn, ms) => { timers.push(window.setTimeout(fn, ms)); };   // 震動復原等 timeout 一律登記
 
@@ -5604,9 +5743,42 @@ Build the wall first. Attack second.`)}
                 }
 
                 const ev = pickReplayEvent(events[j]);
+                const hd = headRef.current;
+
+                /* 創歷史新高（不停留、不搶字卡）：火花照樣冒、計數照樣更新；
+                   同筆有收復／大關卡／結尾時只顯示那些大事件，不另閃金光、不跳動 */
+                if (athCounts[j] > 0) {
+                    const big = !!ev && (ev.type === 'recover' || ev.type === 'milestone' || ev.type === 'final');
+                    setAthN(athCounts[j]);
+                    if (hd.ok) {
+                        pushParts(ASSET_REPLAY_ATH_SPARKS, () => {
+                            const a = -Math.PI / 2 + (Math.random() - 0.5) * 2.2;
+                            const sp = 1.2 + Math.random() * 2.2;
+                            return {
+                                kind: 'spark', x: hd.x, y: hd.y,
+                                vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+                                life: 1, decay: 0.03, color: REPLAY_GOLD,
+                                size: 0.9 + Math.random() * 1.2, spin: (Math.random() - 0.5) * 0.4
+                            };
+                        });
+                    }
+                    if (!big) {
+                        athGlowUntilRef.current = now + 300;
+                        setAthPop((v) => v + 1);
+                    }
+                }
+
+                // 小關卡（每 100 萬）：小煙火＋線頭光環，不停留、不出字卡
+                if (minorMarks[j] > 0 && hd.ok) {
+                    ringsRef.current.push({ x: hd.x, y: hd.y, born: now, ttl: 520, small: true });
+                    rocketsRef.current.push({
+                        x: hd.x, y: (fxRef.current ? fxRef.current.clientHeight : 600),
+                        vy: -7 - Math.random() * 1.5, targetY: Math.max(12, hd.y - 36), small: true
+                    });
+                }
+
                 setCard(ev && ev.type === 'final' ? null : ev);
                 if (!ev) return false;
-                const hd = headRef.current;
 
                 if (ev.type === 'crash') {
                     const spec = replayBoltSpec(ev.tier);
@@ -5615,7 +5787,7 @@ Build the wall first. Attack second.`)}
                     }
                     setShakeLv(spec.level);
                     addTimer(() => setShakeLv(0), spec.shakeMs);
-                } else if (ev.type === 'market' && ev.points < 0) {
+                } else if (ASSET_REPLAY_SHOW_MARKET && ev.type === 'market' && ev.points < 0) {
                     // 遠方閃電：細、淡、不震動、不白閃
                     const cv = fxRef.current;
                     if (cv) {
@@ -5666,7 +5838,9 @@ Build the wall first. Attack second.`)}
                         });
                     }
                     paperUntilRef.current = now + 1500;
-                    setShowSummary(true);
+                    // 先讓完整曲線發光約 1 秒，再出總結面板（面板不蓋線）
+                    finalGlowUntilRef.current = now + ASSET_REPLAY_FINAL_GLOW_MS;
+                    addTimer(() => { setShowSummary(true); }, ASSET_REPLAY_FINAL_GLOW_MS);
                 }
                 return true;
             };
@@ -5727,6 +5901,23 @@ Build the wall first. Attack second.`)}
                 }
                 ctx.setLineDash([]);
                 ctx.shadowBlur = 0;
+
+                // 結尾：完整曲線發光約 1 秒（之後才出總結面板）
+                const fgLeft = finalGlowUntilRef.current - (window.performance ? performance.now() : Date.now());
+                if (fgLeft > 0) {
+                    const pulse = 0.55 + 0.45 * Math.sin((ASSET_REPLAY_FINAL_GLOW_MS - fgLeft) / ASSET_REPLAY_FINAL_GLOW_MS * Math.PI);
+                    ctx.save();
+                    ctx.globalAlpha = pulse;
+                    ctx.lineWidth = 3.2;
+                    ctx.strokeStyle = REPLAY_GOLD;
+                    ctx.shadowColor = REPLAY_GOLD;
+                    ctx.shadowBlur = 22;
+                    ctx.beginPath();
+                    ctx.moveTo(g.xAt(series[0].ts), g.yAt(series[0].value));
+                    for (let k = 1; k < series.length; k++) ctx.lineTo(g.xAt(series[k].ts), g.yAt(series[k].value));
+                    ctx.stroke();
+                    ctx.restore();
+                }
 
                 // 空檔標註：貼著 X 軸放，避開中央字卡與折線
                 ctx.font = '10px ui-monospace, monospace';
@@ -5892,7 +6083,7 @@ Build the wall first. Attack second.`)}
                     ctx.fillRect(r.x - 1, r.y - 6, 2, 12);
                     ctx.restore();
                     if (r.y <= r.targetY || r.vy >= 0) {
-                        spawnBurst(50, r.x, r.y);
+                        spawnBurst(r.small ? 18 : 50, r.x, r.y, r.small ? [REPLAY_GOLD, '#FFFFFF'] : undefined);
                         rocketsRef.current.splice(k, 1);
                     }
                 }
@@ -5909,7 +6100,7 @@ Build the wall first. Attack second.`)}
                     ctx.shadowColor = REPLAY_GOLD;
                     ctx.shadowBlur = 14;
                     ctx.beginPath();
-                    ctx.arc(rg.x, rg.y, 8 + p * 90, 0, Math.PI * 2);
+                    ctx.arc(rg.x, rg.y, 8 + p * (rg.small ? 40 : 90), 0, Math.PI * 2);
                     ctx.stroke();
                     ctx.restore();
                 }
@@ -6014,7 +6205,9 @@ Build the wall first. Attack second.`)}
                     if (hold > 0) {
                         hold -= dt;
                     } else {
-                        progRef.current = Math.min(n - 1, progRef.current + dt / perPoint);
+                        // 不等速：走的是「抵達第 fired+1 筆」那一段，時長查 stepDurs
+                        const segMs = Math.max(1, stepDurs[Math.min(n - 1, fired + 1)] || 1);
+                        progRef.current = Math.min(n - 1, progRef.current + dt / segMs);
                         const arrived = Math.floor(progRef.current + 1e-9);
                         while (fired < arrived) {
                             fired += 1;
@@ -6069,11 +6262,13 @@ Build the wall first. Attack second.`)}
                 paperUntilRef.current = 0;
                 rainRef.current = false;
                 rainAlphaRef.current = 0;
+                athGlowUntilRef.current = 0;
+                finalGlowUntilRef.current = 0;
                 setShakeLv(0);   // 播到一半關掉時，不讓震動狀態殘留到下次開啟
                 if (flashElRef.current) flashElRef.current.style.opacity = '0';
                 if (dimElRef.current) dimElRef.current.style.opacity = '0';
             };
-        }, [runId, enough, reduced, series, events, gaps]);
+        }, [runId, enough, reduced, series, events, gaps, athCounts, minorMarks, stepDurs]);
 
         /* reduced-motion：不跑迴圈，只靜態畫出最後一格（無任何特效），
            但總結面板照樣顯示（工單 G）。 */
@@ -6103,7 +6298,7 @@ Build the wall first. Attack second.`)}
             ctx.textAlign = 'right';
             ctx.fillText(formatYMD(new Date(g.tN)), w - g.padR, h - 8);
             writeHead(series[series.length - 1].value);
-        }, [reduced, enough, series, gaps]);
+        }, [reduced, enough, series, gaps, wide]);
 
         if (!enough) {
             return (
@@ -6169,6 +6364,96 @@ Build the wall first. Attack second.`)}
         );
         const shakeCls = shakeLv ? ' replay-shake-' + shakeLv : '';
 
+        // ── 版面零件：手機版與電腦版共用，只差排列方式 ──────────────
+        const statBox = (label, node) => (
+            <div>
+                <div style={{ color: 'rgba(255,255,255,0.45)' }}>{label}</div>
+                {node}
+            </div>
+        );
+        const statPct = statBox('較第一筆', (
+            <div ref={pctRef} className={wide ? 'text-xl font-bold' : 'text-base font-bold'}
+                 style={{ color: pct >= 0 ? REPLAY_RED : REPLAY_GREEN }}></div>
+        ));
+        const statPeak = statBox('歷史高點', (
+            <div className={(wide ? 'text-xl' : 'text-base') + ' font-bold'} style={{ color: REPLAY_GOLD }}>{peak.toLocaleString()}</div>
+        ));
+        const statDeep = statBox('最深回檔', (
+            <div className={(wide ? 'text-xl' : 'text-base') + ' font-bold'} style={{ color: REPLAY_GREEN }}>
+                {(deepest > 0 ? '−' : '') + (deepest * 100).toFixed(1) + '%'}
+            </div>
+        ));
+        // NEW HIGH ×N：創高瞬間以 key 換掉節點，重跑放大跳動
+        const athBadge = athN > 0 ? (
+            <span key={'ath-' + athPop} className="replay-pop font-mono font-bold"
+                  style={{ color: REPLAY_GOLD, textShadow: '0 0 12px rgba(245,197,66,0.7)' }}>
+                NEW HIGH ×{athN}
+            </span>
+        ) : null;
+
+        const cardNode = ct && (
+            <div className="flex flex-col items-center pointer-events-none">
+                <div className={"font-mono font-extrabold text-center px-4 " + (wide ? 'text-4xl xl:text-5xl' : 'text-3xl sm:text-4xl')}
+                     style={{ color: ct.tone, textShadow: '0 0 20px ' + (ct.glow || ct.tone) }}>{ct.main}</div>
+                <div className="font-mono text-sm mt-2 text-center px-4"
+                     style={{ color: ct.subTone || 'rgba(255,255,255,0.75)' }}>{ct.sub}</div>
+                {ct.foot && (
+                    <div className="font-mono text-[10px] mt-2 text-center px-4" style={{ color: 'rgba(255,255,255,0.35)' }}>{ct.foot}</div>
+                )}
+            </div>
+        );
+
+        const summaryNode = (
+            <div className={"rounded-2xl px-4 py-4 font-mono space-y-2 " + (wide ? 'text-sm' : 'text-xs')}
+                 style={{ background: 'rgba(13,13,13,0.82)', border: '1px solid rgba(245,197,66,0.4)' }}>
+                <div className="text-center font-bold text-sm pb-1" style={{ color: REPLAY_GOLD }}>回放總結</div>
+                {sumRow('期間', formatYMD(new Date(summary.fromTs)) + ' → ' + formatYMD(new Date(summary.toTs)))}
+                {sumRow('歷時', summary.years + ' 年 ' + summary.months + ' 個月')}
+                {sumRow('累積',
+                    (summary.deltaWan >= 0 ? '+' : '−') + Math.abs(summary.deltaWan).toLocaleString() + ' 萬（'
+                    + (summary.pct >= 0 ? '+' : '') + summary.pct.toFixed(1) + '%）',
+                    summary.deltaWan >= 0 ? REPLAY_RED : REPLAY_GREEN)}
+                {sumRow('最深回檔', (summary.deepestDd > 0 ? '−' : '')
+                    + (summary.deepestDd * 100).toFixed(1) + '%', REPLAY_GREEN)}
+                {sumRow('創歷史新高', summary.peakCount + ' 次', REPLAY_GOLD)}
+                {sumRow('撐過 ≥10% 回檔', summary.survivedCount + ' 次', REPLAY_GOLD)}
+            </div>
+        );
+
+        const footNode = (
+            <div className="shrink-0 text-center mt-4">
+                <div ref={cumRef} className={"font-mono font-bold " + (wide ? 'text-2xl' : 'text-xl')} style={{ color: REPLAY_GOLD }}></div>
+                {!reduced && (
+                    <button onClick={(e) => {
+                                e.stopPropagation();
+                                setPaused(false);
+                                setCard(null);
+                                setShowSummary(false);
+                                setRunId((v) => v + 1);
+                            }}
+                            disabled={playing}
+                            className="mt-4 px-6 py-2 rounded-full font-mono text-sm"
+                            style={{
+                                color: playing ? 'rgba(255,255,255,0.3)' : REPLAY_BG,
+                                background: playing ? 'rgba(255,255,255,0.1)' : REPLAY_GOLD
+                            }}>
+                        ↻ 重播
+                    </button>
+                )}
+                {playing && (
+                    <div className="font-mono text-[10px] mt-2" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                        點畫面可暫停／繼續
+                    </div>
+                )}
+            </div>
+        );
+
+        const caption = (
+            <div className="text-[10px] font-mono mt-3" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                毛資產口徑（含質押借款與投入本金）
+            </div>
+        );
+
         return (
             <div className={"fixed inset-0 z-[1200] overflow-hidden" + shakeCls}
                  style={{ background: REPLAY_BG }}
@@ -6188,93 +6473,67 @@ Build the wall first. Attack second.`)}
                          style={{ zIndex: 6, color: REPLAY_BG, background: 'rgba(255,255,255,0.85)' }}>❙❙ 已暫停</div>
                 )}
 
-                <div className="relative h-full w-full flex flex-col px-5 pt-14 pb-6 max-w-md mx-auto" style={{ zIndex: 3 }}>
-                    <div className="shrink-0 text-center">
-                        <div ref={bigRef} className="font-mono font-bold tracking-tight text-5xl sm:text-6xl"
-                             style={{ color: REPLAY_RED, textShadow: '0 0 18px rgba(255,59,71,0.65)' }}></div>
-                        <div className="font-mono text-sm mt-2" style={{ color: 'rgba(255,255,255,0.6)' }}>
-                            {formatYMD(new Date(cur.ts))}
-                        </div>
-                        <div className="grid grid-cols-3 gap-2 mt-5 font-mono text-xs">
-                            <div>
-                                <div style={{ color: 'rgba(255,255,255,0.45)' }}>較第一筆</div>
-                                <div ref={pctRef} className="text-base font-bold"
-                                     style={{ color: pct >= 0 ? REPLAY_RED : REPLAY_GREEN }}></div>
-                            </div>
-                            <div>
-                                <div style={{ color: 'rgba(255,255,255,0.45)' }}>歷史高點</div>
-                                <div className="text-base font-bold" style={{ color: REPLAY_GOLD }}>{peak.toLocaleString()}</div>
-                            </div>
-                            <div>
-                                <div style={{ color: 'rgba(255,255,255,0.45)' }}>最深回檔</div>
-                                <div className="text-base font-bold" style={{ color: REPLAY_GREEN }}>
-                                    {(deepest > 0 ? '−' : '') + (deepest * 100).toFixed(1) + '%'}
+                {wide ? (
+                    /* 電腦版：上列大字＋統計，下方左折線（約 70%）、右側欄（約 30%）放字卡／總結 */
+                    <div className="relative h-full w-full flex flex-col px-10 pt-16 pb-6" style={{ zIndex: 3 }}>
+                        <div className="shrink-0 flex items-end justify-between gap-8">
+                            <div className="min-w-0">
+                                <div ref={bigRef} className="font-mono font-bold tracking-tight leading-none"
+                                     style={{ color: REPLAY_RED, textShadow: '0 0 18px rgba(255,59,71,0.65)',
+                                              fontSize: 'clamp(48px, 6.2vw, 120px)' }}></div>
+                                <div className="font-mono text-base mt-3" style={{ color: 'rgba(255,255,255,0.6)' }}>
+                                    {formatYMD(new Date(cur.ts))}
                                 </div>
+                                {caption}
+                            </div>
+                            <div className="shrink-0 grid grid-cols-3 gap-8 font-mono text-sm text-right items-end">
+                                {statPct}{statPeak}{statDeep}
+                                <div className="col-span-3 text-lg min-h-[1.75rem]">{athBadge}</div>
                             </div>
                         </div>
-                        <div className="text-[10px] font-mono mt-3" style={{ color: 'rgba(255,255,255,0.3)' }}>
-                            毛資產口徑（含質押借款與投入本金）
-                        </div>
-                    </div>
-
-                    <div className="flex-grow min-h-0 relative mt-4">
-                        <canvas ref={lineRef} className="absolute inset-0 w-full h-full"></canvas>
-                        {showSummary ? (
-                            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 px-1 pointer-events-none">
-                                <div className="rounded-2xl px-4 py-4 font-mono text-xs space-y-2"
-                                     style={{ background: 'rgba(13,13,13,0.82)', border: '1px solid rgba(245,197,66,0.4)' }}>
-                                    <div className="text-center font-bold text-sm pb-1" style={{ color: REPLAY_GOLD }}>回放總結</div>
-                                    {sumRow('期間', formatYMD(new Date(summary.fromTs)) + ' → ' + formatYMD(new Date(summary.toTs)))}
-                                    {sumRow('歷時', summary.years + ' 年 ' + summary.months + ' 個月')}
-                                    {sumRow('累積',
-                                        (summary.deltaWan >= 0 ? '+' : '−') + Math.abs(summary.deltaWan).toLocaleString() + ' 萬（'
-                                        + (summary.pct >= 0 ? '+' : '') + summary.pct.toFixed(1) + '%）',
-                                        summary.deltaWan >= 0 ? REPLAY_RED : REPLAY_GREEN)}
-                                    {sumRow('最深回檔', (summary.deepestDd > 0 ? '−' : '')
-                                        + (summary.deepestDd * 100).toFixed(1) + '%', REPLAY_GREEN)}
-                                    {sumRow('創歷史新高', summary.peakCount + ' 次', REPLAY_GOLD)}
-                                    {sumRow('撐過 ≥10% 回檔', summary.survivedCount + ' 次', REPLAY_GOLD)}
+                        <div className="flex-grow min-h-0 flex gap-8 mt-6">
+                            <div className="relative min-h-0" style={{ flex: '7 1 0%' }}>
+                                <canvas ref={lineRef} className="absolute inset-0 w-full h-full"></canvas>
+                            </div>
+                            <div className="min-h-0 flex flex-col" style={{ flex: '3 1 0%' }}>
+                                <div className="flex-grow min-h-0 flex flex-col justify-center">
+                                    {showSummary ? summaryNode : cardNode}
                                 </div>
+                                {footNode}
                             </div>
-                        ) : ct && (
-                            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex flex-col items-center pointer-events-none">
-                                <div className="font-mono font-extrabold text-3xl sm:text-4xl text-center px-4"
-                                     style={{ color: ct.tone, textShadow: '0 0 20px ' + (ct.glow || ct.tone) }}>{ct.main}</div>
-                                <div className="font-mono text-sm mt-2 text-center px-4"
-                                     style={{ color: ct.subTone || 'rgba(255,255,255,0.75)' }}>{ct.sub}</div>
-                                {ct.foot && (
-                                    <div className="font-mono text-[10px] mt-2 text-center px-4" style={{ color: 'rgba(255,255,255,0.35)' }}>{ct.foot}</div>
-                                )}
-                            </div>
-                        )}
+                        </div>
                     </div>
+                ) : (
+                    /* 手機版：維持原本直式；結尾的總結面板改放曲線下方（曲線區縮短讓位），不蓋線 */
+                    <div className="relative h-full w-full flex flex-col px-5 pt-14 pb-6 max-w-md mx-auto" style={{ zIndex: 3 }}>
+                        {athBadge && (
+                            <div className="fixed top-[26px] right-[68px] text-xs pointer-events-none" style={{ zIndex: 6 }}>{athBadge}</div>
+                        )}
+                        <div className="shrink-0 text-center">
+                            <div ref={bigRef} className="font-mono font-bold tracking-tight text-5xl sm:text-6xl"
+                                 style={{ color: REPLAY_RED, textShadow: '0 0 18px rgba(255,59,71,0.65)' }}></div>
+                            <div className="font-mono text-sm mt-2" style={{ color: 'rgba(255,255,255,0.6)' }}>
+                                {formatYMD(new Date(cur.ts))}
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 mt-5 font-mono text-xs">
+                                {statPct}{statPeak}{statDeep}
+                            </div>
+                            {caption}
+                        </div>
 
-                    <div className="shrink-0 text-center mt-4">
-                        <div ref={cumRef} className="font-mono font-bold text-xl" style={{ color: REPLAY_GOLD }}></div>
-                        {!reduced && (
-                            <button onClick={(e) => {
-                                        e.stopPropagation();
-                                        setPaused(false);
-                                        setCard(null);
-                                        setShowSummary(false);
-                                        setRunId((v) => v + 1);
-                                    }}
-                                    disabled={playing}
-                                    className="mt-4 px-6 py-2 rounded-full font-mono text-sm"
-                                    style={{
-                                        color: playing ? 'rgba(255,255,255,0.3)' : REPLAY_BG,
-                                        background: playing ? 'rgba(255,255,255,0.1)' : REPLAY_GOLD
-                                    }}>
-                                ↻ 重播
-                            </button>
+                        <div className="flex-grow min-h-0 relative mt-4">
+                            <canvas ref={lineRef} className="absolute inset-0 w-full h-full"></canvas>
+                            {!showSummary && cardNode && (
+                                <div className="absolute inset-x-0 top-1/2 -translate-y-1/2">{cardNode}</div>
+                            )}
+                        </div>
+                        {showSummary && (
+                            <div className="shrink-0 mt-3 pointer-events-none">{summaryNode}</div>
                         )}
-                        {playing && (
-                            <div className="font-mono text-[10px] mt-2" style={{ color: 'rgba(255,255,255,0.3)' }}>
-                                點畫面可暫停／繼續
-                            </div>
-                        )}
+
+                        {footNode}
                     </div>
-                </div>
+                )}
             </div>
         );
     };
