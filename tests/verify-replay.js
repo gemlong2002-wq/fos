@@ -135,7 +135,7 @@ const M = eval(deps + `; ({
   attachMarketExtremes, replaySpawnCount, replayDpr,
   replayLerp, replayProgress, replayBoltSpec, buildLightningPath, buildReplaySummary,
   buildReplayAthCounts, buildReplayMinorMarks, calcReplayStepDurations,
-  buildAthStreaks, replayComboTier,
+  buildAthStreaks, replayComboTier, replaySegmentUp, replaySegmentColor,
   K: { STEP: ASSET_REPLAY_MILESTONE_STEP, TIERS: ASSET_REPLAY_DRAWDOWN_TIERS,
        MIN_DD: ASSET_REPLAY_SEGMENT_MIN_DRAWDOWN, GAP: ASSET_REPLAY_GAP_DAYS,
        NOTE: ASSET_REPLAY_NOTE_MAX, HOLD: ASSET_REPLAY_EVENT_HOLD_MS,
@@ -1065,6 +1065,28 @@ chk('畫面：彈跳 1.3 倍', /50% \{ transform: scale\(1\.3\); \}/.test(H), tr
 chk('畫面：reduced-motion 停用彈跳／淡出／火焰',
   /\.replay-pop, \.replay-combo-out, \.replay-flame \{ animation: none; \}/.test(H), true);
 chk('畫面：總結面板「最長連續創新高」', /sumRow\('最長連續創新高'/.test(H), true);
+console.log('');
+console.log('【第 6 輪｜折線紅漲綠跌 replaySegmentUp／replaySegmentColor】');
+/* 定義：終點 ≥ 起點（含持平）算漲 → 紅 #FF3B47；低於起點算跌 → 綠 #2BD47D；
+   空檔段同色但半透明（紅 rgba(255,59,71,0.45)、綠 rgba(43,212,125,0.45)）。
+   S1：480→520 漲、520→1000 漲、1000→1100 漲、1100→900 跌、900→750 跌、
+       750→1150 漲、1150→700 跌、700→2000 漲 → 漲漲漲跌跌漲跌漲
+   S2：1000→1100 漲、1100→990 跌、990→950 跌、950→1120 漲、1120→1080 跌、1080→1130 漲 */
+const dirs = (ser) => ser.slice(1).map((p, k) => M.replaySegmentUp(ser[k].value, p.value) ? '漲' : '跌').join('');
+chk('S1 逐段漲跌', dirs(s1), '漲漲漲跌跌漲跌漲');
+chk('S2 逐段漲跌', dirs(s2), '漲跌跌漲跌漲');
+chk('持平算漲（紅）', M.replaySegmentUp(1000000, 1000000), true);
+chk('漲 → 紅', M.replaySegmentColor(true, false), '#FF3B47');
+chk('跌 → 綠', M.replaySegmentColor(false, false), '#2BD47D');
+chk('漲＋空檔 → 半透明紅', M.replaySegmentColor(true, true), 'rgba(255,59,71,0.45)');
+chk('跌＋空檔 → 半透明綠', M.replaySegmentColor(false, true), 'rgba(43,212,125,0.45)');
+chk('畫面：已抵達的線段逐段上色', H.includes('const up = replaySegmentUp(series[k - 1].value, series[k].value);'), true);
+chk('畫面：折線頭顏色跟著當前段', H.includes('ctx.fillStyle = headUp ? REPLAY_RED : REPLAY_GREEN;'), true);
+/* replaySegmentColor( 的呼叫處（定義寫成 `replaySegmentColor = (` 不計）：
+   已抵達段 1＋補間段 1＋reduced 靜態圖 1 = 3 */
+chk('畫面：播放中與 reduced-motion 靜態圖都逐段上色',
+  H.split('replaySegmentColor(').length - 1, 3);
+chk('畫面：下方漸層維持淡紅', H.includes("grad.addColorStop(0, 'rgba(255,59,71,0.34)');"), true);
 console.log('');
 console.log(fail === 0 ? '>>> 全部通過' : '>>> ' + fail + ' 組失敗');
 process.exit(fail === 0 ? 0 : 1);
