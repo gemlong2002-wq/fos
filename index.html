@@ -432,7 +432,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/11/17 14:57';
+    const APP_VERSION = '2026/11/18 10:30';
 
     /* ===================================================================
        共用工具
@@ -5716,6 +5716,39 @@ Build the wall first. Attack second.`)}
         }));
         const comboRef = useRef(0);
         const comboFadeSeqRef = useRef(0);   // 每次淡出給一個序號，舊的 400ms 計時器不得清掉新的淡出
+        const athBoxRef = useRef(null);      // 電腦版：大字右側可用空間
+        const athTextRef = useRef(null);     // 電腦版：NEW HIGH＋COMBO 那一行
+        /* 電腦版 NEW HIGH／COMBO 字級：放在大字右側同一列，先用上限（大字字級的 60%），
+           放不下就依「可用寬度 ÷ 實際寬度」等比縮小，保證不換行。
+           寬度以 layout 量測（彈跳的 scale 是 transform，不影響量測）。 */
+        const ASSET_REPLAY_ATH_WIDE_MAX = 0.6;   // 不超過大字字級的 60%
+        const ASSET_REPLAY_ATH_WIDE_MIN_PX = 14;
+        const fitAthWide = () => {
+            const box = athBoxRef.current, text = athTextRef.current, big = bigRef.current;
+            if (!box || !text || !big) return;
+            const bigPx = parseFloat(window.getComputedStyle(big).fontSize) || 48;
+            // 上限以這一行最大的字（連擊分級的倍率）計，不讓 COMBO 超過大字的 60%
+            const tier = replayComboTier(combo.k);
+            const scale = tier ? ASSET_REPLAY_COMBO_TIERS[tier - 1].size : 1;
+            const maxPx = bigPx * ASSET_REPLAY_ATH_WIDE_MAX / scale;
+            text.style.fontSize = maxPx + 'px';
+            const avail = box.clientWidth, need = text.scrollWidth;
+            if (avail > 0 && need > avail) {
+                text.style.fontSize = Math.max(ASSET_REPLAY_ATH_WIDE_MIN_PX, Math.floor(maxPx * avail / need * 0.98)) + 'px';
+            }
+        };
+        const fitAthRef = useRef(fitAthWide);
+        fitAthRef.current = fitAthWide;   // 視窗縮放時用最新一次 render 的版本（含目前連擊分級）
+        React.useLayoutEffect(() => { if (wide) fitAthWide(); }, [wide, athN, combo.k, combo.out]);
+        useEffect(() => {
+            if (!wide) return;
+            const onResize = () => fitAthRef.current();
+            window.addEventListener('resize', onResize);
+            // 大字位數變多時右側可用寬度跟著變窄：監看容器寬度，變動就重算
+            const ro = typeof ResizeObserver !== 'undefined' && athBoxRef.current ? new ResizeObserver(onResize) : null;
+            if (ro) ro.observe(athBoxRef.current);
+            return () => { window.removeEventListener('resize', onResize); if (ro) ro.disconnect(); };
+        }, [wide]);
 
         const lineRef = useRef(null);
         const fxRef = useRef(null);
@@ -6533,7 +6566,7 @@ Build the wall first. Attack second.`)}
             </span>
         ) : null;
         const athBadge = athN > 0 ? (
-            <span className="inline-flex items-baseline gap-3 flex-wrap justify-center">
+            <span className={wide ? 'inline-flex items-baseline gap-[0.75em] flex-nowrap whitespace-nowrap' : 'inline-flex items-baseline gap-3 flex-wrap justify-center'}>
                 <span key={'ath-' + athPop} className="replay-pop font-mono font-bold"
                       style={{ color: REPLAY_GOLD, textShadow: '0 0 12px rgba(245,197,66,0.7)' }}>
                     NEW HIGH ×{athN}
@@ -6706,18 +6739,22 @@ Build the wall first. Attack second.`)}
                     /* 電腦版：上列大字＋統計，下方左折線（約 70%）、右側欄（約 30%）放字卡／總結 */
                     <div className="relative h-full w-full flex flex-col px-10 pt-16 pb-6" style={{ zIndex: 3 }}>
                         <div className="shrink-0 flex items-end justify-between gap-8">
-                            <div className="min-w-0">
-                                <div ref={bigRef} className="font-mono font-bold tracking-tight leading-none"
-                                     style={{ color: REPLAY_RED, textShadow: '0 0 18px rgba(255,59,71,0.65)',
-                                              fontSize: 'clamp(48px, 6.2vw, 120px)' }}></div>
+                            <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-6 min-w-0">
+                                    <div ref={bigRef} className="font-mono font-bold tracking-tight leading-none shrink-0 whitespace-nowrap"
+                                         style={{ color: REPLAY_RED, textShadow: '0 0 18px rgba(255,59,71,0.65)',
+                                                  fontSize: 'clamp(48px, 6.2vw, 120px)' }}></div>
+                                    <div ref={athBoxRef} className="flex-1 min-w-0">
+                                        <div ref={athTextRef} className="inline-block whitespace-nowrap leading-none">{athBadge}</div>
+                                    </div>
+                                </div>
                                 <div className="font-mono text-base mt-3" style={{ color: 'rgba(255,255,255,0.6)' }}>
                                     {formatYMD(new Date(cur.ts))}
                                 </div>
                                 {caption}
                             </div>
-                            <div className="shrink-0 flex items-end gap-8 font-mono text-sm text-right">
+                            <div className="shrink-0 grid grid-cols-3 gap-8 font-mono text-sm text-right items-end">
                                 {statPct}{statPeak}{statDeep}
-                                <div className="text-2xl xl:text-3xl min-w-[11rem] min-h-[2.5rem] flex items-end justify-end">{athBadge}</div>
                             </div>
                         </div>
                         <div className="flex-grow min-h-0 flex gap-8 mt-6">
