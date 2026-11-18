@@ -432,7 +432,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/11/18 13:13';
+    const APP_VERSION = '2026/11/18 13:20';
 
     /* ===================================================================
        共用工具
@@ -5646,6 +5646,19 @@ Build the wall first. Attack second.`)}
         return { left: left, top: top };
     };
 
+    /* 電腦版（≥900px）字級：t＝1440px 寬時的目標 px。
+       f(w) = 0.567t + 0.03t × w/100，夾在 0.85t～1.08t
+       → 1440px 時約 1.0t、1024px 時約 0.87t。CSS 用 clamp 字串、畫布用數值。 */
+    const replayFzPx = (t, vw) => {
+        const T = Number(t) || 0, w = Number(vw) || 0;
+        return Math.min(1.08 * T, Math.max(0.85 * T, 0.567 * T + 0.03 * T * w / 100));
+    };
+    const replayFzCss = (t) => {
+        const T = Number(t) || 0;
+        const r = (v, d) => Math.round(v * Math.pow(10, d)) / Math.pow(10, d);
+        return 'clamp(' + r(0.85 * T, 2) + 'px, calc(' + r(0.567 * T, 2) + 'px + ' + r(0.03 * T, 4) + 'vw), ' + r(1.08 * T, 2) + 'px)';
+    };
+
     // 連擊數 → 分級（0＝不顯示，1～3 對應 ASSET_REPLAY_COMBO_TIERS）
     const replayComboTier = (k) => {
         const v = Number(k) || 0;
@@ -5811,6 +5824,8 @@ Build the wall first. Attack second.`)}
         const [hover, setHover] = useState(null);
         const tipRef = useRef(null);
         const lastTouchRef = useRef(0);   // 觸控後瀏覽器會補發相容滑鼠事件，短時間內忽略
+        const wideRef = useRef(wide);     // 畫布繪製在 effect 閉包內，讀最新的寬窄版
+        wideRef.current = wide;
         React.useLayoutEffect(() => {
             const el = tipRef.current;
             if (!el || !hover) return;
@@ -6259,7 +6274,7 @@ Build the wall first. Attack second.`)}
                 }
 
                 // 空檔標註：貼著 X 軸放，避開中央字卡與折線
-                ctx.font = '10px ui-monospace, monospace';
+                ctx.font = (wideRef.current ? replayFzPx(13.5, window.innerWidth) : 10) + 'px ui-monospace, monospace';
                 ctx.textAlign = 'center';
                 for (let gi = 0; gi < gaps.length; gi++) {
                     const k = gaps[gi];
@@ -6630,7 +6645,7 @@ Build the wall first. Attack second.`)}
                 ctx.stroke();
             }
             ctx.setLineDash([]);
-            ctx.font = '10px ui-monospace, monospace';
+            ctx.font = (wideRef.current ? replayFzPx(13.5, window.innerWidth) : 10) + 'px ui-monospace, monospace';
             ctx.fillStyle = 'rgba(255,255,255,0.45)';
             ctx.textAlign = 'left';
             ctx.fillText(formatYMD(new Date(g.t0)), g.padL, h - 8);
@@ -6696,9 +6711,9 @@ Build the wall first. Attack second.`)}
         };
         const ct = cardText(card);
         const sumRow = (label, value, color) => (
-            <div className="flex items-baseline justify-between">
-                <span style={{ color: 'rgba(255,255,255,0.5)' }}>{label}</span>
-                <span className="font-bold" style={{ color: color || '#FFFFFF' }}>{value}</span>
+            <div className={'flex items-baseline justify-between' + (wide ? ' gap-4' : '')}>
+                <span className={wide ? 'whitespace-nowrap' : undefined} style={{ color: 'rgba(255,255,255,0.5)' }}>{label}</span>
+                <span className={'font-bold' + (wide ? ' text-right' : '')} style={{ color: color || '#FFFFFF' }}>{value}</span>
             </div>
         );
         const shakeCls = shakeLv ? ' replay-shake-' + shakeLv : '';
@@ -6770,21 +6785,22 @@ Build the wall first. Attack second.`)}
         ) : null;
 
         // ── 版面零件：手機版與電腦版共用，只差排列方式 ──────────────
+        const fz = (t) => (wide ? replayFzCss(t) : undefined);
         const statBox = (label, node) => (
             <div>
-                <div style={{ color: 'rgba(255,255,255,0.45)' }}>{label}</div>
+                <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: fz(14) }}>{label}</div>
                 {node}
             </div>
         );
         const statPct = statBox('較第一筆', (
             <div ref={pctRef} className={wide ? 'text-xl font-bold' : 'text-base font-bold'}
-                 style={{ color: pct >= 0 ? REPLAY_RED : REPLAY_GREEN }}></div>
+                 style={{ color: pct >= 0 ? REPLAY_RED : REPLAY_GREEN, fontSize: fz(24) }}></div>
         ));
         const statPeak = statBox('歷史高點', (
-            <div className={(wide ? 'text-xl' : 'text-base') + ' font-bold'} style={{ color: REPLAY_GOLD }}>{peak.toLocaleString()}</div>
+            <div className={(wide ? 'text-xl' : 'text-base') + ' font-bold'} style={{ color: REPLAY_GOLD, fontSize: fz(24) }}>{peak.toLocaleString()}</div>
         ));
         const statDeep = statBox('最深回檔', (
-            <div className={(wide ? 'text-xl' : 'text-base') + ' font-bold'} style={{ color: REPLAY_GREEN }}>
+            <div className={(wide ? 'text-xl' : 'text-base') + ' font-bold'} style={{ color: REPLAY_GREEN, fontSize: fz(24) }}>
                 {(deepest > 0 ? '−' : '') + (deepest * 100).toFixed(1) + '%'}
             </div>
         ));
@@ -6813,11 +6829,11 @@ Build the wall first. Attack second.`)}
         const cardNode = ct && (
             <div className="flex flex-col items-center pointer-events-none">
                 <div className={"font-mono font-extrabold text-center px-4 " + (wide ? 'text-4xl xl:text-5xl' : 'text-3xl sm:text-4xl')}
-                     style={{ color: ct.tone, textShadow: '0 0 20px ' + (ct.glow || ct.tone) }}>{ct.main}</div>
+                     style={{ color: ct.tone, textShadow: '0 0 20px ' + (ct.glow || ct.tone), fontSize: fz(52) }}>{ct.main}</div>
                 <div className="font-mono text-sm mt-2 text-center px-4"
-                     style={{ color: ct.subTone || 'rgba(255,255,255,0.75)' }}>{ct.sub}</div>
+                     style={{ color: ct.subTone || 'rgba(255,255,255,0.75)', fontSize: fz(18) }}>{ct.sub}</div>
                 {ct.foot && (
-                    <div className="font-mono text-[10px] mt-2 text-center px-4" style={{ color: 'rgba(255,255,255,0.35)' }}>{ct.foot}</div>
+                    <div className="font-mono text-[10px] mt-2 text-center px-4" style={{ color: 'rgba(255,255,255,0.35)', fontSize: fz(13) }}>{ct.foot}</div>
                 )}
             </div>
         );
@@ -6831,12 +6847,12 @@ Build the wall first. Attack second.`)}
         const recoveryDetail = (recList.length || recOngoing) ? (
             <div className="pt-2 mt-1" style={{ borderTop: '1px solid rgba(255,255,255,0.12)' }}>
                 <div className="pb-1" style={{ color: 'rgba(255,255,255,0.5)' }}>每次收復前高的歷程</div>
-                <div className="overflow-y-auto overscroll-contain pr-1" style={{ maxHeight: wide ? '11rem' : '7.5rem', pointerEvents: 'auto' }}
+                <div className="overflow-y-auto overscroll-contain pr-1" style={{ maxHeight: wide ? '13em' : '7.5rem', pointerEvents: 'auto' }}
                      onClick={(e) => e.stopPropagation()}>
                     {wide ? (
-                        <table className="w-full text-left text-xs" style={{ borderCollapse: 'collapse' }}>
+                        <table className="w-full text-left text-xs" style={{ borderCollapse: 'collapse', fontSize: fz(15) }}>
                             <thead>
-                                <tr style={{ color: 'rgba(255,255,255,0.45)' }}>
+                                <tr style={{ color: 'rgba(255,255,255,0.45)', fontSize: fz(13) }}>
                                     <th className="font-normal pr-2 pb-1 whitespace-nowrap">#</th>
                                     <th className="font-normal pr-2 pb-1 whitespace-nowrap">前高 → 收復</th>
                                     <th className="font-normal pr-2 pb-1 text-right whitespace-nowrap">回檔深度</th>
@@ -6898,9 +6914,10 @@ Build the wall first. Attack second.`)}
         const summaryNode = (
             <div className={"rounded-2xl px-4 py-4 font-mono space-y-2 " + (wide ? 'text-sm' : 'text-xs')}
                  style={Object.assign({ background: 'rgba(13,13,13,0.82)', border: '1px solid rgba(245,197,66,0.4)', color: 'rgba(255,255,255,0.85)' },
-                     // 手機：面板太高時自己捲動，曲線至少保留 160px 可懸停查看
-                     wide ? {} : { maxHeight: 'max(120px, calc(100vh - 540px))', overflowY: 'auto', pointerEvents: 'auto' })}>
-                <div className="text-center font-bold text-sm pb-1" style={{ color: REPLAY_GOLD }}>回放總結</div>
+                     // 電腦版：字級隨寬度放大，面板最高到右側欄高度、超過內部捲動；
+                     // 手機版：面板過高時內部捲動（上限依剩餘高度計算），曲線容器另以 min-h-[20vh] 保留懸停空間
+                     wide ? { fontSize: fz(16.5), maxHeight: '100%', overflowY: 'auto', pointerEvents: 'auto' } : { maxHeight: 'max(120px, calc(100vh - 540px))', overflowY: 'auto', pointerEvents: 'auto' })}>
+                <div className="text-center font-bold text-sm pb-1" style={{ color: REPLAY_GOLD, fontSize: fz(20) }}>回放總結</div>
                 {sumRow('期間', formatYMD(new Date(summary.fromTs)) + ' → ' + formatYMD(new Date(summary.toTs)))}
                 {sumRow('歷時', summary.years + ' 年 ' + summary.months + ' 個月')}
                 {sumRow('累積',
@@ -6921,7 +6938,7 @@ Build the wall first. Attack second.`)}
 
         const footNode = (
             <div className="shrink-0 text-center mt-4">
-                <div ref={cumRef} className={"font-mono font-bold " + (wide ? 'text-2xl' : 'text-xl')} style={{ color: REPLAY_GOLD }}></div>
+                <div ref={cumRef} className={"font-mono font-bold " + (wide ? 'text-2xl' : 'text-xl')} style={{ color: REPLAY_GOLD, fontSize: fz(30) }}></div>
                 {!reduced && (
                     <button onClick={(e) => {
                                 e.stopPropagation();
@@ -6935,13 +6952,14 @@ Build the wall first. Attack second.`)}
                             className="mt-4 px-6 py-2 rounded-full font-mono text-sm"
                             style={{
                                 color: playing ? 'rgba(255,255,255,0.3)' : REPLAY_BG,
-                                background: playing ? 'rgba(255,255,255,0.1)' : REPLAY_GOLD
+                                background: playing ? 'rgba(255,255,255,0.1)' : REPLAY_GOLD,
+                                fontSize: fz(17), padding: wide ? '0.5em 1.6em' : undefined
                             }}>
                         ↻ 重播
                     </button>
                 )}
                 {playing && (
-                    <div className="font-mono text-[10px] mt-2" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                    <div className="font-mono text-[10px] mt-2" style={{ color: 'rgba(255,255,255,0.3)', fontSize: fz(12.5) }}>
                         點畫面可暫停／繼續
                     </div>
                 )}
@@ -6949,7 +6967,7 @@ Build the wall first. Attack second.`)}
         );
 
         const caption = (
-            <div className="text-[10px] font-mono mt-3" style={{ color: 'rgba(255,255,255,0.3)' }}>
+            <div className="text-[10px] font-mono mt-3" style={{ color: 'rgba(255,255,255,0.3)', fontSize: fz(12.5) }}>
                 毛資產口徑（含質押借款與投入本金）
             </div>
         );
@@ -6988,7 +7006,7 @@ Build the wall first. Attack second.`)}
                                         <div ref={athTextRef} className="inline-block whitespace-nowrap leading-none">{athBadge}</div>
                                     </div>
                                 </div>
-                                <div className="font-mono text-base mt-3" style={{ color: 'rgba(255,255,255,0.6)' }}>
+                                <div className="font-mono text-base mt-3" style={{ color: 'rgba(255,255,255,0.6)', fontSize: fz(16) }}>
                                     {formatYMD(new Date(cur.ts))}
                                 </div>
                                 {caption}

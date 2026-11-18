@@ -138,6 +138,7 @@ const M = eval(deps + `; ({
   buildAthStreaks, replayComboTier, replaySegmentUp, replaySegmentColor,
   replayHistoryAlpha, buildCometTrail,
   findNearestReplayIndex, buildReplayTooltip, placeReplayTooltip,
+  replayFzPx, replayFzCss,
   K: { STEP: ASSET_REPLAY_MILESTONE_STEP, TIERS: ASSET_REPLAY_DRAWDOWN_TIERS,
        MIN_DD: ASSET_REPLAY_SEGMENT_MIN_DRAWDOWN, GAP: ASSET_REPLAY_GAP_DAYS,
        NOTE: ASSET_REPLAY_NOTE_MAX, HOLD: ASSET_REPLAY_EVENT_HOLD_MS,
@@ -1003,8 +1004,9 @@ chk('S2 變體：ongoing 已過天數', sum2o.ongoing.daysSincePeak, 89);
 
 chk('events 給 null 也不炸（明細為空）',
   JSON.stringify([M.buildReplaySummary(s1, null).recoveries, M.buildReplaySummary(s1, null).ongoing]), '[[],null]');
+/* 第 9 輪結構調整：電腦版捲動高度由 '11rem' 改為 '13em'（隨放大後的字級等比變高），手機版 '7.5rem' 不變 */
 chk('畫面：明細區可內部捲動（overflow-y-auto＋maxHeight）',
-  /className="overflow-y-auto overscroll-contain pr-1" style=\{\{ maxHeight: wide \? '11rem' : '7\.5rem', pointerEvents: 'auto' \}\}/.test(H), true);
+  /className="overflow-y-auto overscroll-contain pr-1" style=\{\{ maxHeight: wide \? '13em' : '7\.5rem', pointerEvents: 'auto' \}\}/.test(H), true);
 chk('畫面：電腦版表格欄位',
   /前高 → 收復<\/th>[\s\S]{0,200}?回檔深度<\/th>[\s\S]{0,200}?跌到谷底<\/th>[\s\S]{0,200}?爬回前高<\/th>[\s\S]{0,200}?合計<\/th>/.test(H), true);
 chk('畫面：進行中列', (H.match(/進行中/g) || []).length >= 2, true);
@@ -1182,6 +1184,23 @@ chk('畫面：播放中／暫停中不啟用', H.includes('const hoverOn = !play
 chk('畫面：重播時清掉提示', /setHover\(null\);\s*setRunId\(\(v\) => v \+ 1\);/.test(H), true);
 chk('畫面：拖曳時不捲動背景', H.includes("style: hoverOn ? { touchAction: 'none' } : undefined"), true);
 chk('畫面：小卡明確白字深底', H.includes("background: 'rgba(13,13,13,0.94)'") && H.includes("color: '#FFFFFF', boxShadow"), true);
+console.log('');
+console.log('【第 9 輪｜電腦版字級 replayFzPx／replayFzCss】');
+/* f(w) = 0.567t + 0.03t × w/100，夾在 0.85t～1.08t。以 t = 16 手推：
+   · 1440：0.567×16 = 9.072；0.03×16×14.4 = 6.912 → 15.984（≈ 目標 16）
+   · 1024：9.072 + 0.48×10.24 = 9.072 + 4.9152 = 13.9872（≈ 16 的 87.4%）
+   · 2560：9.072 + 0.48×25.6 = 21.36 > 上限 1.08×16 = 17.28 → 17.28
+   · 375 ：9.072 + 0.48×3.75 = 10.872 < 下限 0.85×16 = 13.6 → 13.6
+   CSS：clamp(0.85×16 = 13.6px, calc(9.07px + 0.48vw), 17.28px) */
+near('1440px：約等於目標', M.replayFzPx(16, 1440), 15.984, 1e-9);
+near('1024px：約 87%', M.replayFzPx(16, 1024), 13.9872, 1e-9);
+near('1024／1440 比例落在 85～90%', M.replayFzPx(16, 1024) / M.replayFzPx(16, 1440), 0.875, 0.025);
+near('超寬螢幕夾到上限 1.08t', M.replayFzPx(16, 2560), 17.28, 1e-9);
+near('窄螢幕夾到下限 0.85t', M.replayFzPx(16, 375), 13.6, 1e-9);
+chk('CSS clamp 字串', M.replayFzCss(16), 'clamp(13.6px, calc(9.07px + 0.48vw), 17.28px)');
+chk('畫面：手機版不套字級（fz 只在電腦版回傳值）', H.includes('const fz = (t) => (wide ? replayFzCss(t) : undefined);'), true);
+chk('畫面：畫布文字電腦版 13.5、手機版維持 10px',
+  (H.match(/ctx\.font = \(wideRef\.current \? replayFzPx\(13\.5, window\.innerWidth\) : 10\) \+ 'px ui-monospace, monospace';/g) || []).length, 2);
 console.log('');
 console.log(fail === 0 ? '>>> 全部通過' : '>>> ' + fail + ' 組失敗');
 process.exit(fail === 0 ? 0 : 1);
