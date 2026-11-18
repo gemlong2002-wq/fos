@@ -432,7 +432,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/11/18 12:49';
+    const APP_VERSION = '2026/11/18 13:13';
 
     /* ===================================================================
        共用工具
@@ -5594,6 +5594,58 @@ Build the wall first. Attack second.`)}
         return out;
     };
 
+    /* ── 第 8 輪：播完後懸停／拖曳查看各筆 ─────────────────────────── */
+    /* 時間最接近 ts 的那一筆（不內插）。剛好在兩筆正中間取較早那筆；
+       超出左右界夾到第一／最後一筆；空序列回傳 −1。 */
+    const findNearestReplayIndex = (series, ts) => {
+        const n = Array.isArray(series) ? series.length : 0;
+        if (!n) return -1;
+        const t = Number(ts);
+        if (!Number.isFinite(t) || t <= series[0].ts) return 0;
+        if (t >= series[n - 1].ts) return n - 1;
+        let best = 0, bestD = Infinity;
+        for (let i = 0; i < n; i++) {
+            const d = Math.abs(series[i].ts - t);
+            if (d < bestD) { best = i; bestD = d; }
+        }
+        return best;
+    };
+    /* 提示小卡的內容（數字，不含格式）：
+       · first：第一筆（沒有「較前一筆」）
+       · delta／deltaPct：較前一筆的金額與 %，up＝delta ≥ 0（持平算漲，與折線一致）
+       · peak：該筆之前含該筆的最高值；ddFromPeak＝(peak − value) ÷ peak
+       · isNewHigh：第 2 筆起嚴格大於之前所有紀錄（與創新高 ath 同一判定）
+       · note：沿用 truncateReplayNote 的截斷規則 */
+    const buildReplayTooltip = (series, idx) => {
+        const n = Array.isArray(series) ? series.length : 0;
+        const i = Number(idx);
+        if (!n || !Number.isInteger(i) || i < 0 || i >= n) return null;
+        const v = series[i].value;
+        let prevMax = -Infinity;
+        for (let k = 0; k < i; k++) if (series[k].value > prevMax) prevMax = series[k].value;
+        const peak = Math.max(prevMax, v);
+        const prev = i > 0 ? series[i - 1].value : null;
+        const delta = prev === null ? 0 : v - prev;
+        return {
+            ts: series[i].ts, value: v, first: i === 0,
+            delta: delta, deltaPct: prev ? delta / prev * 100 : 0, up: delta >= 0,
+            peak: peak, ddFromPeak: peak > 0 ? (peak - v) / peak : 0,
+            isNewHigh: i > 0 && v > prevMax,
+            note: truncateReplayNote(series[i].note)
+        };
+    };
+    /* 小卡定位：預設在游標右上方（間距 gap）；右邊放不下翻到左側、上方放不下翻到下方；
+       最後一律夾在畫面內（留 margin）。回傳 { left, top }。 */
+    const placeReplayTooltip = (cx, cy, w, h, vw, vh, gap, margin) => {
+        const g = Number.isFinite(gap) ? gap : 14, m = Number.isFinite(margin) ? margin : 8;
+        let left = cx + g, top = cy - g - h;
+        if (left + w > vw - m) left = cx - g - w;
+        if (top < m) top = cy + g;
+        left = Math.max(m, Math.min(left, vw - m - w));
+        top = Math.max(m, Math.min(top, vh - m - h));
+        return { left: left, top: top };
+    };
+
     // 連擊數 → 分級（0＝不顯示，1～3 對應 ASSET_REPLAY_COMBO_TIERS）
     const replayComboTier = (k) => {
         const v = Number(k) || 0;
@@ -5712,7 +5764,8 @@ Build the wall first. Attack second.`)}
         return {
             padL: padL, padR: padR, padT: padT, padB: padB, t0: t0, tN: tN,
             xAt: (ts) => padL + (ts - t0) / span * (w - padL - padR),
-            yAt: (v) => padT + (1 - (v - base) / range) * (h - padT - padB)
+            yAt: (v) => padT + (1 - (v - base) / range) * (h - padT - padB),
+            tsAt: (x) => t0 + (x - padL) / Math.max(1, w - padL - padR) * span
         };
     };
 
@@ -5754,6 +5807,20 @@ Build the wall first. Attack second.`)}
         const [runId, setRunId] = useState(0);
         const [athN, setAthN] = useState(reduced ? (summary.peakCount || 0) : 0);   // NEW HIGH ×N
         const [athPop, setAthPop] = useState(0);                                    // 變動即重跑跳動動畫
+        // 播完後懸停查看：idx＝吸附到的那一筆，cx／cy＝游標（視窗座標）
+        const [hover, setHover] = useState(null);
+        const tipRef = useRef(null);
+        const lastTouchRef = useRef(0);   // 觸控後瀏覽器會補發相容滑鼠事件，短時間內忽略
+        React.useLayoutEffect(() => {
+            const el = tipRef.current;
+            if (!el || !hover) return;
+            const pos = placeReplayTooltip(hover.cx, hover.cy, el.offsetWidth, el.offsetHeight,
+                window.innerWidth, window.innerHeight, 14, 8);
+            el.style.left = pos.left + 'px';
+            el.style.top = pos.top + 'px';
+        });
+        // 一開始播放（或重播）就收起提示
+        useEffect(() => { if (playing) setHover(null); }, [playing]);
         const athStreaks = useMemo(() => buildAthStreaks(series), [series]);
         // 連擊：k＝目前連續創高筆數；out＝正在縮小淡出（斷連擊）。reduced-motion 直接顯示最後一筆的連擊
         const [combo, setCombo] = useState(() => ({
@@ -6636,6 +6703,72 @@ Build the wall first. Attack second.`)}
         );
         const shakeCls = shakeLv ? ' replay-shake-' + shakeLv : '';
 
+        /* ── 播完後懸停／拖曳查看（播放中、暫停中都不啟用；reduced-motion 也啟用） ── */
+        const hoverOn = !playing;
+        const pickHover = (clientX, clientY) => {
+            const cv = lineRef.current;
+            if (!cv || !hoverOn) return;
+            const r = cv.getBoundingClientRect();
+            if (!r.width || !r.height) return;
+            const g = replayGeom(r.width, r.height, series);
+            const idx = findNearestReplayIndex(series, g.tsAt(clientX - r.left));
+            if (idx < 0) return;
+            setHover({ idx: idx, cx: clientX, cy: clientY });
+        };
+        const chartHover = {
+            onMouseMove: (e) => { if (Date.now() - lastTouchRef.current > 800) pickHover(e.clientX, e.clientY); },
+            onMouseLeave: () => setHover(null),
+            onTouchStart: (e) => { lastTouchRef.current = Date.now(); if (e.touches[0]) pickHover(e.touches[0].clientX, e.touches[0].clientY); },
+            onTouchMove: (e) => { lastTouchRef.current = Date.now(); if (e.touches[0]) pickHover(e.touches[0].clientX, e.touches[0].clientY); },
+            onTouchEnd: () => { lastTouchRef.current = Date.now(); setHover(null); },
+            onTouchCancel: () => setHover(null),
+            // 拖曳時不捲動背景（只限曲線範圍）；播放中維持原樣
+            style: hoverOn ? { touchAction: 'none' } : undefined
+        };
+        const hoverTip = hover && hoverOn ? buildReplayTooltip(series, hover.idx) : null;
+        let hoverMarks = null;
+        if (hoverTip && lineRef.current) {
+            const cvw = lineRef.current.clientWidth, cvh = lineRef.current.clientHeight;
+            const g = replayGeom(cvw, cvh, series);
+            const mx = g.xAt(hoverTip.ts), my = g.yAt(hoverTip.value);
+            const dotColor = hoverTip.first || hoverTip.up ? REPLAY_RED : REPLAY_GREEN;
+            hoverMarks = (
+                <React.Fragment>
+                    <div className="absolute pointer-events-none"
+                         style={{ left: mx, top: g.padT, height: Math.max(0, cvh - g.padT - g.padB), width: 0,
+                                  borderLeft: '1px dashed rgba(255,255,255,0.35)', zIndex: 2 }}></div>
+                    <div className="absolute pointer-events-none rounded-full"
+                         style={{ left: mx - 5, top: my - 5, width: 10, height: 10, background: dotColor,
+                                  boxShadow: '0 0 10px ' + dotColor + ', 0 0 2px #FFFFFF', zIndex: 2 }}></div>
+                </React.Fragment>
+            );
+        }
+        const tipRow = (label, value, color) => (
+            <div className="flex justify-between gap-4">
+                <span style={{ color: 'rgba(255,255,255,0.55)' }}>{label}</span>
+                <span className="font-bold" style={{ color: color || '#FFFFFF' }}>{value}</span>
+            </div>
+        );
+        const hoverCard = hoverTip ? (
+            <div ref={tipRef} className="fixed pointer-events-none rounded-xl px-3 py-2 font-mono text-xs space-y-1"
+                 style={{ left: hover.cx + 14, top: hover.cy - 14, zIndex: 7, minWidth: 200,
+                          background: 'rgba(13,13,13,0.94)', border: '1px solid rgba(255,255,255,0.18)',
+                          color: '#FFFFFF', boxShadow: '0 6px 24px rgba(0,0,0,0.6)' }}>
+                <div className="font-bold" style={{ color: '#FFFFFF' }}>{formatYMD(new Date(hoverTip.ts))}</div>
+                {tipRow('總資產', Math.round(hoverTip.value).toLocaleString())}
+                {tipRow('較前一筆', hoverTip.first ? '第一筆'
+                    : (hoverTip.up ? '+' : '−') + Math.abs(Math.round(hoverTip.delta)).toLocaleString()
+                      + '（' + (hoverTip.up ? '+' : '−') + Math.abs(hoverTip.deltaPct).toFixed(2) + '%）',
+                    hoverTip.first ? 'rgba(255,255,255,0.75)' : (hoverTip.up ? REPLAY_RED : REPLAY_GREEN))}
+                {tipRow('距當時前高', hoverTip.isNewHigh ? '歷史新高'
+                    : (hoverTip.first ? '—' : '−' + (hoverTip.ddFromPeak * 100).toFixed(1) + '%'),
+                    hoverTip.isNewHigh ? REPLAY_GOLD : (hoverTip.first ? 'rgba(255,255,255,0.75)' : REPLAY_GREEN))}
+                {hoverTip.note && (
+                    <div className="pt-1" style={{ color: 'rgba(255,255,255,0.8)', borderTop: '1px solid rgba(255,255,255,0.12)' }}>{hoverTip.note}</div>
+                )}
+            </div>
+        ) : null;
+
         // ── 版面零件：手機版與電腦版共用，只差排列方式 ──────────────
         const statBox = (label, node) => (
             <div>
@@ -6716,17 +6849,17 @@ Build the wall first. Attack second.`)}
                                 {recList.map((r, k) => (
                                     <tr key={'rec-' + k}>
                                         <td className="pr-2 py-0.5" style={{ color: REPLAY_GOLD }}>{k + 1}</td>
-                                        <td className="pr-2 py-0.5 whitespace-nowrap leading-tight">{ymd(r.peakDate)}<br />{'→ ' + ymd(r.recoverDate)}</td>
+                                        <td className="pr-2 py-0.5 whitespace-nowrap leading-tight" style={{ color: 'rgba(255,255,255,0.75)' }}>{ymd(r.peakDate)}<br />{'→ ' + ymd(r.recoverDate)}</td>
                                         <td className="pr-2 py-0.5 text-right whitespace-nowrap" style={{ color: REPLAY_GREEN }}>{ddText(r.depth)}</td>
-                                        <td className="pr-2 py-0.5 text-right whitespace-nowrap">{dayText(r.daysDown)}</td>
-                                        <td className="pr-2 py-0.5 text-right whitespace-nowrap">{dayText(r.daysUp)}</td>
+                                        <td className="pr-2 py-0.5 text-right whitespace-nowrap" style={{ color: 'rgba(255,255,255,0.85)' }}>{dayText(r.daysDown)}</td>
+                                        <td className="pr-2 py-0.5 text-right whitespace-nowrap" style={{ color: 'rgba(255,255,255,0.85)' }}>{dayText(r.daysUp)}</td>
                                         <td className="py-0.5 text-right font-bold whitespace-nowrap" style={{ color: REPLAY_GOLD }}>{dayText(r.daysTotal)}</td>
                                     </tr>
                                 ))}
                                 {recOngoing && (
                                     <tr>
                                         <td className="pr-2 py-0.5" style={{ color: REPLAY_GREEN }}>進行中</td>
-                                        <td className="py-0.5" colSpan={5}>
+                                        <td className="py-0.5" colSpan={5} style={{ color: 'rgba(255,255,255,0.85)' }}>
                                             {'自 ' + ymd(recOngoing.peakDate) + ' 起已 ' + recOngoing.daysSincePeak + ' 天｜目前回檔 '
                                                 + ddText(recOngoing.currentDepth) + '｜最深 ' + ddText(recOngoing.depth)}
                                         </td>
@@ -6764,7 +6897,9 @@ Build the wall first. Attack second.`)}
 
         const summaryNode = (
             <div className={"rounded-2xl px-4 py-4 font-mono space-y-2 " + (wide ? 'text-sm' : 'text-xs')}
-                 style={{ background: 'rgba(13,13,13,0.82)', border: '1px solid rgba(245,197,66,0.4)' }}>
+                 style={Object.assign({ background: 'rgba(13,13,13,0.82)', border: '1px solid rgba(245,197,66,0.4)', color: 'rgba(255,255,255,0.85)' },
+                     // 手機：面板太高時自己捲動，曲線至少保留 160px 可懸停查看
+                     wide ? {} : { maxHeight: 'max(120px, calc(100vh - 540px))', overflowY: 'auto', pointerEvents: 'auto' })}>
                 <div className="text-center font-bold text-sm pb-1" style={{ color: REPLAY_GOLD }}>回放總結</div>
                 {sumRow('期間', formatYMD(new Date(summary.fromTs)) + ' → ' + formatYMD(new Date(summary.toTs)))}
                 {sumRow('歷時', summary.years + ' 年 ' + summary.months + ' 個月')}
@@ -6793,6 +6928,7 @@ Build the wall first. Attack second.`)}
                                 setPaused(false);
                                 setCard(null);
                                 setShowSummary(false);
+                                setHover(null);
                                 setRunId((v) => v + 1);
                             }}
                             disabled={playing}
@@ -6820,7 +6956,7 @@ Build the wall first. Attack second.`)}
 
         return (
             <div className={"fixed inset-0 z-[1200] overflow-hidden" + shakeCls}
-                 style={{ background: REPLAY_BG }}
+                 style={{ background: REPLAY_BG, color: 'rgba(255,255,255,0.85)' }}
                  onClick={() => { if (playing) setPaused((v) => !v); }}>
                 <canvas ref={fxRef} className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 4 }}></canvas>
                 <div ref={flashElRef} className="absolute inset-0 pointer-events-none"
@@ -6831,6 +6967,8 @@ Build the wall first. Attack second.`)}
                 <button onClick={(e) => { e.stopPropagation(); onClose(); }} aria-label="關閉資產回放"
                         className="absolute top-4 right-4 w-11 h-11 rounded-full font-mono text-xl leading-none"
                         style={{ color: '#fff', background: 'rgba(255,255,255,0.1)', zIndex: 6 }}>✕</button>
+
+                {hoverCard}
 
                 {paused && (
                     <div className="absolute top-5 left-4 px-3 py-1 rounded-full font-mono text-xs pointer-events-none"
@@ -6860,8 +6998,12 @@ Build the wall first. Attack second.`)}
                             </div>
                         </div>
                         <div className="flex-grow min-h-0 flex gap-8 mt-6">
-                            <div className="relative min-h-0" style={{ flex: '7 1 0%' }}>
+                            <div className="relative min-h-0" style={Object.assign({ flex: '7 1 0%' }, chartHover.style)}
+                                 onMouseMove={chartHover.onMouseMove} onMouseLeave={chartHover.onMouseLeave}
+                                 onTouchStart={chartHover.onTouchStart} onTouchMove={chartHover.onTouchMove}
+                                 onTouchEnd={chartHover.onTouchEnd} onTouchCancel={chartHover.onTouchCancel}>
                                 <canvas ref={lineRef} className="absolute inset-0 w-full h-full"></canvas>
+                                {hoverMarks}
                             </div>
                             <div className="min-h-0 flex flex-col" style={{ flex: '3 1 0%' }}>
                                 <div className="flex-grow min-h-0 flex flex-col justify-center">
@@ -6888,8 +7030,12 @@ Build the wall first. Attack second.`)}
                             {caption}
                         </div>
 
-                        <div className="flex-grow min-h-0 relative mt-4">
+                        <div className="flex-grow min-h-[20vh] relative mt-4" style={chartHover.style}
+                             onMouseMove={chartHover.onMouseMove} onMouseLeave={chartHover.onMouseLeave}
+                             onTouchStart={chartHover.onTouchStart} onTouchMove={chartHover.onTouchMove}
+                             onTouchEnd={chartHover.onTouchEnd} onTouchCancel={chartHover.onTouchCancel}>
                             <canvas ref={lineRef} className="absolute inset-0 w-full h-full"></canvas>
+                            {hoverMarks}
                             {!showSummary && cardNode && (
                                 <div className="absolute inset-x-0 top-1/2 -translate-y-1/2">{cardNode}</div>
                             )}

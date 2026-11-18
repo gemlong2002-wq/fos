@@ -137,6 +137,7 @@ const M = eval(deps + `; ({
   buildReplayAthCounts, buildReplayMinorMarks, calcReplayStepDurations,
   buildAthStreaks, replayComboTier, replaySegmentUp, replaySegmentColor,
   replayHistoryAlpha, buildCometTrail,
+  findNearestReplayIndex, buildReplayTooltip, placeReplayTooltip,
   K: { STEP: ASSET_REPLAY_MILESTONE_STEP, TIERS: ASSET_REPLAY_DRAWDOWN_TIERS,
        MIN_DD: ASSET_REPLAY_SEGMENT_MIN_DRAWDOWN, GAP: ASSET_REPLAY_GAP_DAYS,
        NOTE: ASSET_REPLAY_NOTE_MAX, HOLD: ASSET_REPLAY_EVENT_HOLD_MS,
@@ -1114,6 +1115,73 @@ chk('空路徑 → 無點', M.buildCometTrail([], 90, 3).length, 0);
 chk('畫面：霓虹亮芯層', H.includes('ctx.strokeStyle = replaySegmentCore(up);'), true);
 chk('畫面：彗星尾巴使用 buildCometTrail', H.includes('buildCometTrail(pathPts, ASSET_REPLAY_COMET_PX, ASSET_REPLAY_COMET_STEP)'), true);
 chk('畫面：歷史線依 replayHistoryAlpha 變暗', H.includes('const alpha = replayHistoryAlpha(k, i, ended);'), true);
+console.log('');
+console.log('【第 8 輪｜播完後懸停查看 findNearestReplayIndex／buildReplayTooltip／placeReplayTooltip】');
+/* 最近筆吸附（不內插）：S1 日期 i3 20240401、i4 20240701（相隔 91 天）
+   · 剛好落在 i3 → 3
+   · 兩筆正中間（距兩邊各 45.5 天）→ 平手取較早 → 3；中點再晚 1 毫秒 → 4
+   · 早於第一筆 → 0；晚於最後一筆 → 8；空序列 → −1 */
+const midTs = (s1[3].ts + s1[4].ts) / 2;
+chk('吸附：剛好落在 i3', M.findNearestReplayIndex(s1, s1[3].ts), 3);
+chk('吸附：i3／i4 正中間取較早', M.findNearestReplayIndex(s1, midTs), 3);
+chk('吸附：中點再晚 1ms → i4', M.findNearestReplayIndex(s1, midTs + 1), 4);
+chk('吸附：早於第一筆 → 0', M.findNearestReplayIndex(s1, s1[0].ts - 86400000 * 30), 0);
+chk('吸附：晚於最後一筆 → 8', M.findNearestReplayIndex(s1, s1[8].ts + 86400000 * 30), 8);
+chk('吸附：空序列 → −1', M.findNearestReplayIndex([], 0), -1);
+
+/* 提示內容（S1 值：480 520 1000 1100 900 750 1150 700 2000 萬）
+   · i0：第一筆，較前一筆不適用；前高＝自己 480 萬、距前高 0；不算新高（第一筆）
+   · i1：520−480 = +40 萬 = +400,000；400,000 ÷ 4,800,000 = +8.3333%；
+         520 > 之前最高 480 → 歷史新高；備註「加碼 0050 兩張」（10 字不截斷）
+   · i4：900−1100 = −200 萬 = −2,000,000；−2,000,000 ÷ 11,000,000 = −18.1818%；
+         前高 1100 萬，距前高 200/1100 = 18.1818%；非新高
+   · i8：2000−700 = +1300 萬 = +13,000,000；13,000,000 ÷ 7,000,000 = +185.7143%；
+         2000 > 之前最高 1150 → 歷史新高；
+         備註 24 字截前 20 字加…（第 17～20 字為「毛資產口」） */
+const tp = (ser, i) => M.buildReplayTooltip(ser, i);
+const t0s = tp(s1, 0), t1s = tp(s1, 1), t4s = tp(s1, 4), t8s = tp(s1, 8);
+chk('i0 第一筆', t0s.first + '|' + t0s.isNewHigh + '|' + t0s.peak + '|' + t0s.ddFromPeak, 'true|false|4800000|0');
+chk('i1 較前一筆金額', t1s.delta, 400000);
+near('i1 較前一筆 %', t1s.deltaPct, 8.333333, 1e-5);
+chk('i1 漲／歷史新高／距前高 0', t1s.up + '|' + t1s.isNewHigh + '|' + t1s.ddFromPeak, 'true|true|0');
+chk('i1 備註', t1s.note, '加碼 0050 兩張');
+chk('i4 較前一筆金額', t4s.delta, -2000000);
+near('i4 較前一筆 %', t4s.deltaPct, -18.181818, 1e-5);
+chk('i4 跌／前高 1100 萬／非新高', t4s.up + '|' + t4s.peak + '|' + t4s.isNewHigh, 'false|11000000|false');
+near('i4 距前高', t4s.ddFromPeak, 0.181818, 1e-5);
+chk('i4 無備註', t4s.note, '');
+chk('i8 較前一筆金額', t8s.delta, 13000000);
+near('i8 較前一筆 %', t8s.deltaPct, 185.714286, 1e-5);
+chk('i8 歷史新高', t8s.isNewHigh, true);
+chk('i8 備註截斷 20 字加…', t8s.note, '年終結算：含質押借款與投入本金，毛資產口…');
+/* S2：i5 1080 萬（前一筆 1120 萬）→ −40 萬、−40/1120 = −3.5714%；
+       前高 1120 萬（i4），距前高 3.5714%；非新高 */
+const t5b = tp(s2, 5);
+chk('S2 i5 較前一筆金額', t5b.delta, -400000);
+near('S2 i5 較前一筆 %', t5b.deltaPct, -3.571429, 1e-5);
+near('S2 i5 距前高', t5b.ddFromPeak, 0.035714, 1e-5);
+chk('S2 i5 前高 1120 萬、非新高', t5b.peak + '|' + t5b.isNewHigh, '11200000|false');
+/* 持平：100 萬 → 100 萬，第 2 筆持平算漲、不是新高（需嚴格大於）、距前高 0 */
+const flat2 = M.toReplaySeries([{ 日期: '20260101', 總資產: 1000000 }, { 日期: '20260201', 總資產: 1000000 }]);
+chk('持平：漲、非新高、距前高 0', [tp(flat2, 1).up, tp(flat2, 1).isNewHigh, tp(flat2, 1).ddFromPeak].join('|'), 'true|false|0');
+chk('越界索引 → null', tp(s1, 9), null);
+
+/* 小卡定位（gap 14、margin 8）
+   · 一般：游標 (500,400)、卡 200×100、視窗 1440×900 → 右上方 left 514、top 400−14−100 = 286
+   · 靠右：游標 x 1350 → 1350+14+200 = 1564 > 1432 → 翻左 1350−14−200 = 1136
+   · 靠上：游標 y 50 → 50−114 = −64 < 8 → 翻下 50+14 = 64
+   · 視窗比卡還窄：vw 150、游標 x 75 → 左右都放不下 → 夾到 8 */
+const pl = (a) => { const r = M.placeReplayTooltip.apply(null, a); return r.left + ',' + r.top; };
+chk('小卡：預設在游標右上方', pl([500, 400, 200, 100, 1440, 900, 14, 8]), '514,286');
+chk('小卡：靠右翻到左側', pl([1350, 400, 200, 100, 1440, 900, 14, 8]), '1136,286');
+chk('小卡：靠上翻到下方', pl([500, 50, 200, 100, 1440, 900, 14, 8]), '514,64');
+chk('小卡：視窗太窄夾在邊界內', pl([75, 400, 200, 100, 150, 900, 14, 8]), '8,286');
+chk('畫面：座標沿用 replayGeom（tsAt 與 xAt 同組參數）',
+  H.includes('tsAt: (x) => t0 + (x - padL) / Math.max(1, w - padL - padR) * span'), true);
+chk('畫面：播放中／暫停中不啟用', H.includes('const hoverOn = !playing;'), true);
+chk('畫面：重播時清掉提示', /setHover\(null\);\s*setRunId\(\(v\) => v \+ 1\);/.test(H), true);
+chk('畫面：拖曳時不捲動背景', H.includes("style: hoverOn ? { touchAction: 'none' } : undefined"), true);
+chk('畫面：小卡明確白字深底', H.includes("background: 'rgba(13,13,13,0.94)'") && H.includes("color: '#FFFFFF', boxShadow"), true);
 console.log('');
 console.log(fail === 0 ? '>>> 全部通過' : '>>> ' + fail + ' 組失敗');
 process.exit(fail === 0 ? 0 : 1);
