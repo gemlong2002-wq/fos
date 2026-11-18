@@ -136,6 +136,7 @@ const M = eval(deps + `; ({
   replayLerp, replayProgress, replayBoltSpec, buildLightningPath, buildReplaySummary,
   buildReplayAthCounts, buildReplayMinorMarks, calcReplayStepDurations,
   buildAthStreaks, replayComboTier, replaySegmentUp, replaySegmentColor,
+  replayHistoryAlpha, buildCometTrail,
   K: { STEP: ASSET_REPLAY_MILESTONE_STEP, TIERS: ASSET_REPLAY_DRAWDOWN_TIERS,
        MIN_DD: ASSET_REPLAY_SEGMENT_MIN_DRAWDOWN, GAP: ASSET_REPLAY_GAP_DAYS,
        NOTE: ASSET_REPLAY_NOTE_MAX, HOLD: ASSET_REPLAY_EVENT_HOLD_MS,
@@ -149,7 +150,8 @@ const M = eval(deps + `; ({
        FLAT: ASSET_REPLAY_FLAT_RATIO, FINAL_MS: ASSET_REPLAY_FINAL_SLOW_MS,
        FINAL_GLOW_MS: ASSET_REPLAY_FINAL_GLOW_MS,
        COMBO: ASSET_REPLAY_COMBO_TIERS, COMBO_MIN: ASSET_REPLAY_COMBO_MIN,
-       COMBO_FADE: ASSET_REPLAY_COMBO_FADE_MS }
+       COMBO_FADE: ASSET_REPLAY_COMBO_FADE_MS,
+       BRIGHT: ASSET_REPLAY_BRIGHT_SEGS, HIST: ASSET_REPLAY_HISTORY_ALPHA }
 })`);
 const K = M.K;
 
@@ -1087,6 +1089,31 @@ chk('畫面：折線頭顏色跟著當前段', H.includes('ctx.fillStyle = headU
 chk('畫面：播放中與 reduced-motion 靜態圖都逐段上色',
   H.split('replaySegmentColor(').length - 1, 3);
 chk('畫面：下方漸層維持淡紅', H.includes("grad.addColorStop(0, 'rgba(255,59,71,0.34)');"), true);
+console.log('');
+console.log('【第 7 輪｜霓虹燈管線＋彗星尾巴 replayHistoryAlpha／buildCometTrail】');
+/* 亮度：最近 3 段全亮（k > i − 3），更早的 0.4；結尾後整條全亮。
+   i = 10：k = 8、9、10 全亮；k = 7 → 0.4；k = 1 → 0.4
+   i = 2：k = 1、2 皆 > −1 → 全亮（不足 3 段時全部亮） */
+chk('亮度常數：最近 3 段、歷史 0.4', [K.BRIGHT, K.HIST].join('|'), '3|0.4');
+chk('i=10：k=8/9/10 全亮', [8, 9, 10].map((k) => M.replayHistoryAlpha(k, 10, false)).join(','), '1,1,1');
+chk('i=10：k=7、k=1 變暗 0.4', [7, 1].map((k) => M.replayHistoryAlpha(k, 10, false)).join(','), '0.4,0.4');
+chk('i=2：不足 3 段全亮', [1, 2].map((k) => M.replayHistoryAlpha(k, 2, false)).join(','), '1,1');
+chk('結尾後整條恢復全亮', M.replayHistoryAlpha(1, 10, true), 1);
+/* 彗星取點（由頭往回，每 step 一點，取到 len 為止；f＝距離／len）
+   直線 (0,0)→(100,0)，頭在 (100,0)，len 9、step 3：
+     距離 0、3、6、9 → x = 100、97、94、91；f = 0、1/3、2/3、1 */
+const tr = (pts, len, step) => M.buildCometTrail(pts, len, step).map((p) => [Math.round(p.x * 100) / 100, Math.round(p.y * 100) / 100, Math.round(p.f * 1000) / 1000].join(':')).join(' ');
+chk('直線取點', tr([{ x: 0, y: 0 }, { x: 100, y: 0 }], 9, 3), '100:0:0 97:0:0.333 94:0:0.667 91:0:1');
+/* 轉角：(0,0)→(0,4)→(3,4)，頭在 (3,4)，len 6、step 2：
+     距離 0 → (3,4)；距離 2 → 沿 (3,4)→(0,4) 走 2 → (1,4)；
+     距離 4 → 該段長 3 用完，再沿 (0,4)→(0,0) 走 1 → (0,3)；距離 6 → 再走 2 → (0,1) */
+chk('轉角沿折線取點', tr([{ x: 0, y: 0 }, { x: 0, y: 4 }, { x: 3, y: 4 }], 6, 2), '3:4:0 1:4:0.333 0:3:0.667 0:1:1');
+/* 路徑比尾巴短：(0,0)→(4,0)，len 10、step 2 → 距離 0、2、4 取到起點為止，共 3 點 */
+chk('路徑比尾巴短：取到起點為止', tr([{ x: 0, y: 0 }, { x: 4, y: 0 }], 10, 2), '4:0:0 2:0:0.2 0:0:0.4');
+chk('空路徑 → 無點', M.buildCometTrail([], 90, 3).length, 0);
+chk('畫面：霓虹亮芯層', H.includes('ctx.strokeStyle = replaySegmentCore(up);'), true);
+chk('畫面：彗星尾巴使用 buildCometTrail', H.includes('buildCometTrail(pathPts, ASSET_REPLAY_COMET_PX, ASSET_REPLAY_COMET_STEP)'), true);
+chk('畫面：歷史線依 replayHistoryAlpha 變暗', H.includes('const alpha = replayHistoryAlpha(k, i, ended);'), true);
 console.log('');
 console.log(fail === 0 ? '>>> 全部通過' : '>>> ' + fail + ' 組失敗');
 process.exit(fail === 0 ? 0 : 1);

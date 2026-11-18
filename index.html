@@ -432,7 +432,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/11/18 12:40';
+    const APP_VERSION = '2026/11/18 12:49';
 
     /* ===================================================================
        共用工具
@@ -5556,6 +5556,44 @@ Build the wall first. Attack second.`)}
         ? (isGap ? 'rgba(255,59,71,0.45)' : '#FF3B47')
         : (isGap ? 'rgba(43,212,125,0.45)' : '#2BD47D');
 
+    /* 霓虹燈管線＋彗星尾巴（第 7 輪，純視覺）
+       · 線分兩層：外層粗的彩色光暈（replaySegmentColor）＋內層細的近白亮芯（replaySegmentCore）
+       · 最近 ASSET_REPLAY_BRIGHT_SEGS 段全亮，更早的歷史線降到 ASSET_REPLAY_HISTORY_ALPHA；
+         回放結束（進入結尾）後整條恢復全亮
+       · 折線頭後方沿著折線拖一段漸淡的彗星尾巴，顏色跟正在畫的那一段 */
+    const ASSET_REPLAY_BRIGHT_SEGS = 3;
+    const ASSET_REPLAY_HISTORY_ALPHA = 0.4;
+    const ASSET_REPLAY_COMET_PX = 90;     // 尾巴長度
+    const ASSET_REPLAY_COMET_STEP = 3;    // 尾巴取點間距
+    const replaySegmentCore = (up) => (up ? '#FFE3E5' : '#DDFFEC');
+    // 第 k 段（第 k−1 筆 → 第 k 筆）的亮度；i＝目前抵達的筆
+    const replayHistoryAlpha = (k, i, ended) => {
+        if (ended) return 1;
+        return k > i - ASSET_REPLAY_BRIGHT_SEGS ? 1 : ASSET_REPLAY_HISTORY_ALPHA;
+    };
+    /* 彗星尾巴取點：points 由舊到新（最後一點＝折線頭），從頭往回沿折線每 step 取一點，
+       取到總長 len 為止。回傳 [{ x, y, f }]，f＝離頭的比例（0＝頭、1＝尾端）。 */
+    const buildCometTrail = (points, len, step) => {
+        const out = [];
+        if (!Array.isArray(points) || points.length < 1) return out;
+        const L = Math.max(0, Number(len) || 0), st = Math.max(0.5, Number(step) || 1);
+        let k = points.length - 1, cx = points[k].x, cy = points[k].y, walked = 0, next = 0;
+        out.push({ x: cx, y: cy, f: 0 });
+        next = st;
+        while (k > 0 && next <= L) {
+            const px = points[k - 1].x, py = points[k - 1].y;
+            const dx = px - cx, dy = py - cy, seg = Math.sqrt(dx * dx + dy * dy);
+            if (walked + seg >= next) {
+                const t = (next - walked) / (seg || 1);
+                out.push({ x: cx + dx * t, y: cy + dy * t, f: next / (L || 1) });
+                next += st;
+                continue;
+            }
+            walked += seg; cx = px; cy = py; k -= 1;
+        }
+        return out;
+    };
+
     // 連擊數 → 分級（0＝不顯示，1～3 對應 ASSET_REPLAY_COMBO_TIERS）
     const replayComboTier = (k) => {
         const v = Number(k) || 0;
@@ -6053,20 +6091,43 @@ Build the wall first. Attack second.`)}
                 }
 
                 // 線段：空檔畫虛線；最後一段只畫到折線頭
-                ctx.lineWidth = 2;
                 ctx.lineJoin = 'round';
                 ctx.lineCap = 'round';
-                ctx.shadowBlur = 12;
+                const ended = finalGlowUntilRef.current > 0;
+                // 霓虹燈管：外層彩色光暈（粗、模糊）＋內層近白亮芯（細）
+                const neonCore = (x0, y0, x1, y1, up, isGap, alpha) => {
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.setLineDash(isGap ? [5, 5] : []);
+                    ctx.lineWidth = 1.4;
+                    ctx.strokeStyle = replaySegmentCore(up);
+                    ctx.shadowColor = up ? REPLAY_RED : REPLAY_GREEN;
+                    ctx.shadowBlur = 8;
+                    ctx.beginPath();
+                    ctx.moveTo(x0, y0);
+                    ctx.lineTo(x1, y1);
+                    ctx.stroke();
+                    ctx.restore();
+                };
                 for (let k = 1; k <= i; k++) {
                     const isGap = gaps.indexOf(k) >= 0;
                     const up = replaySegmentUp(series[k - 1].value, series[k].value);
+                    const alpha = replayHistoryAlpha(k, i, ended);
+                    const x0 = g.xAt(series[k - 1].ts), y0 = g.yAt(series[k - 1].value);
+                    const x1 = g.xAt(series[k].ts), y1 = g.yAt(series[k].value);
+                    ctx.save();
+                    ctx.globalAlpha = alpha * 0.7;
+                    ctx.lineWidth = 6;
+                    ctx.shadowBlur = 18;
                     ctx.beginPath();
                     ctx.setLineDash(isGap ? [5, 5] : []);
                     ctx.strokeStyle = replaySegmentColor(up, isGap);
                     ctx.shadowColor = up ? REPLAY_RED : REPLAY_GREEN;
-                    ctx.moveTo(g.xAt(series[k - 1].ts), g.yAt(series[k - 1].value));
-                    ctx.lineTo(g.xAt(series[k].ts), g.yAt(series[k].value));
+                    ctx.moveTo(x0, y0);
+                    ctx.lineTo(x1, y1);
                     ctx.stroke();
+                    ctx.restore();
+                    neonCore(x0, y0, x1, y1, up, isGap, alpha);
                 }
                 // 折線頭的顏色＝正在畫的那一段（補間中取下一段，剛抵達取上一段）
                 const headUp = pr.frac > 0
@@ -6074,16 +6135,44 @@ Build the wall first. Attack second.`)}
                     : (i > 0 ? replaySegmentUp(series[i - 1].value, series[i].value) : true);
                 if (pr.frac > 0) {
                     const isGap = gaps.indexOf(i + 1) >= 0;
+                    const sx = g.xAt(series[i].ts), sy = g.yAt(series[i].value);
+                    ctx.save();
+                    ctx.globalAlpha = 0.7;
+                    ctx.lineWidth = 6;
+                    ctx.shadowBlur = 18;
                     ctx.beginPath();
                     ctx.setLineDash(isGap ? [5, 5] : []);
                     ctx.strokeStyle = replaySegmentColor(headUp, isGap);
                     ctx.shadowColor = headUp ? REPLAY_RED : REPLAY_GREEN;
-                    ctx.moveTo(g.xAt(series[i].ts), g.yAt(series[i].value));
+                    ctx.moveTo(sx, sy);
                     ctx.lineTo(hx, hy);
                     ctx.stroke();
+                    ctx.restore();
+                    neonCore(sx, sy, hx, hy, headUp, isGap, 1);
                 }
                 ctx.setLineDash([]);
                 ctx.shadowBlur = 0;
+
+                // 彗星尾巴：沿折線從頭往回取點，越遠越淡越小，顏色跟正在畫的那一段
+                if (!ended && (i > 0 || pr.frac > 0)) {
+                    const pathPts = [];
+                    for (let k = 0; k <= i; k++) pathPts.push({ x: g.xAt(series[k].ts), y: g.yAt(series[k].value) });
+                    if (pr.frac > 0) pathPts.push({ x: hx, y: hy });
+                    const trail = buildCometTrail(pathPts, ASSET_REPLAY_COMET_PX, ASSET_REPLAY_COMET_STEP);
+                    const tc = headUp ? REPLAY_RED : REPLAY_GREEN;
+                    ctx.save();
+                    ctx.shadowColor = tc;
+                    ctx.shadowBlur = 14;
+                    for (let t = trail.length - 1; t >= 1; t--) {
+                        const p = trail[t], fade = 1 - p.f;
+                        ctx.globalAlpha = 0.85 * fade * fade;
+                        ctx.fillStyle = t < 4 ? '#FFFFFF' : tc;
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, 0.6 + 3.2 * fade, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.restore();
+                }
 
                 // 結尾：完整曲線發光約 1 秒（之後才出總結面板）
                 const fgLeft = finalGlowUntilRef.current - (window.performance ? performance.now() : Date.now());
