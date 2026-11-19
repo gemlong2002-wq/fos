@@ -1202,5 +1202,17 @@ chk('畫面：手機版不套字級（fz 只在電腦版回傳值）', H.include
 chk('畫面：畫布文字電腦版 13.5、手機版維持 10px',
   (H.match(/ctx\.font = \(wideRef\.current \? replayFzPx\(13\.5, window\.innerWidth\) : 10\) \+ 'px ui-monospace, monospace';/g) || []).length, 2);
 console.log('');
+console.log('【第 10 輪｜iOS 長按不觸發選取／系統選單】');
+chk('根節點：user-select／-webkit-user-select none',
+  H.includes("userSelect: 'none', WebkitUserSelect: 'none'"), true);
+chk('根節點：-webkit-touch-callout none、tap highlight 透明',
+  H.includes("WebkitTouchCallout: 'none', WebkitTapHighlightColor: 'transparent'"), true);
+chk('回放視窗內攔截 contextmenu 與 selectstart',
+  H.includes("el.addEventListener('contextmenu', block);") && H.includes("el.addEventListener('selectstart', block);"), true);
+chk('曲線觸控區以 passive:false 註冊 touchstart／touchmove',
+  H.includes("el.addEventListener('touchstart', stop, { passive: false });") && H.includes("el.addEventListener('touchmove', stop, { passive: false });"), true);
+chk('播放中不攔截（維持點畫面暫停）', H.includes('if (!el || playing) return;'), true);
+chk('寬窄兩版曲線容器都掛 chartBoxRef', (H.match(/<div ref=\{chartBoxRef\}/g) || []).length, 2);
+console.log('');
 console.log(fail === 0 ? '>>> 全部通過' : '>>> ' + fail + ' 組失敗');
 process.exit(fail === 0 ? 0 : 1);

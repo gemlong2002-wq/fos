@@ -432,7 +432,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/11/18 13:20';
+    const APP_VERSION = '2026/11/19 18:20';
 
     /* ===================================================================
        共用工具
@@ -5824,6 +5824,27 @@ Build the wall first. Attack second.`)}
         const [hover, setHover] = useState(null);
         const tipRef = useRef(null);
         const lastTouchRef = useRef(0);   // 觸控後瀏覽器會補發相容滑鼠事件，短時間內忽略
+        const rootRef = useRef(null);       // 回放視窗根節點（攔截 contextmenu／selectstart）
+        const chartBoxRef = useRef(null);   // 曲線觸控區（寬窄版各渲染一個，同時只掛一個）
+        /* iOS Safari：長按會觸發文字選取／系統選單。只在回放視窗內攔截，FOS 其他頁面照常可選取 */
+        useEffect(() => {
+            const el = rootRef.current;
+            if (!el) return;
+            const block = (e) => e.preventDefault();
+            el.addEventListener('contextmenu', block);
+            el.addEventListener('selectstart', block);
+            return () => { el.removeEventListener('contextmenu', block); el.removeEventListener('selectstart', block); };
+        });
+        /* 曲線觸控區：播完後（可懸停查看時）以 passive:false 註冊並 preventDefault，避免選取、放大、捲動；
+           播放中不攔截，維持點畫面暫停。React 的 onTouch* 仍負責吸附與顯示小卡。 */
+        useEffect(() => {
+            const el = chartBoxRef.current;
+            if (!el || playing) return;
+            const stop = (e) => { if (e.cancelable) e.preventDefault(); };
+            el.addEventListener('touchstart', stop, { passive: false });
+            el.addEventListener('touchmove', stop, { passive: false });
+            return () => { el.removeEventListener('touchstart', stop); el.removeEventListener('touchmove', stop); };
+        }, [playing, wide, showSummary]);
         const wideRef = useRef(wide);     // 畫布繪製在 effect 閉包內，讀最新的寬窄版
         wideRef.current = wide;
         React.useLayoutEffect(() => {
@@ -6974,7 +6995,9 @@ Build the wall first. Attack second.`)}
 
         return (
             <div className={"fixed inset-0 z-[1200] overflow-hidden" + shakeCls}
-                 style={{ background: REPLAY_BG, color: 'rgba(255,255,255,0.85)' }}
+                 ref={rootRef}
+                 style={{ background: REPLAY_BG, color: 'rgba(255,255,255,0.85)', userSelect: 'none', WebkitUserSelect: 'none',
+                          WebkitTouchCallout: 'none', WebkitTapHighlightColor: 'transparent' }}
                  onClick={() => { if (playing) setPaused((v) => !v); }}>
                 <canvas ref={fxRef} className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 4 }}></canvas>
                 <div ref={flashElRef} className="absolute inset-0 pointer-events-none"
@@ -7016,7 +7039,7 @@ Build the wall first. Attack second.`)}
                             </div>
                         </div>
                         <div className="flex-grow min-h-0 flex gap-8 mt-6">
-                            <div className="relative min-h-0" style={Object.assign({ flex: '7 1 0%' }, chartHover.style)}
+                            <div ref={chartBoxRef} className="relative min-h-0" style={Object.assign({ flex: '7 1 0%' }, chartHover.style)}
                                  onMouseMove={chartHover.onMouseMove} onMouseLeave={chartHover.onMouseLeave}
                                  onTouchStart={chartHover.onTouchStart} onTouchMove={chartHover.onTouchMove}
                                  onTouchEnd={chartHover.onTouchEnd} onTouchCancel={chartHover.onTouchCancel}>
@@ -7048,7 +7071,7 @@ Build the wall first. Attack second.`)}
                             {caption}
                         </div>
 
-                        <div className="flex-grow min-h-[20vh] relative mt-4" style={chartHover.style}
+                        <div ref={chartBoxRef} className="flex-grow min-h-[20vh] relative mt-4" style={chartHover.style}
                              onMouseMove={chartHover.onMouseMove} onMouseLeave={chartHover.onMouseLeave}
                              onTouchStart={chartHover.onTouchStart} onTouchMove={chartHover.onTouchMove}
                              onTouchEnd={chartHover.onTouchEnd} onTouchCancel={chartHover.onTouchCancel}>
