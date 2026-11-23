@@ -432,7 +432,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/11/19 18:20';
+    const APP_VERSION = '2026/11/23 13:03';
 
     /* ===================================================================
        共用工具
@@ -482,6 +482,29 @@
     function startOfLocalDayUTC(ts) {
       const d = new Date(ts);
       return Date.parse(new Date(ts - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10));
+    }
+
+    /* A 帳戶輸入欄來源判定：最新存檔 vs 本機手動修改
+       · 存檔 dateId 格式 "yyyy/MM/dd (HH:mm:ss)"（後端時區），以本機時間解析；解析不了回傳 NaN
+       · decideFormSource 回傳：
+         'record'  → 沒有本機修改時間，或最新存檔較新 → 以存檔覆蓋輸入欄
+         'local'   → 本機修改時間較新（或同一秒）→ 保留輸入值並提示
+         'unknown' → 任一時間解析失敗 → 保守：不覆蓋、顯示提示 */
+    const FORM_EDITED_AT_KEY = 'fos_formEditedAt';
+    function parseFosRecordTime(dateId) {
+      const m = /^(\d{4})\/(\d{1,2})\/(\d{1,2})\s*\(?(\d{1,2}):(\d{2})(?::(\d{2}))?\)?\s*$/.exec(String(dateId == null ? '' : dateId).trim());
+      if (!m) return NaN;
+      const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
+      if (d.getFullYear() !== +m[1] || d.getMonth() !== +m[2] - 1 || d.getDate() !== +m[3]) return NaN;
+      return d.getTime();
+    }
+    function decideFormSource(latestRecordTs, localEditedTs) {
+      const rec = Number(latestRecordTs);
+      if (latestRecordTs === null || latestRecordTs === undefined || latestRecordTs === '' || !Number.isFinite(rec)) return 'unknown';
+      if (localEditedTs === null || localEditedTs === undefined || localEditedTs === '') return 'record';
+      const loc = Number(localEditedTs);
+      if (!Number.isFinite(loc)) return 'unknown';
+      return rec > loc ? 'record' : 'local';
     }
 
     // 歷史紀錄 → [{time, mr}]，新→舊排序。排除樂觀更新的 "(SYNC) ..." 暫存筆與無效值
@@ -1565,7 +1588,8 @@
       const [loadError, setLoadError] = useState('');
       const cacheStatus = useReadCacheStatus();
       const writeLocked = cacheStatus.showing;
-      const historyCacheFilledRef = useRef({});
+      // 本機輸入值與最新存檔不一致且不自動覆蓋時的提示：{ dateId, mr, record }
+      const [formStale, setFormStale] = useState(null);
       const [inputTab, setInputTab] = useState('A');
       const [formDataB, setFormDataB] = useState({ tsla: '', qld: '', spcx: '', eth: '', btc: '', usdRate: safeGetStorage('fos_usdRate', '32.5') });
       // §10.6 收斂完成旗標與日期 — 只存本機 localStorage（換裝置會重跳確認提示）
@@ -1586,6 +1610,8 @@
         p2Usdt: '0', btcAth: '73906.00', ethAth: '4956.62', emergencyWithdrawal: safeGetStorage('fos_emergencyWithdrawal', '')
       });
 
+      const formDataRef = useRef(formData);
+      formDataRef.current = formData;
       const [history, setHistory] = useState([]);
       const [radarRange, setRadarRange] = useState(safeGetStorage('fos_radarRange', '10'));
       // v14.5 — 首頁快速載入：fetchHistory改抓近60筆(涵蓋雷達圖10/30/60三個選項需求)，
@@ -1992,36 +2018,65 @@
         });
       }, [history, fullHistory, isEng, isDarkMode, radarRange]);
 
+      // 以存檔覆蓋 A 帳戶輸入欄（含 localStorage 與上傳給外層的 L）。
+      // 存檔只有 P1 合計：00675L＋00631L 已等於合計就不動，否則合計填進 00675L、00631L 清空。
+      const recNum = (v) => (v === null || v === undefined || v === '' ? '' : String(v));
+      const applyRecordToForm = (rec) => {
+        if (!rec) return;
+        const l = recNum(rec.lAmount), a = recNum(rec.c0050), b = recNum(rec.c00733), p1 = recNum(rec.p1Value);
+        setFormData(p => {
+          const next = { ...p, lAmount: l, c0050: a, c00733: b };
+          const curP1 = (parseFloat(p.p1_00675L) || 0) + (parseFloat(p.p1_00631L) || 0);
+          if (p1 !== '' && Math.abs(curP1 - (parseFloat(p1) || 0)) > 1e-6) { next.p1_00675L = p1; next.p1_00631L = ''; }
+          safeSetStorage('fos_lAmount', next.lAmount);
+          safeSetStorage('fos_c0050', next.c0050);
+          safeSetStorage('fos_c00733', next.c00733);
+          safeSetStorage('fos_p1_675', next.p1_00675L);
+          safeSetStorage('fos_p1_631', next.p1_00631L);
+          return next;
+        });
+        onLAmountChange?.(l);
+      };
+      const formDiffersFromRecord = (rec) => {
+        const n = (v) => parseFloat(v) || 0;
+        // 空白欄位會被存檔補上（見 applyHistoryResponse），比較時視同存檔值
+        const c = formDataRef.current;
+        const f = { ...c, lAmount: c.lAmount || rec.lAmount, c0050: c.c0050 || rec.c0050, c00733: c.c00733 || rec.c00733,
+          p1_00675L: (!c.p1_00675L && !c.p1_00631L) ? rec.p1Value : c.p1_00675L };
+        return n(f.lAmount) !== n(rec.lAmount) || n(f.c0050) !== n(rec.c0050) || n(f.c00733) !== n(rec.c00733)
+          || Math.abs(n(f.p1_00675L) + n(f.p1_00631L) - n(rec.p1Value)) > 1e-6;
+      };
+      const applyLatestRecord = () => {
+        const rec = (formStale && formStale.record) || history[0];
+        if (!rec) return;
+        applyRecordToForm(rec);
+        safeRemoveStorage(FORM_EDITED_AT_KEY);
+        setFormStale(null);
+      };
       // v14.5 — 首頁快速載入：只抓近60筆(涵蓋雷達圖10/30/60三個選項需求)，不動後端，
       // getHistoryData(limit)本來就支援這個參數，前端過去沒傳
-      // 快取填入的欄位值記在 historyCacheFilledRef；最新資料回來時，若該欄位仍是快取填入的原值
-      // (使用者沒動過)，視為空白、讓最新資料覆蓋，避免舊快取值卡住欄位
+      // A 帳戶輸入欄：依 decideFormSource 比較最新存檔時間與本機修改時間（fos_formEditedAt），
+      // 存檔較新或本機未修改 → 覆蓋；本機較新或時間解析失敗 → 保留並顯示提示（快取與正式回應同一套規則）
       const applyHistoryResponse = (res, fromCache) => {
         if (res.success && res.data.length > 0) {
           setHistory(res.data);
           const latest = res.data[0];
-          setFormData(p => {
-            const filled = historyCacheFilledRef.current;
-            const own = (f) => (filled[f] !== undefined && p[f] === filled[f]) ? '' : p[f];
-            let new675 = own('p1_00675L');
-            if (!own('p1_00675L') && !p.p1_00631L && latest.p1Value) new675 = latest.p1Value;
-            const next = {
-              ...p,
-              lAmount: own('lAmount') || latest.lAmount,
-              c0050: own('c0050') || latest.c0050,
-              c00733: own('c00733') || latest.c00733,
-              p1_00675L: new675
-            };
-            const nextFilled = {};
-            if (fromCache) {
-              ['lAmount', 'c0050', 'c00733', 'p1_00675L'].forEach(f => {
-                if (!own(f) && next[f] !== p[f]) nextFilled[f] = next[f];
-                else if (!own(f) && filled[f] !== undefined) nextFilled[f] = filled[f];
-              });
-            }
-            historyCacheFilledRef.current = nextFilled;
-            return next;
-          });
+          const source = decideFormSource(parseFosRecordTime(latest.dateId), safeGetStorage(FORM_EDITED_AT_KEY, null));
+          if (source === 'record') {
+            applyRecordToForm(latest);
+            setFormStale(null);
+          } else {
+            // 保留本機輸入；只補空白欄位（與原行為相同），值不同才提示
+            setFormData(p => {
+              const next = { ...p };
+              if (!p.lAmount) next.lAmount = latest.lAmount;
+              if (!p.c0050) next.c0050 = latest.c0050;
+              if (!p.c00733) next.c00733 = latest.c00733;
+              if (!p.p1_00675L && !p.p1_00631L && latest.p1Value) next.p1_00675L = latest.p1Value;
+              return next;
+            });
+            setFormStale(formDiffersFromRecord(latest) ? { dateId: latest.dateId, mr: latest.nominalMR, record: latest } : null);
+          }
         }
       };
       const fetchHistory = async () => {
@@ -2065,6 +2120,7 @@
       const handleInputChange = (e) => {
         const { name, value } = e.target;
         setFormData(p => ({ ...p, [name]: value }));
+        if (['lAmount', 'c0050', 'c00733', 'p1_00675L', 'p1_00631L'].includes(name)) safeSetStorage(FORM_EDITED_AT_KEY, String(Date.now()));
         if (name === 'lAmount') { safeSetStorage('fos_lAmount', value); onLAmountChange?.(value); }
         if (name === 'pledgeRate') { safeSetStorage('fos_pledgeRate', value); onPledgeRateChange?.(value); }
         if (name === 'c0050') safeSetStorage('fos_c0050', value);
@@ -2382,7 +2438,7 @@
         const payload = { lAmount: L, c0050, c00733, p1Value: P1, btcPrice: currentBtc, ethPrice: currentEth, p2Usdt: formData.p2Usdt, nominalMR, p1Ratio, ethBtcRatio: ethBtcRatio };
         setHistory([{ dateId: `(SYNC) ${localISOTime}`, ...payload }, ...history].slice(0, 10));
         setTerminalMsg('>> SYNCING...');
-        try { const res = await gasAPI('saveFOSData', payload); if (res.success) { fetchHistory(); setTerminalMsg('>> DONE.'); } else throw new Error(); }
+        try { const res = await gasAPI('saveFOSData', payload); if (res.success) { safeRemoveStorage(FORM_EDITED_AT_KEY); setFormStale(null); fetchHistory(); setTerminalMsg('>> DONE.'); } else throw new Error(); }
         catch (err) { setHistory(previousHistory); setTerminalMsg('>> FAILED.'); }
       };
 
@@ -2415,7 +2471,7 @@
           needA ? runSave('saveFOSData', saveAPayload) : Promise.resolve(true),
           needB ? runSave('saveFOSDataB', formDataB) : Promise.resolve(true)
         ]);
-        if (needA && aOk) fetchHistory();
+        if (needA && aOk) { safeRemoveStorage(FORM_EDITED_AT_KEY); setFormStale(null); fetchHistory(); }
         if (needB && bOk) fetchHistoryB();
 
         if (aOk && bOk) {
@@ -4715,6 +4771,14 @@ Build the wall first. Attack second.`)}
                     <div className="text-xs font-black uppercase tracking-widest text-slate-400 mb-2">
                       {t('FOS 主系統卡', 'FOS CORE')}
                     </div>
+                    {formStale && (
+                      <div data-testid="form-stale-banner" className="mb-4 flex items-center justify-between gap-4 flex-wrap p-4 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400">
+                        <span className="font-bold break-words">{t(
+                          `⚠️ 目前為未存檔的輸入值（最新存檔：${String(formStale.dateId).substring(0, 10)}，MR ${formStale.mr}%）`,
+                          `⚠️ Showing unsaved inputs (latest save: ${String(formStale.dateId).substring(0, 10)}, MR ${formStale.mr}%)`)}</span>
+                        <button type="button" onClick={applyLatestRecord} className="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold transition-colors">{t('套用最新存檔', 'Apply latest save')}</button>
+                      </div>
+                    )}
                     {/* id 掛在網格容器上（排序模式下是同一個容器，只換 className），
                         所以兩種模式下跳轉與高亮都有效 */}
                     <div id={MINI_GRID_ANCHOR_ID} className={sortMode ? 'space-y-3' : 'grid grid-cols-2 gap-4'}>

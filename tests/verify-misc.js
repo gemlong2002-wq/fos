@@ -83,6 +83,7 @@ async function runInjectScenario(aBehavior, bBehavior, initialDone) {
     fetchHistory: () => calls.push('fetchHistory'),
     fetchHistoryB: () => calls.push('fetchHistoryB'),
     onInjectPrefill: () => { prefilled = true; },
+    FORM_EDITED_AT_KEY: 'fos_formEditedAt', setFormStale: () => {},
     L: 5000000, c0050: 1000000, c00733: 1000000, P1: 1500000,
     currentBtc: 100000, currentEth: 3000, nominalMR: '350.00', p1Ratio: '33.33',
     ethBtcRatio: '0.0300', formData: { p2Usdt: 0 },
@@ -91,7 +92,7 @@ async function runInjectScenario(aBehavior, bBehavior, initialDone) {
   const body = `(async function(){
     const { gasAPI, setTerminalMsg, setInjectDone, fetchHistory, fetchHistoryB, onInjectPrefill,
             setIsInjecting, writeLocked, isInjecting, L, c0050, c00733, P1, currentBtc, currentEth,
-            nominalMR, p1Ratio, ethBtcRatio, formData, formDataB } = this;
+            nominalMR, p1Ratio, ethBtcRatio, formData, formDataB, FORM_EDITED_AT_KEY, setFormStale } = this;
     const injectDone = this.injectDone;
     ${injectSrc}
     await handleInjectAll();
@@ -215,6 +216,34 @@ async function runInjectScenario(aBehavior, bBehavior, initialDone) {
      原因：141df89 依規則把閘門3 的殖利率改為「近12個月實際現金股息總額」
      輸入欄，上述唯讀顯示與「不開放輸入」文案是刻意移除的舊 UI，
      不是迴歸。保留上面兩條負面斷言（舊文案不得復活）即足夠。 */
+
+  console.log('');
+  console.log('【項目7】A 帳戶輸入欄來源判定 parseFosRecordTime／decideFormSource');
+  const formSrc = eval(slice('    const FORM_EDITED_AT_KEY', '    // 歷史紀錄 → [{time, mr}]')
+    + '; ({ parse: parseFosRecordTime, decide: decideFormSource, KEY: FORM_EDITED_AT_KEY })');
+  /* 時間一律用本機時區的 new Date(y, m-1, d, hh, mm, ss) 手算：
+     最新存檔 2026/11/20 (14:05:09)（另一裝置存的，MR 196.85%）
+     本機舊輸入 2026/11/18 09:30:00；本機剛輸入 2026/11/21 08:00:00 */
+  const recTs = new Date(2026, 10, 20, 14, 5, 9).getTime();
+  const oldLocal = new Date(2026, 10, 18, 9, 30, 0).getTime();
+  const newLocal = new Date(2026, 10, 21, 8, 0, 0).getTime();
+  chk('localStorage key', formSrc.KEY, 'fos_formEditedAt');
+  chk('解析後端 dateId 格式', formSrc.parse('2026/11/20 (14:05:09)'), recTs);
+  chk('解析無秒數格式', formSrc.parse('2026/11/20 14:05'), new Date(2026, 10, 20, 14, 5, 0).getTime());
+  chk('樂觀暫存 (SYNC) → NaN', Number.isNaN(formSrc.parse('(SYNC) 2026/11/20 14:05:09')), true);
+  chk('不存在的日期 2/30 → NaN', Number.isNaN(formSrc.parse('2026/02/30 (10:00:00)')), true);
+  chk('空值 → NaN', Number.isNaN(formSrc.parse(undefined)), true);
+  // 四種情境（localStorage 讀出來是字串）
+  chk('最新存檔較新 → record', formSrc.decide(recTs, String(oldLocal)), 'record');
+  chk('本機修改較新 → local', formSrc.decide(recTs, String(newLocal)), 'local');
+  chk('無本機時間（首次部署）→ record', formSrc.decide(recTs, null), 'record');
+  chk('本機時間解析失敗 → unknown', formSrc.decide(recTs, 'abc'), 'unknown');
+  chk('存檔時間解析失敗 → unknown', formSrc.decide(NaN, String(oldLocal)), 'unknown');
+  chk('存檔時間解析失敗＋無本機時間 → unknown', formSrc.decide(NaN, null), 'unknown');
+  chk('同一毫秒 → 保守保留 local', formSrc.decide(recTs, String(recTs)), 'local');
+  chk('存檔成功清除本機時間', /if \(res\.success\) \{ safeRemoveStorage\(FORM_EDITED_AT_KEY\); setFormStale\(null\); fetchHistory\(\);/.test(H), true);
+  chk('INJECT A 成功也清除', /if \(needA && aOk\) \{ safeRemoveStorage\(FORM_EDITED_AT_KEY\); setFormStale\(null\); fetchHistory\(\); \}/.test(H), true);
+  chk('只記錄 A 帳戶五個輸入欄', H.includes("if (['lAmount', 'c0050', 'c00733', 'p1_00675L', 'p1_00631L'].includes(name)) safeSetStorage(FORM_EDITED_AT_KEY, String(Date.now()));"), true);
 
   console.log('');
   console.log(fail === 0 ? '>>> 全部通過' : '>>> ' + fail + ' 組失敗');
