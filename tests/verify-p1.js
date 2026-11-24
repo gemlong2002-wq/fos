@@ -34,7 +34,7 @@ const grab = (from, to) => { const i = H.indexOf(from); return H.slice(i, H.inde
 
 // 把模組層那整段（常數＋純函式）連同它依賴的 DEATH_LINE_RATIO / ONE_DAY_MS /
 // startOfLocalDayUTC / P1_TARGET_RATIO / calcDeleverageRepayment 一起抽出來實跑
-const deps = 'const DEATH_LINE_RATIO = ' + /const DEATH_LINE_RATIO = ([\d.]+);/.exec(H)[1] + ';'
+const deps = 'const DEATH_LINE_RATIO = ' + /const DEATH_LINE_RATIO = ([\d.\s\/+*()-]+);/.exec(H)[1] + ';'
   + 'const ONE_DAY_MS = 86400000;'
   + grab('    function startOfLocalDayUTC(ts) {', '    function parseMrHistory')
   + grab('    const P1_TARGET_RATIO', '    /* ======')
@@ -66,7 +66,7 @@ chk('1 張股數', K.LOT, 1000);
 chk('現價過時天數', K.STALE, 3);
 chk('錨定容許帶寬', K.ANCHOR, 0.05);
 chk('P1 目標沿用既有 1/3', K.P1T, 1 / 3);
-chk('死線沿用既有 7.14%', K.DEATH, 0.0714);
+chk('死線 = 1 − 260/280', K.DEATH, 1 - 260 / 280);
 chk('拉回目標沿用既有 2.8', K.DELEV, 2.8);
 
 console.log('');
@@ -82,7 +82,7 @@ chk("C′ 恆等於 2.6 × L（規則線定義）", Math.round(r.cAfter), Math.r
 near('需償還本金', r.repayNeed, 214285.71, 100);
 near('屆時 P1', r.p1After, 633333.33, 150);
 near('殘存 P1', r.p1Remain, 419047.62, 200);
-near('死線', r.deathLine, 198900, 100);
+near('死線', r.deathLine, 198979.59, 0.01);
 chk('P1 夠還款', r.canRepay, true);
 chk('死線檢核通過', r.deathOk, true);
 near('00675L 觸價 = 20 × (1−2d)', r.trigger675, 20 * (1 - 2 * r.d), 0.001);
@@ -292,7 +292,7 @@ chk('Part2 P1=0 → canRepay false（需償還 > 0）',
 console.log('');
 console.log('【非範圍：既有門檻與分流未被改動】');
 chk('MR 燈號 350／260／280 未動', /MR_GREEN_FLOOR = 350;[\s\S]{0,120}MR_RED_CEILING = 260;[\s\S]{0,120}MR_RECOVERY_EXIT = 280;/.test(H), true);
-chk('死線 7.14% 未動', /DEATH_LINE_RATIO = 0\.0714;/.test(H), true);
+chk('死線 = 1 − 260/280（單一來源）', /DEATH_LINE_RATIO = 1 - 260 \/ 280;/.test(H), true);
 chk('P1 目標 1/3 未動', /P1_TARGET_RATIO = 1 \/ 3;/.test(H), true);
 chk('80/20 未動', /GROWTH_STOCK_RATIO = 0\.8;[\s\S]{0,80}GROWTH_CRYPTO_RATIO = 0\.2;/.test(H), true);
 chk('拉回 280% 未動', /DELEVERAGE_TARGET_MR = 2\.8;/.test(H), true);

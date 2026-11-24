@@ -20,8 +20,12 @@ const near = (n, a, e, tol) => {
 };
 const slice = (from, to) => { const i = H.indexOf(from); if (i < 0) throw new Error('找不到 ' + from); return H.slice(i, H.indexOf(to, i + from.length)); };
 
-const M = eval(slice('    const LIQUIDATION_MR = 130;', '    function allocateExternalFunds')
-  + '; ({ LIQUIDATION_MR, GUARANTEE_LINE_MR, CRASH_BETA_MAIN, CRASH_BETA_MEASURED, MR_COMPARE_LEVELS, calcLineDrop, calcRescuePaths, calcGuaranteeLine160, calcCrashResistance, needsMarginCallPanel })');
+// 依賴：死線常數（全檔單一來源）、張數常數、市值拆分與張數換算
+const M = eval(slice('    const DEATH_LINE_RATIO', ';') + ';'
+  + slice('    const SHARES_PER_LOT', ';') + ';'
+  + slice('    function splitByMarketValue', '    // 價格更新日')
+  + slice('    const LIQUIDATION_MR = 130;', '    function allocateExternalFunds')
+  + '; ({ DEATH_LINE_RATIO, BETA_0050, BETA_00733, LIQUIDATION_MR, GUARANTEE_LINE_MR, CRASH_BETA_MAIN, CRASH_BETA_MEASURED, MR_COMPARE_LEVELS, calcLineDrop, calcRescuePaths, calcGuaranteeLine160, calcCrashResistance, needsMarginCallPanel, calcRescueOrders })');
 
 /* 假資料 S：C = 6,000,000（0050 3,000,000／00733 3,000,000）、L = 3,000,000、P1 = 600,000、大盤 20,000
    β = (3,000,000×1.0 + 3,000,000×1.35) ÷ 6,000,000 = 1.175
@@ -115,7 +119,33 @@ chk('兩選項：5.5 主動賣出核心擔保品', panel.includes("'5.5 主動�
 chk('面板不加推薦／排序字樣', /推薦|建議|優先|第一|首選/.test(panel), false);
 
 console.log('');
+console.log('【觸價單】calcRescueOrders：金額＝實際執行額、依市值比拆分、張數進位');
+/* 以 260% 線上情境（上方 up）：甲執行 419,047.62、乙執行 214,285.71；倍數 = 1 − 2 × 0.183333 = 0.633333
+   假市值 00675L 600,000／00631L 400,000 → 60%／40%；現價 20／30
+   甲：675 = 251,428.57、631 = 167,619.05；觸價 675 = 12.6667、631 = 19.0
+       張數 675 = ceil(251,428.57 ÷ 12,666.67) = ceil(19.85) = 20；631 = ceil(167,619.05 ÷ 19,000) = ceil(8.82) = 9 */
+const ordA = M.calcRescueOrders({ amount: up.a.exec, mult: up.mult, p1Val675: 600000, p1Val631: 400000, price675: 20, price631: 30 });
+near('甲 金額 = 實際執行額', ordA.amount, 419047.62, 0.01);
+near('甲 675 分配 251,428.57', ordA.sell675, 251428.57, 0.01);
+near('甲 631 分配 167,619.05', ordA.sell631, 167619.05, 0.01);
+near('觸價 675 = 20 × 0.633333', ordA.trigger675, 12.666667, 1e-5);
+near('觸價 631 = 30 × 0.633333', ordA.trigger631, 19.0, 1e-9);
+chk('甲 張數 675／631', ordA.lots675 + '/' + ordA.lots631, '20/9');
+/* 已在線下（S：倍數 1）、甲乙執行額相同 385,714.29 → 金額不隨路徑變；現價即觸價 */
+const ordS_A = M.calcRescueOrders({ amount: r260.a.exec, mult: r260.mult, p1Val675: 600000, p1Val631: 0, price675: 20 });
+const ordS_B = M.calcRescueOrders({ amount: r260.b.exec, mult: r260.mult, p1Val675: 600000, p1Val631: 0, price675: 20 });
+chk('線下：甲乙金額相同', Math.round(ordS_A.amount) + '/' + Math.round(ordS_B.amount), '385714/385714');
+chk('線下：觸價＝現價 20', ordS_A.trigger675, 20);
+chk('線下：張數 ceil(385,714.29 ÷ 20,000) = 20', ordS_A.lots675, 20);
+chk('倍數 0 → zeroed、不給觸價', [M.calcRescueOrders({ amount: 1000, mult: 0, p1Val675: 1, price675: 20 }).zeroed, String(M.calcRescueOrders({ amount: 1000, mult: 0, p1Val675: 1, price675: 20 }).trigger675)].join('/'), 'true/null');
+chk('市值未填 → splitOk false、張數 null', [M.calcRescueOrders({ amount: 1000, mult: 1, price675: 20 }).splitOk, String(M.calcRescueOrders({ amount: 1000, mult: 1, price675: 20 }).lots675)].join('/'), 'false/null');
+
+console.log('');
 console.log('【C／D／L】靜態檢查');
+chk('死線常數 = 1 − 260/280', M.DEATH_LINE_RATIO, 1 - 260 / 280);
+chk('calcRescuePaths 引用 DEATH_LINE_RATIO', /const deathLine = L \* DEATH_LINE_RATIO;/.test(slice('    function calcRescuePaths', '    function calcGuaranteeLine160')), true);
+chk('β 鎖定 1.0／1.35', M.BETA_0050 + '/' + M.BETA_00733, '1/1.35');
+chk('β 無編輯輸入', /name="b0050"|name="b00733"|betaConfig|handleBetaChange/.test(H), false);
 chk('mrLimit 已移除', /mrLimit/.test(H), false);
 chk('LIMIT 改顯示常數', H.includes('{LIQUIDATION_MR}%</div>'), true);
 chk('救火流程不再引用 §5.5 防禦轉換', /5\.5 防禦轉換/.test(H), false);

@@ -432,7 +432,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/11/24 14:31';
+    const APP_VERSION = '2026/11/24 14:39';
 
     /* ===================================================================
        共用工具
@@ -449,7 +449,9 @@
        Changelog 第 38 項要求 4.5／4.6／5.5／6.5／9.6 同步，Boss 裁定「全系統只能有一個
        死線常數」，故所有死線計算一律引用本常數，不得再出現寫死的比例數字。
        （330% 裝甲底線的 psac 拉回計算屬提領門檻，與死線無關，維持不動） */
-    const DEATH_LINE_RATIO = 0.0714;
+    /* v15.3 — 死線比例改由規則線／拉回目標推導：1 − 260/280 ≈ 7.142857%，
+       全檔（含 calcRescuePaths）一律引用本常數，不得另寫一份。 */
+    const DEATH_LINE_RATIO = 1 - 260 / 280;
 
     // 可動用緩衝：逐字搬自 LCM 卡原本 index.html:2068-2070 的三行算式，僅供跨模組共用，
     // 運算邏輯與搬移前完全一致（死線 = L×7.14%，P1可用 = max(0, P1-死線)，合計再加現金）。
@@ -821,6 +823,8 @@
        全部是純函式：門檻由呼叫端傳入（MR 百分比數字，例 260），不碰 state。
     =================================================================== */
     const LIQUIDATION_MR = 130;            // §4.3.3 券商斷頭線固定 130%（不可編輯）
+    const BETA_0050 = 1.0;                 // β_C 鎖定：白皮書不得用實測 β 下修，不提供編輯
+    const BETA_00733 = 1.35;
     const GUARANTEE_LINE_MR = 160;         // §4.3.2 保證執行線
     const CRASH_BETA_MAIN = 1.3;           // §4.8 壓力測試主數字 β
     const CRASH_BETA_MEASURED = 1.15;      // §4.8 實測 β（只作參考值並列）
@@ -837,7 +841,7 @@
 
     /* §4.3.1 救火雙路徑試算（某一條觸發線 lineMR 下）：
          C′ = C × (1 − β × d)；P1′ = P1 × max(0, 1 − 2d)（正2 近似）
-         死線 = L × (1 − redMR ÷ targetMR)
+         死線 = L × DEATH_LINE_RATIO（＝ 1 − 260/280，全檔單一來源）
          可動用 P1：fullP1 = false → max(0, P1′ − 死線)；fullP1 = true（160% 情境）→ P1′ 全數
          路徑甲（賣 P1 → 買 0050 → T+2 增加擔保品，L 不變）：所需 X = max(0, 2.8L − C′)，執行後 MR = (C′ + 執行額) ÷ L
          路徑乙（賣 P1 → 部分還款，C 不變）：所需 R = max(0, L − C′ ÷ 2.8)，執行後 MR = C′ ÷ (L − 執行額)
@@ -856,7 +860,7 @@
       const mult = Math.max(0, 1 - 2 * d);
       const cAfter = C * (1 - beta * d);
       const p1After = P1 * mult;
-      const deathLine = L * (1 - redMR / targetMR);
+      const deathLine = L * DEATH_LINE_RATIO;
       const available = input.fullP1 ? p1After : Math.max(0, p1After - deathLine);
       const t = targetMR / 100;
       const needA = Math.max(0, t * L - cAfter);
@@ -896,6 +900,26 @@
         main: collateralDrop / CRASH_BETA_MAIN * 100,
         measured: collateralDrop / CRASH_BETA_MEASURED * 100,
         safe: collateralDrop > 0
+      };
+    }
+
+    /* §4.3.1 觸價單：賣出金額＝實際執行金額（min(所需, 可動用)），依兩檔市值比例拆分；
+       觸價＝現價 × P1 觸價倍數（已在線下時倍數 1，即現價）；張數無條件進位。
+       mult ≤ 0（跌幅 ≥ 50%）→ 不輸出觸價，zeroed = true。 */
+    function calcRescueOrders(input) {
+      const amount = Math.max(0, parseFloat(input && input.amount) || 0);
+      const mult = parseFloat(input && input.mult);
+      const m = Number.isFinite(mult) ? mult : 0;
+      const p675 = parseFloat(input && input.price675) || 0;
+      const p631 = parseFloat(input && input.price631) || 0;
+      const trigger675 = p675 > 0 && m > 0 ? p675 * m : null;
+      const trigger631 = p631 > 0 && m > 0 ? p631 * m : null;
+      const split = splitByMarketValue(amount, input && input.p1Val675, input && input.p1Val631);
+      return {
+        amount, zeroed: !(m > 0), splitOk: split.ok,
+        sell675: split.v675, sell631: split.v631, trigger675, trigger631,
+        lots675: split.ok ? amountToLots(split.v675, trigger675, 'ceil') : null,
+        lots631: split.ok ? amountToLots(split.v631, trigger631, 'ceil') : null
       };
     }
 
@@ -1877,7 +1901,6 @@
       useEffect(() => { fetchEtfQuotes(); }, []);
 
       const [liveCrypto, setLiveCrypto] = useState({ BTC: 0, ETH: 0 });
-      const [betaConfig, setBetaConfig] = useState({ b0050: '1.0', b00733: '1.35' });
 
       // 現金護城河 CASH MOAT — 純顯示模組，獨立於 MR/擔保品C/B帳戶/80-20分流，不參與任何既有運算
       const [cashMoatInputs, setCashMoatInputs] = useState(() => {
@@ -1958,7 +1981,7 @@
         setMiniOrder([...DEFAULT_MINI_ORDER]);
       };
 
-      // v12.4 — 崩盤指數：手動輸入當前大盤指數，不持久化（比照 betaConfig pattern）
+      // v12.4 — 崩盤指數：手動輸入當前大盤指數，不持久化
       const [crashIndexInput, setCrashIndexInput] = useState('20000');
       // v15.3 §4.3.1 救火路徑：'A' 路徑甲（預設）／'B' 路徑乙，記住於 localStorage
       const [rescuePath, setRescuePath] = useState(() => safeGetStorage('fos_rescuePath', 'A') === 'B' ? 'B' : 'A');
@@ -2276,7 +2299,6 @@
         if (fileInputRef.current) fileInputRef.current.value = '';
       };
 
-      const handleBetaChange = (e) => setBetaConfig(p => ({ ...p, [e.target.name]: e.target.value }));
 
       const updateAth = (coin) => {
           const currentAth = coin === 'BTC' ? formData.btcAth : formData.ethAth;
@@ -2357,8 +2379,8 @@
       const stressMuskDrop = t('約 −25%', 'approx. −25%');
       const stressNdxVerdict = t('極重，配置無法防禦', 'Severe — allocation cannot defend');
 
-      const b0050Val = parseFloat(betaConfig.b0050) || 1.0;
-      const b00733Val = parseFloat(betaConfig.b00733) || 1.35;
+      const b0050Val = BETA_0050;
+      const b00733Val = BETA_00733;
 
       let portfolioBeta = 0;
       /* beta 只需要 C（擔保品組成），不需要 L；L > 0 只是 maxMarketDrop（距離斷頭還能跌幾%）
@@ -2379,7 +2401,7 @@
       const crashIndexValue = currentIndexVal * (1 - marketDropPct / 100);
 
       /* 崩盤抵抗（券商斷頭線）—— 原頂部獨立卡片，改收進 Part 2 觸價單彈窗。
-         JSX 原樣搬移，betaConfig／crashIndexInput／fetchMarketIndex 仍讀同一份 state，
+         JSX 原樣搬移，β 為常數 BETA_0050／BETA_00733，crashIndexInput／fetchMarketIndex 仍讀同一份 state，
          與 Part 2 的規則線 260% 段共用 β，不複製成兩份。 */
       const crashResistanceBlock = (
           <div className={`tech-panel p-8 scale-card cursor-default`}>
@@ -2388,11 +2410,11 @@
             <div className="grid grid-cols-3 gap-3 mb-6" data-testid="crash-beta-row">
               <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-2 text-center border border-slate-100 dark:border-slate-700">
                 <div className="font-bold text-sm text-slate-400 mb-1">0050 β</div>
-                <input type="number" step="0.01" name="b0050" value={betaConfig.b0050} onChange={handleBetaChange} className="w-full text-center text-lg font-black font-mono bg-transparent outline-none text-slate-700 dark:text-slate-300 data-text" />
+                <div className="w-full text-center text-lg font-black font-mono text-slate-700 dark:text-slate-300 data-text">{BETA_0050.toFixed(2)}</div>
               </div>
               <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-2 text-center border border-slate-100 dark:border-slate-700">
                 <div className="font-bold text-sm text-slate-400 mb-1">00733 β</div>
-                <input type="number" step="0.01" name="b00733" value={betaConfig.b00733} onChange={handleBetaChange} className="w-full text-center text-lg font-black font-mono bg-transparent outline-none text-slate-700 dark:text-slate-300 data-text" />
+                <div className="w-full text-center text-lg font-black font-mono text-slate-700 dark:text-slate-300 data-text">{BETA_00733.toFixed(2)}</div>
               </div>
               <div className="bg-rose-50 dark:bg-rose-950/30 rounded-xl p-2 text-center border border-rose-100 dark:border-rose-900/50">
                 <div className="font-bold text-sm text-rose-400 mb-1">LIMIT</div>
@@ -2736,6 +2758,12 @@
       const rescue160 = calcRescuePaths({ C, L, P1, beta: portfolioBeta, lineMR: GUARANTEE_LINE_MR, redMR: MR_RED_CEILING, targetMR: MR_RECOVERY_EXIT, fullP1: true });
       const guarantee160 = calcGuaranteeLine160({ C, L, beta: portfolioBeta, index: parseFloat(crashIndexInput) || 0 });
       const marginCallActive = L > 0 && needsMarginCallPanel(nominalMRRaw);
+      // 觸價單依 260% 應執行線、目前選擇路徑的實際執行金額
+      const rescueOrders = rescue260.status === 'ok' ? calcRescueOrders({
+        amount: (rescuePath === 'A' ? rescue260.a : rescue260.b).exec, mult: rescue260.mult,
+        p1Val675: formData.p1_00675L, p1Val631: formData.p1_00631L,
+        price675: p1CalcInputs.price00675L, price631: p1CalcInputs.price00631L
+      }) : null;
       // 整卡預警色：MR ≤ 280%（回復帶出場線）就進入預警，不必等跌破 260%
       const p1RescueAlert = nominalMRRaw > 0 && nominalMRRaw <= MR_RECOVERY_EXIT;
       /* MR 卡上「觸價單」按鈕的三態 + 文案。全部由既有的 p1Rescue／mrZoneInfo 推導，不另算：
@@ -3095,6 +3123,49 @@
                 </div>
               ) : null)}
           </div>
+          {rescueOrders && (
+            <div data-testid="rescue-orders" className="p-4 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 min-w-0">
+              <div className="text-xs font-black uppercase tracking-widest text-slate-400 mb-1">{t(`觸價與賣出張數（${MR_RED_CEILING}% 應執行線）`, `TRIGGER PRICES & LOTS (${MR_RED_CEILING}% LINE)`)}</div>
+              <div className="text-sm font-bold text-slate-600 dark:text-slate-300 mb-2">
+                {t('賣出 P1 合計', 'Total P1 to sell')} <span data-testid="rescue-orders-amount" className="font-mono text-rose-600 dark:text-rose-400">{formatNumber(Math.round(rescueOrders.amount))}</span>
+                <span data-testid="rescue-orders-use" className="text-slate-500 dark:text-slate-400">
+                  {rescuePath === 'A'
+                    ? t('｜賣後用途：當日買入 0050 → T+2 入帳後申請增加擔保品', '｜Use: buy 0050 the same day → add as collateral after T+2')
+                    : t('｜賣後用途：部分償還質押本金（不得全額清償單筆借款）', '｜Use: partial principal repayment (never fully repay a single loan)')}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { name: '00675L', trigger: rescueOrders.trigger675, amount: rescueOrders.sell675, lots: rescueOrders.lots675 },
+                  { name: '00631L', trigger: rescueOrders.trigger631, amount: rescueOrders.sell631, lots: rescueOrders.lots631 }
+                ].map(leg => (
+                  <div key={`rescue-order-${leg.name}`} className="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-lg border border-slate-200 dark:border-slate-700 min-w-0">
+                    <div className="text-xs font-bold text-slate-400">{leg.name}</div>
+                    {rescueOrders.zeroed ? (
+                      <div className="text-xs font-bold text-rose-600 dark:text-rose-400 mt-0.5">
+                        {t('跌幅超過 50%，正2 淨值近似歸零，觸價單無法估算', 'The drop exceeds 50% — the 2x NAV is effectively zero, so a trigger order cannot be estimated')}
+                      </div>
+                    ) : (
+                      <React.Fragment>
+                        <div className="text-base font-black font-mono text-slate-700 dark:text-slate-200">
+                          {leg.trigger != null ? t(`觸價 ${leg.trigger.toFixed(2)}`, `trigger ${leg.trigger.toFixed(2)}`) : t('需輸入現價', 'price needed')}
+                        </div>
+                        <div className="text-sm font-bold text-rose-600 dark:text-rose-400 mt-0.5">
+                          {rescueOrders.splitOk ? formatNumber(Math.round(leg.amount)) : '—'}
+                        </div>
+                        <div className="text-xs font-bold text-teal-600 dark:text-teal-400">
+                          {rescueOrders.splitOk ? p1LotText(leg.lots) : t('需填 A INPUT 市值', 'A INPUT holdings needed')}
+                        </div>
+                      </React.Fragment>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="text-xs font-bold text-slate-400 mt-2">
+                {t('金額＝實際執行額 min(所需, 可動用)｜觸價＝現價 × P1 觸價倍數｜正2 每日重設，實際值依下跌路徑而異｜張數無條件進位', 'Amount = executed amount min(need, usable) | trigger = price × P1 multiple | 2x funds reset daily, so real values vary | lots rounded up')}
+              </div>
+            </div>
+          )}
           <div className="p-4 rounded-xl bg-sky-50 dark:bg-sky-950/20 border border-sky-200 dark:border-sky-900 text-sm font-bold text-sky-800 dark:text-sky-300 space-y-1">
             <div>{t('觸價單以盤中即時價觸發；委託建議用市價或跌停價長效單。', 'Trigger orders fire on the live intraday price; use market or limit-down good-till-cancelled orders.')}</div>
             {rescuePath === 'A' && (
@@ -3150,39 +3221,6 @@
                 </div>
               </div>
 
-              <div className="p-4 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                <div className="text-xs font-black uppercase tracking-widest text-slate-400 mb-2">{t('觸價與賣出張數', 'TRIGGER PRICES & LOTS TO SELL')}</div>
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    { name: '00675L', trigger: p1Rescue.trigger675, amount: p1Rescue.sell675, lots: p1Rescue.lots675 },
-                    { name: '00631L', trigger: p1Rescue.trigger631, amount: p1Rescue.sell631, lots: p1Rescue.lots631 }
-                  ].map(leg => (
-                    <div key={`p1rescue-${leg.name}`} className="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
-                      <div className="text-xs font-bold text-slate-400">{leg.name}</div>
-                      {p1Rescue.zeroed ? (
-                        <div className="text-xs font-bold text-rose-600 dark:text-rose-400 mt-0.5">
-                          {t('跌幅超過 50%，正2 淨值近似歸零，觸價單無法估算', 'The drop exceeds 50% — the 2x NAV is effectively zero, so a trigger order cannot be estimated')}
-                        </div>
-                      ) : (
-                        <React.Fragment>
-                          <div className="text-base font-black font-mono text-slate-700 dark:text-slate-200">
-                            {leg.trigger != null ? t(`觸價 ${leg.trigger.toFixed(2)}`, `trigger ${leg.trigger.toFixed(2)}`) : t('需輸入現價', 'price needed')}
-                          </div>
-                          <div className="text-sm font-bold text-rose-600 dark:text-rose-400 mt-0.5">
-                            {p1Rescue.splitOk ? formatNumber(Math.round(leg.amount)) : '—'}
-                          </div>
-                          <div className="text-xs font-bold text-teal-600 dark:text-teal-400">
-                            {p1Rescue.splitOk ? p1LotText(leg.lots) : t('需填 A INPUT 市值', 'A INPUT holdings needed')}
-                          </div>
-                        </React.Fragment>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <div className="text-xs font-bold text-slate-400 mt-2">
-                  {t('估算：正2 每日重設，實際值會依下跌路徑高於或低於估算｜張數無條件進位到整張', "Estimate: 2x funds reset daily, so the real value lands above or below this depending on the path | lots are rounded up")}
-                </div>
-              </div>
 
 
               {quickDropActive && (
@@ -3784,7 +3822,7 @@
                       {p1Part2Block}
                       {/* 券商斷頭線段落 —— 原頂部「崩盤抵抗」卡，與上方規則線 260% 段上下並列。
                           大盤指數輸入、🔄 抓即時指數、崩盤指數、可承受跌幅、β 設定全部可操作，
-                          且與上方 Part 2 的 β 讀同一份 betaConfig state。 */}
+                          且與上方 Part 2 共用同一組 β 常數。 */}
                       <div className="mt-4">
                         {crashResistanceBlock}
                       </div>
@@ -8578,7 +8616,7 @@ Build the wall first. Attack second.`)}
                     </div>
 
                     <div className="glass-card p-8 rounded-2xl lg:col-span-2 flex flex-col stagger-2 shadow-lg border border-slate-200 dark:border-transparent">
-                        <div className="flex justify-between items-center mb-8 relative z-10"><h3 className="text-2xl font-mono text-slate-800 dark:text-amber-600 uppercase tracking-widest font-extrabold vibe-hover-text">軌跡 Trajectory</h3><div className="flex items-center gap-3"><select value={dataSource} onChange={(e) => setDataSource(e.target.value)} className="bg-white border-2 border-slate-200 text-slate-700 text-lg font-mono rounded-lg px-4 py-2 outline-none relative z-10 font-bold focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/10 transition-all cyber-select"><option value="total">總資產 ASSET</option><option value="tw">台股 TW</option><option value="us">美股 US</option><option value="crypto">加密 CRYPTO</option></select><select value={chartFilter} onChange={(e) => setChartFilter(e.target.value)} className="bg-white border-2 border-slate-200 text-slate-700 text-lg font-mono rounded-lg px-4 py-2 outline-none relative z-10 font-bold focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/10 transition-all cyber-select"><option value="last20">Last 20</option><option value="all">All Time</option>{sortedYears.map(y => <option key={"chart-opt-" + y} value={y}>{y}</option>)}</select></div></div>
+                        <div className="flex flex-wrap justify-between items-center gap-3 mb-8 relative z-10 min-w-0"><h3 className="text-2xl font-mono text-slate-800 dark:text-amber-600 uppercase tracking-widest font-extrabold vibe-hover-text">軌跡 Trajectory</h3><div className="flex flex-wrap items-center gap-3 min-w-0"><select value={dataSource} onChange={(e) => setDataSource(e.target.value)} className="bg-white border-2 border-slate-200 text-slate-700 text-base sm:text-lg font-mono rounded-lg px-3 sm:px-4 py-2 max-w-full outline-none relative z-10 font-bold focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/10 transition-all cyber-select"><option value="total">總資產 ASSET</option><option value="tw">台股 TW</option><option value="us">美股 US</option><option value="crypto">加密 CRYPTO</option></select><select value={chartFilter} onChange={(e) => setChartFilter(e.target.value)} className="bg-white border-2 border-slate-200 text-slate-700 text-base sm:text-lg font-mono rounded-lg px-3 sm:px-4 py-2 max-w-full outline-none relative z-10 font-bold focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/10 transition-all cyber-select"><option value="last20">Last 20</option><option value="all">All Time</option>{sortedYears.map(y => <option key={"chart-opt-" + y} value={y}>{y}</option>)}</select></div></div>
                         <div className="flex mb-6 relative z-10">
                             <button type="button" onClick={() => setReplaySnapshot(data)}
                                     className="w-full md:w-auto px-6 py-3 rounded-xl font-mono font-bold text-base tracking-widest border-2 border-slate-300 dark:border-amber-600/60 bg-white dark:bg-black/40 text-slate-800 dark:text-amber-400 hover:border-cyan-500 dark:hover:border-amber-400 transition-all shadow-sm">
