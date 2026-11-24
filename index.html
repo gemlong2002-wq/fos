@@ -432,7 +432,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/11/23 13:03';
+    const APP_VERSION = '2026/11/24 14:31';
 
     /* ===================================================================
        共用工具
@@ -814,6 +814,95 @@
       if (l <= 0) return 0;
       const c = Math.max(0, parseFloat(C) || 0);
       return Math.max(0, l - c / DELEVERAGE_TARGET_MR);
+    }
+
+    /* ===================================================================
+       v15.3 §4.3／§4.3.1／§4.3.2／§4.3.3 —— 救火雙路徑、160% 保證執行線、斷頭線
+       全部是純函式：門檻由呼叫端傳入（MR 百分比數字，例 260），不碰 state。
+    =================================================================== */
+    const LIQUIDATION_MR = 130;            // §4.3.3 券商斷頭線固定 130%（不可編輯）
+    const GUARANTEE_LINE_MR = 160;         // §4.3.2 保證執行線
+    const CRASH_BETA_MAIN = 1.3;           // §4.8 壓力測試主數字 β
+    const CRASH_BETA_MEASURED = 1.15;      // §4.8 實測 β（只作參考值並列）
+    const MR_COMPARE_LEVELS = [450, 370];  // §4.8 對照數字（只顯示、不判定）
+
+    /* 市場跌幅 d：擔保品要跌多少 MR 才會掉到 lineMR，再除以組合 β 換算成大盤跌幅。
+       d ≤ 0（已在線下）→ below = true、d 取 0（用目前的 C、P1）。資料不足回傳 null。 */
+    function calcLineDrop(C, L, beta, lineMR) {
+      const c = parseFloat(C) || 0, l = parseFloat(L) || 0, b = parseFloat(beta) || 0, m = parseFloat(lineMR) || 0;
+      if (!(c > 0) || !(l > 0) || !(b > 0) || !(m > 0)) return null;
+      const raw = (1 - (m / 100) * l / c) / b;
+      return { raw, d: Math.max(0, raw), below: raw <= 0 };
+    }
+
+    /* §4.3.1 救火雙路徑試算（某一條觸發線 lineMR 下）：
+         C′ = C × (1 − β × d)；P1′ = P1 × max(0, 1 − 2d)（正2 近似）
+         死線 = L × (1 − redMR ÷ targetMR)
+         可動用 P1：fullP1 = false → max(0, P1′ − 死線)；fullP1 = true（160% 情境）→ P1′ 全數
+         路徑甲（賣 P1 → 買 0050 → T+2 增加擔保品，L 不變）：所需 X = max(0, 2.8L − C′)，執行後 MR = (C′ + 執行額) ÷ L
+         路徑乙（賣 P1 → 部分還款，C 不變）：所需 R = max(0, L − C′ ÷ 2.8)，執行後 MR = C′ ÷ (L − 執行額)
+         實際執行 = min(所需, 可動用)；執行後 MR 仍 < targetMR → done（已完成，靠外部新資金還本金回升） */
+    function calcRescuePaths(input) {
+      const C = Math.max(0, parseFloat(input && input.C) || 0);
+      const L = Math.max(0, parseFloat(input && input.L) || 0);
+      const P1 = Math.max(0, parseFloat(input && input.P1) || 0);
+      const redMR = parseFloat(input && input.redMR) || 0;
+      const targetMR = parseFloat(input && input.targetMR) || 0;
+      const lineMR = parseFloat(input && input.lineMR) || 0;
+      const drop = calcLineDrop(C, L, input && input.beta, lineMR);
+      if (!drop || !(redMR > 0) || !(targetMR > 0)) return { status: 'unknown' };
+      const beta = parseFloat(input.beta);
+      const d = drop.d;
+      const mult = Math.max(0, 1 - 2 * d);
+      const cAfter = C * (1 - beta * d);
+      const p1After = P1 * mult;
+      const deathLine = L * (1 - redMR / targetMR);
+      const available = input.fullP1 ? p1After : Math.max(0, p1After - deathLine);
+      const t = targetMR / 100;
+      const needA = Math.max(0, t * L - cAfter);
+      const execA = Math.min(needA, available);
+      const mrA = (cAfter + execA) / L * 100;
+      const needB = Math.max(0, L - cAfter / t);
+      const execB = Math.min(needB, available);
+      const mrB = L - execB > 0 ? cAfter / (L - execB) * 100 : Infinity;
+      return {
+        status: 'ok', lineMR, below: drop.below, d, mult, cAfter, p1After, deathLine, available,
+        a: { need: needA, exec: execA, mrAfter: mrA, done: mrA < targetMR },
+        b: { need: needB, exec: execB, mrAfter: mrB, done: mrB < targetMR }
+      };
+    }
+
+    /* §4.3.2 160% 保證執行線：d₁₆₀ = (1 − 1.6L ÷ C) ÷ β_C
+       大盤點位 = 現在點位 × (1 − d₁₆₀)；P1 觸價倍數 = 1 − 2 × d₁₆₀。已在線下 → d 取 0。 */
+    function calcGuaranteeLine160(input) {
+      const drop = calcLineDrop(input && input.C, input && input.L, input && input.beta, GUARANTEE_LINE_MR);
+      if (!drop) return { status: 'unknown' };
+      const idx = parseFloat(input.index) || 0;
+      return {
+        status: 'ok', below: drop.below, d: drop.d,
+        indexLevel: idx > 0 ? idx * (1 - drop.d) : null,
+        p1Mult: Math.max(0, 1 - 2 * drop.d)
+      };
+    }
+
+    /* §4.8 崩盤抵抗：到斷頭線 130% 的大盤可承受跌幅 = (1 − 1.3L ÷ C) ÷ β。
+       主數字 β 1.3、並列實測參考 β 1.15。≤ 0 代表已低於斷頭線。 */
+    function calcCrashResistance(C, L) {
+      const c = parseFloat(C) || 0, l = parseFloat(L) || 0;
+      if (!(c > 0) || !(l > 0)) return { status: 'unknown' };
+      const collateralDrop = 1 - (LIQUIDATION_MR / 100) * l / c;
+      return {
+        status: 'ok', collateralDrop,
+        main: collateralDrop / CRASH_BETA_MAIN * 100,
+        measured: collateralDrop / CRASH_BETA_MEASURED * 100,
+        safe: collateralDrop > 0
+      };
+    }
+
+    // §4.3.3 MR < 130% → 追繳面板（兩選項並列、不排序、不推薦）
+    function needsMarginCallPanel(mr) {
+      const m = parseFloat(mr);
+      return Number.isFinite(m) && m > 0 && m < LIQUIDATION_MR;
     }
 
     function allocateExternalFunds(amount, ctx) {
@@ -1788,7 +1877,7 @@
       useEffect(() => { fetchEtfQuotes(); }, []);
 
       const [liveCrypto, setLiveCrypto] = useState({ BTC: 0, ETH: 0 });
-      const [betaConfig, setBetaConfig] = useState({ b0050: '1.0', b00733: '1.35', mrLimit: '130' });
+      const [betaConfig, setBetaConfig] = useState({ b0050: '1.0', b00733: '1.35' });
 
       // 現金護城河 CASH MOAT — 純顯示模組，獨立於 MR/擔保品C/B帳戶/80-20分流，不參與任何既有運算
       const [cashMoatInputs, setCashMoatInputs] = useState(() => {
@@ -1871,6 +1960,9 @@
 
       // v12.4 — 崩盤指數：手動輸入當前大盤指數，不持久化（比照 betaConfig pattern）
       const [crashIndexInput, setCrashIndexInput] = useState('20000');
+      // v15.3 §4.3.1 救火路徑：'A' 路徑甲（預設）／'B' 路徑乙，記住於 localStorage
+      const [rescuePath, setRescuePath] = useState(() => safeGetStorage('fos_rescuePath', 'A') === 'B' ? 'B' : 'A');
+      useEffect(() => { safeSetStorage('fos_rescuePath', rescuePath); }, [rescuePath]);
       // v12.18 — 大盤指數自動抓取：卡片載入時打一次唯讀端點(?action=marketIndex，不需WRITE_SECRET)，
       // 成功才覆蓋顯示值；失敗(success:false或拋錯)靜默維持原值，欄位本身仍可手動輸入覆寫
       const [isFetchingIndex, setIsFetchingIndex] = useState(false);
@@ -2267,19 +2359,18 @@
 
       const b0050Val = parseFloat(betaConfig.b0050) || 1.0;
       const b00733Val = parseFloat(betaConfig.b00733) || 1.35;
-      const limitMRVal = parseFloat(betaConfig.mrLimit) || 130;
 
-      let portfolioBeta = 0; let maxMarketDrop = 0;
+      let portfolioBeta = 0;
       /* beta 只需要 C（擔保品組成），不需要 L；L > 0 只是 maxMarketDrop（距離斷頭還能跌幾%）
          的前提。兩者原本綁在同一個 if，導致「質押借款為 0」時 beta 停留在 0，
          ERG 閘門5 的 max(0, 1 − 0.5β) 會算出存活率 1.0＝擔保品腰斬後毫髮無傷。 */
       if (C > 0) {
           portfolioBeta = ((c0050 * b0050Val) + (c00733 * b00733Val)) / C;
-          if (L > 0) {
-              const maxCollateralDrop = (C - (limitMRVal / 100) * L) / C;
-              maxMarketDrop = (maxCollateralDrop / portfolioBeta) * 100;
-          }
       }
+      /* v15.3 §4.8 — 可承受跌幅（到斷頭線 130%）改以 β 1.3 為主數字、β 1.15 實測值並列參考；
+         portfolioBeta 仍供 §4.3 規則線／160% 線與 ERG 使用，兩者刻意分開。 */
+      const crashRes = calcCrashResistance(C, L);
+      const maxMarketDrop = crashRes.status === 'ok' ? crashRes.main : 0;
       const isCrashSafe = maxMarketDrop > 0;
 
       const currentIndexVal = parseFloat(crashIndexInput) || 0;
@@ -2294,7 +2385,7 @@
           <div className={`tech-panel p-8 scale-card cursor-default`}>
             <h2 className="text-sm font-black uppercase text-slate-400 mb-6">{t('崩盤抵抗', 'CRASH RESISTANCE')}</h2>
 
-            <div className="grid grid-cols-3 gap-3 mb-6">
+            <div className="grid grid-cols-3 gap-3 mb-6" data-testid="crash-beta-row">
               <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-2 text-center border border-slate-100 dark:border-slate-700">
                 <div className="font-bold text-sm text-slate-400 mb-1">0050 β</div>
                 <input type="number" step="0.01" name="b0050" value={betaConfig.b0050} onChange={handleBetaChange} className="w-full text-center text-lg font-black font-mono bg-transparent outline-none text-slate-700 dark:text-slate-300 data-text" />
@@ -2305,16 +2396,22 @@
               </div>
               <div className="bg-rose-50 dark:bg-rose-950/30 rounded-xl p-2 text-center border border-rose-100 dark:border-rose-900/50">
                 <div className="font-bold text-sm text-rose-400 mb-1">LIMIT</div>
-                <input type="number" name="mrLimit" value={betaConfig.mrLimit} onChange={handleBetaChange} className="w-full text-center text-lg font-black font-mono bg-transparent outline-none text-rose-500 data-text" />
+                <div className="w-full text-center text-lg font-black font-mono text-rose-500 data-text">{LIQUIDATION_MR}%</div>
               </div>
             </div>
 
             <div className={`rounded-2xl p-6 text-center border ${isCrashSafe ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-100 dark:border-emerald-900/50' : 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/50'}`}>
               <div className="text-sm font-bold mb-2 uppercase tracking-widest text-slate-500 dark:text-slate-400">MAX DROP TO LIQUIDATION</div>
               {C > 0 && L > 0 ? (
-                <div className={`text-4xl sm:text-5xl font-black font-mono tracking-tight data-text break-words ${isCrashSafe ? 'text-emerald-500' : 'text-rose-500'}`}>
-                  {isCrashSafe ? `-${maxMarketDrop.toFixed(2)}%` : 'BREACHED'}
-                </div>
+                <React.Fragment>
+                  <div className={`text-4xl sm:text-5xl font-black font-mono tracking-tight data-text break-words ${isCrashSafe ? 'text-emerald-500' : 'text-rose-500'}`}>
+                    {isCrashSafe ? `-${maxMarketDrop.toFixed(2)}%` : 'BREACHED'}
+                  </div>
+                  <div className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-2">
+                    {t(`β ${CRASH_BETA_MAIN}（主數字）｜實測 β ${CRASH_BETA_MEASURED} 參考：${crashRes.safe ? '-' + crashRes.measured.toFixed(2) + '%' : 'BREACHED'}`,
+                       `β ${CRASH_BETA_MAIN} (main) | measured β ${CRASH_BETA_MEASURED} ref: ${crashRes.safe ? '-' + crashRes.measured.toFixed(2) + '%' : 'BREACHED'}`)}
+                  </div>
+                </React.Fragment>
               ) : (
                 <div className="text-2xl font-black text-slate-300 dark:text-slate-600 mt-2">N/A</div>
               )}
@@ -2331,7 +2428,7 @@
                 </div>
               </div>
               <div className={`rounded-xl p-4 text-center border ${isCrashSafe ? 'bg-sky-50 dark:bg-sky-950/30 border-sky-100 dark:border-sky-900/50' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-700'}`}>
-                <div className="text-sm font-bold mb-1 uppercase tracking-widest text-slate-500 dark:text-slate-400">{t('崩盤指數', 'CRASH INDEX')}</div>
+                <div className="text-sm font-bold mb-1 uppercase tracking-widest text-slate-500 dark:text-slate-400">{t(`崩盤指數（β ${CRASH_BETA_MAIN}）`, `CRASH INDEX (β ${CRASH_BETA_MAIN})`)}</div>
                 {isCrashSafe && currentIndexVal > 0 ? (
                   <div className="text-2xl sm:text-3xl font-black font-mono tracking-tight data-text break-words text-sky-600 dark:text-sky-400">
                     {crashIndexValue.toLocaleString('en-US', { maximumFractionDigits: 0 })}
@@ -2339,6 +2436,15 @@
                 ) : (
                   <div className="text-xl font-black text-slate-300 dark:text-slate-600 mt-1">N/A</div>
                 )}
+              </div>
+              <div data-testid="mr-compare" className="rounded-xl p-3 border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-sm font-bold text-slate-500 dark:text-slate-400">
+                <div className="text-xs uppercase tracking-widest mb-1">{t('MR 對照（僅顯示，不做判定）', 'MR REFERENCE (display only)')}</div>
+                <div className="font-mono">
+                  {t('目前', 'Now')} {L > 0 ? nominalMRRaw.toFixed(2) + '%' : '—'}
+                  {MR_COMPARE_LEVELS.map(lv => (
+                    <span key={'mrcmp' + lv}>｜{lv}% {L > 0 ? t(`差 ${(nominalMRRaw - lv) >= 0 ? '+' : ''}${(nominalMRRaw - lv).toFixed(2)}`, `diff ${(nominalMRRaw - lv) >= 0 ? '+' : ''}${(nominalMRRaw - lv).toFixed(2)}`) : '—'}</span>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
@@ -2625,6 +2731,11 @@
         p1Val675: formData.p1_00675L, p1Val631: formData.p1_00631L,
         price675: p1CalcInputs.price00675L, price631: p1CalcInputs.price00631L
       });
+      /* v15.3 §4.3.1／§4.3.2 — 260% 應執行線與 160% 保證執行線，各自試算路徑甲／乙 */
+      const rescue260 = calcRescuePaths({ C, L, P1, beta: portfolioBeta, lineMR: MR_RED_CEILING, redMR: MR_RED_CEILING, targetMR: MR_RECOVERY_EXIT, fullP1: false });
+      const rescue160 = calcRescuePaths({ C, L, P1, beta: portfolioBeta, lineMR: GUARANTEE_LINE_MR, redMR: MR_RED_CEILING, targetMR: MR_RECOVERY_EXIT, fullP1: true });
+      const guarantee160 = calcGuaranteeLine160({ C, L, beta: portfolioBeta, index: parseFloat(crashIndexInput) || 0 });
+      const marginCallActive = L > 0 && needsMarginCallPanel(nominalMRRaw);
       // 整卡預警色：MR ≤ 280%（回復帶出場線）就進入預警，不必等跌破 260%
       const p1RescueAlert = nominalMRRaw > 0 && nominalMRRaw <= MR_RECOVERY_EXIT;
       /* MR 卡上「觸價單」按鈕的三態 + 文案。全部由既有的 p1Rescue／mrZoneInfo 推導，不另算：
@@ -2646,7 +2757,7 @@
         ? 'danger'
         : (p1RescueAlert || mrZoneInfo.recoveryBand) ? 'warn' : 'calm';
       const p1Part2BtnLabel = p1Part2BtnState === 'liquidation'
-        ? t(`🚨 已低於券商斷頭線 ${parseFloat(betaConfig.mrLimit) || 130}%`, `🚨 BELOW THE BROKER LIQUIDATION LINE AT ${parseFloat(betaConfig.mrLimit) || 130}%`)
+        ? t(`🚨 已低於券商斷頭線 ${LIQUIDATION_MR}%`, `🚨 BELOW THE BROKER LIQUIDATION LINE AT ${LIQUIDATION_MR}%`)
         : p1Part2BtnState === 'nodata'
         ? t('🎯 觸價單｜資料不足', '🎯 TRIGGER ORDERS | NO DATA')
         : p1Part2BtnState === 'danger'
@@ -2890,6 +3001,114 @@
           )}
         </div>
       );
+      /* v15.3 §4.3.3 追繳面板：兩個選項並列，不排順序、不加推薦 */
+      const marginCallPanel = marginCallActive ? (
+        <div data-testid="margin-call-panel" className="mb-4 p-4 rounded-xl bg-rose-100 dark:bg-rose-950/50 border-2 border-rose-500 dark:border-rose-700">
+          <div className="text-base font-black text-rose-700 dark:text-rose-300 mb-3">
+            {t(`🚨 MR ${nominalMRRaw.toFixed(2)}% 已低於斷頭線 ${LIQUIDATION_MR}%｜追繳處置`, `🚨 MR ${nominalMRRaw.toFixed(2)}% is below the ${LIQUIDATION_MR}% liquidation line | margin call`)}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {[
+              t('4.10 失業準備金（追繳例外）', '4.10 Unemployment reserve (margin-call exception)'),
+              t('5.5 主動賣出核心擔保品還款（自行選擇標的與數量）', '5.5 Sell core collateral to repay (choose the holdings and amounts yourself)')
+            ].map(opt => (
+              <div key={opt} data-testid="margin-call-option" className="p-3 rounded-lg bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-800 text-sm font-black text-slate-700 dark:text-slate-200">{opt}</div>
+            ))}
+          </div>
+        </div>
+      ) : null;
+
+      /* v15.3 §4.3.1／§4.3.2 救火雙路徑：260% 應執行線與 160% 保證執行線並列，各自顯示甲／乙試算 */
+      const fmtMr = (v) => Number.isFinite(v) ? v.toFixed(1) + '%' : '—';
+      const pathMeta = {
+        A: { name: t('路徑甲', 'Path A'), desc: t('賣 P1 → 當日買 0050 → T+2 入帳後申請增加擔保品（L 不變、C 增加）', 'Sell P1 → buy 0050 the same day → add it as collateral after T+2 settlement (L unchanged, C up)'),
+             needLabel: t('所需 X = 2.8L − C′', "Need X = 2.8L − C'") },
+        B: { name: t('路徑乙', 'Path B'), desc: t('賣 P1 → 部分還款（L 下降、C 不變）｜不得全額清償單筆借款，否則退券', 'Sell P1 → partial repayment (L down, C unchanged) | never fully repay a single loan, or the pledged shares are returned'),
+             needLabel: t('所需 R = L − C′ ÷ 2.8', "Need R = L − C' / 2.8") }
+      };
+      const rescueLineCol = (r, title, sub, extra) => (
+        <div data-testid={'rescue-line-' + (r.lineMR || 'x')} className="p-4 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-3 min-w-0">
+          <div>
+            <div className="text-sm font-black text-slate-700 dark:text-slate-200">{title}</div>
+            <div className="text-xs font-bold text-slate-400">{sub}</div>
+          </div>
+          {r.status !== 'ok' ? (
+            <div className="text-sm font-bold text-slate-400">{t('資料未就緒', 'Data not ready')}</div>
+          ) : (
+            <React.Fragment>
+              <div className="grid grid-cols-2 gap-2 text-xs font-bold">
+                <div><span className="text-slate-400">{t('大盤跌幅 d', 'Market drop d')}</span><div className="font-mono text-sm text-rose-600 dark:text-rose-400">{r.below ? t('已低於（取 0）', 'already below (0)') : '−' + (r.d * 100).toFixed(2) + '%'}</div></div>
+                <div><span className="text-slate-400">{t('P1 觸價倍數', 'P1 trigger multiple')}</span><div className="font-mono text-sm text-slate-700 dark:text-slate-200">{r.mult.toFixed(3)}</div></div>
+                <div><span className="text-slate-400">C′</span><div className="font-mono text-sm text-slate-700 dark:text-slate-200">{formatNumber(Math.round(r.cAfter))}</div></div>
+                <div><span className="text-slate-400">P1′</span><div className="font-mono text-sm text-slate-700 dark:text-slate-200">{formatNumber(Math.round(r.p1After))}</div></div>
+                <div className="col-span-2"><span className="text-slate-400">{r.lineMR === GUARANTEE_LINE_MR ? t('可動用 P1（P1′ 全數）', 'Usable P1 (all of P1\')') : t(`可動用 P1（P1′ − 死線 ${formatNumber(Math.round(r.deathLine))}）`, `Usable P1 (P1' − death line ${formatNumber(Math.round(r.deathLine))})`)}</span><div className="font-mono text-sm text-teal-600 dark:text-teal-400">{formatNumber(Math.round(r.available))}</div></div>
+              </div>
+              {extra}
+              {['A', 'B'].map(k => {
+                const p = k === 'A' ? r.a : r.b;
+                const on = rescuePath === k;
+                return (
+                  <div key={k} data-testid={'rescue-path-' + r.lineMR + '-' + k} className={`p-3 rounded-lg border-2 ${on ? 'border-rose-400 dark:border-rose-600 bg-rose-50 dark:bg-rose-950/30' : 'border-slate-200 dark:border-slate-700 opacity-70'}`}>
+                    <div className="text-xs font-black text-slate-600 dark:text-slate-300">{pathMeta[k].name}{on ? t('（已選）', ' (selected)') : ''}</div>
+                    <div className="grid grid-cols-3 gap-1 mt-1 text-xs font-bold">
+                      <div><span className="text-slate-400">{pathMeta[k].needLabel}</span><div className="font-mono text-slate-700 dark:text-slate-200">{formatNumber(Math.round(p.need))}</div></div>
+                      <div><span className="text-slate-400">{t('實際執行', 'Executed')}</span><div className="font-mono text-rose-600 dark:text-rose-400">{formatNumber(Math.round(p.exec))}</div></div>
+                      <div><span className="text-slate-400">{t('執行後 MR', 'MR after')}</span><div className="font-mono text-slate-700 dark:text-slate-200">{fmtMr(p.mrAfter)}</div></div>
+                    </div>
+                    {p.done && (
+                      <div className="text-xs font-black text-amber-700 dark:text-amber-400 mt-1">{t('已完成，依外部新資金還本金逐步回升', 'Done — MR recovers gradually as new outside funds repay principal')}</div>
+                    )}
+                  </div>
+                );
+              })}
+            </React.Fragment>
+          )}
+        </div>
+      );
+      const rescuePathsBlock = (
+        <div data-testid="rescue-paths" className="mt-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className={`text-sm font-black ${mrZoneInfo.zone === 'RED' ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>
+              {mrZoneInfo.zone === 'RED'
+                ? t('🔴 §4.3 已觸發｜救火雙路徑', '🔴 §4.3 TRIGGERED | TWO RESCUE PATHS')
+                : t('§4.3.1 救火雙路徑（觸發時依此執行）', '§4.3.1 TWO RESCUE PATHS (execute on trigger)')}
+            </div>
+            <div className="flex rounded-lg overflow-hidden border border-slate-300 dark:border-slate-600 text-xs font-black">
+              {['A', 'B'].map(k => (
+                <button key={k} type="button" data-testid={'rescue-path-btn-' + k} onClick={() => setRescuePath(k)}
+                  className={`px-3 py-1.5 transition-colors ${rescuePath === k ? 'bg-rose-500 text-white' : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400'}`}>
+                  {pathMeta[k].name}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="text-xs font-bold text-slate-500 dark:text-slate-400">{pathMeta[rescuePath].desc}</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {rescueLineCol(rescue260, t(`${MR_RED_CEILING}% 應執行線`, `${MR_RED_CEILING}% EXECUTION LINE`),
+              t('可動用 P1 = P1′ − 死線', "Usable P1 = P1' − death line"), null)}
+            {rescueLineCol(rescue160, t(`${GUARANTEE_LINE_MR}% 保證執行線`, `${GUARANTEE_LINE_MR}% GUARANTEED LINE`),
+              t('d₁₆₀ = (1 − 1.6L ÷ C) ÷ β_C｜可動用 P1 = P1′ 全數', "d160 = (1 − 1.6L / C) / β_C | usable P1 = all of P1'"),
+              guarantee160.status === 'ok' ? (
+                <div data-testid="guarantee-160" className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                  {t('大盤點位', 'Index level')} <span className="font-mono text-slate-700 dark:text-slate-200">{guarantee160.indexLevel != null ? formatNumber(Math.round(guarantee160.indexLevel)) : '—'}</span>
+                  {t(`（現在 ${formatNumber(Math.round(parseFloat(crashIndexInput) || 0))} × (1 − d₁₆₀)）`, ` (now ${formatNumber(Math.round(parseFloat(crashIndexInput) || 0))} × (1 − d160))`)}
+                </div>
+              ) : null)}
+          </div>
+          <div className="p-4 rounded-xl bg-sky-50 dark:bg-sky-950/20 border border-sky-200 dark:border-sky-900 text-sm font-bold text-sky-800 dark:text-sky-300 space-y-1">
+            <div>{t('觸價單以盤中即時價觸發；委託建議用市價或跌停價長效單。', 'Trigger orders fire on the live intraday price; use market or limit-down good-till-cancelled orders.')}</div>
+            {rescuePath === 'A' && (
+              <div data-testid="rescue-todo-A">
+                <div>{t('待辦：', 'To do:')}</div>
+                <div>☐ {t('今日手動買入 0050', 'Buy 0050 manually today')}</div>
+                <div>☐ {t('T+2 入帳後申請增加擔保品', 'After T+2 settlement, apply to add it as collateral')}</div>
+              </div>
+            )}
+            <div>{t('成交後回報秘書，記入衝動日誌。', 'After the fill, report to the secretary and log it in the impulse journal.')}</div>
+          </div>
+        </div>
+      );
+
       const p1Part2Block = (
         <div className={`p-6 ${p1RescueAlert ? 'bg-rose-50 dark:bg-rose-950/30' : 'bg-white dark:bg-slate-900'}`}>
           <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
@@ -2901,13 +3120,15 @@
             )}
           </div>
 
+          {marginCallPanel}
+
           {p1Rescue.status === 'unknown' ? (
             <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-500 dark:text-slate-400">
               {t('資料未就緒：需要擔保品 C、質押借款 L 與組合 β 皆大於 0', 'Data not ready: collateral C, pledged loan L and portfolio beta must all be above zero')}
             </div>
           ) : p1Rescue.status === 'below' ? (
             <div className="p-4 rounded-xl bg-rose-100 dark:bg-rose-950/50 border-2 border-rose-400 dark:border-rose-700">
-              <div className="text-lg font-black text-rose-700 dark:text-rose-300">{t(`已低於 ${MR_RED_CEILING}%，依 §4.3 立即執行`, `Already below ${MR_RED_CEILING}% — execute §4.3 immediately`)}</div>
+              <div className="text-lg font-black text-rose-700 dark:text-rose-300">{t(`已低於 ${MR_RED_CEILING}%，依 §4.3 立即執行（見下方路徑試算，d 取 0、以目前 C／P1 計算）`, `Already below ${MR_RED_CEILING}% — execute §4.3 immediately (see the path estimates below; d = 0, using current C / P1)`)}</div>
             </div>
           ) : (
             <div className="space-y-4">
@@ -2963,25 +3184,6 @@
                 </div>
               </div>
 
-              <div className={`p-4 rounded-xl border-2 ${p1Rescue.deathOk ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800' : 'bg-rose-100 dark:bg-rose-950/50 border-rose-400 dark:border-rose-700'}`}>
-                <div className="text-xs font-black uppercase tracking-widest text-slate-400">{t('死線檢核', 'DEATH-LINE CHECK')}</div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2 text-sm font-bold">
-                  <div><span className="text-slate-400">{t('屆時 P1', 'P1 then')}</span> <span className="font-mono text-slate-700 dark:text-slate-200">{formatNumber(Math.round(p1Rescue.p1After))}</span></div>
-                  <div><span className="text-slate-400">{t('還款後殘存', 'left after repaying')}</span> <span className="font-mono text-slate-700 dark:text-slate-200">{formatNumber(Math.round(p1Rescue.p1Remain))}</span></div>
-                  <div><span className="text-slate-400">{t(`死線 ${(DEATH_LINE_RATIO * 100).toFixed(2)}% × 新L`, `death line ${(DEATH_LINE_RATIO * 100).toFixed(2)}% x new L`)}</span> <span className="font-mono text-slate-700 dark:text-slate-200">{formatNumber(Math.round(p1Rescue.deathLine))}</span></div>
-                </div>
-                <div className={`text-sm font-black mt-2 ${p1Rescue.deathOk ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-300'}`}>
-                  {p1Rescue.deathOk
-                    ? t('通過：殘存 P1 仍在死線之上', 'Pass: the remaining P1 stays above the death line')
-                    : !p1Rescue.canRepay
-                    ? t('P1 不夠還款 → 改走 §5.5 防禦轉換', 'P1 cannot cover the repayment — switch to the §5.5 defensive conversion')
-                    : t('殘存 P1 擊穿死線 → 改走 §5.5 防禦轉換', 'The remaining P1 breaks the death line — switch to the §5.5 defensive conversion')}
-                </div>
-              </div>
-
-              <div className="p-4 rounded-xl bg-sky-50 dark:bg-sky-950/20 border border-sky-200 dark:border-sky-900 text-sm font-bold text-sky-800 dark:text-sky-300">
-                {t('請於券商預掛觸價賣出單；每月更新觸價；成交後以現金償還質押本金，嚴禁買入擔保品', 'Place the trigger sell orders with your broker in advance; refresh the trigger prices monthly; once filled, use the cash to repay pledged principal — never to buy collateral')}
-              </div>
 
               {quickDropActive && (
                 <div className="p-4 rounded-xl bg-rose-100 dark:bg-rose-950/50 border border-rose-400 dark:border-rose-700 text-sm font-black text-rose-700 dark:text-rose-300">
@@ -2991,8 +3193,10 @@
             </div>
           )}
 
+          {rescuePathsBlock}
+
           <div className="text-xs font-bold text-slate-400 mt-4">
-            {t(`以上為「規則線 ${MR_RED_CEILING}%」—— 白皮書 §4.3 自己訂的去槓桿線，跌到這裡要主動還本金。下方「券商斷頭線 ${parseFloat(betaConfig.mrLimit) || 130}%」是券商強制平倉的位置，兩者意義不同：規則線是你自己的煞車，斷頭線是別人幫你踩。兩段共用同一組 β 設定。`, `The above is the rule line at ${MR_RED_CEILING}% — the deleverage line set by §4.3 of the whitepaper; reaching it means repaying principal yourself. The broker's forced-liquidation line at ${parseFloat(betaConfig.mrLimit) || 130}% below is where the broker closes you out. They differ: the rule line is your own brake, the liquidation line is someone else stepping on it. Both sections share the same beta settings.`)}
+            {t(`以上為「規則線 ${MR_RED_CEILING}%」—— 白皮書 §4.3 自己訂的去槓桿線，跌到這裡要主動還本金。下方「券商斷頭線 ${LIQUIDATION_MR}%」是券商強制平倉的位置，兩者意義不同：規則線是你自己的煞車，斷頭線是別人幫你踩。規則線段用組合 β（0050 1.0／00733 1.35 市值加權）；斷頭線段的可承受跌幅以 β ${CRASH_BETA_MAIN} 為主數字。`, `The above is the rule line at ${MR_RED_CEILING}% — the deleverage line set by §4.3 of the whitepaper; reaching it means repaying principal yourself. The broker's forced-liquidation line at ${LIQUIDATION_MR}% below is where the broker closes you out. They differ: the rule line is your own brake, the liquidation line is someone else stepping on it. The rule-line section uses the portfolio beta (0050 1.0 / 00733 1.35, value-weighted); the liquidation section uses β ${CRASH_BETA_MAIN} as its main figure.`)}
           </div>
         </div>
       );
@@ -3915,6 +4119,14 @@ Ask this box before you withdraw.`
                     <div className={`absolute inset-0 isolate px-5 pb-4 flex flex-col justify-center border-l-[6px] ${mrBorderClass} bg-slate-50/50 dark:bg-slate-900/50 transition-all duration-300 group-hover:opacity-0 group-hover:scale-95 ${mrTier === 'danger' ? 'mini-card-danger' : 'mini-card-core'}`}>
                       <span className={`text-3xl sm:text-4xl md:text-5xl font-black font-mono tracking-tight data-text break-words vibe-hover-text tabular-nums mini-card-num ${mrZoneInfo.text}`}>{nominalMR}%</span>
                       <span className={`text-sm font-black uppercase mt-1 ${mrZoneInfo.text}`}>{mrZoneInfo.label}</span>
+                      {mrZoneInfo.zone === 'RED' && rescue260.status === 'ok' && (
+                        <span data-testid="mr-card-rescue" className="text-xs font-black text-rose-600 dark:text-rose-400 mt-1 leading-tight">
+                          {marginCallActive
+                            ? t(`🚨 低於斷頭線 ${LIQUIDATION_MR}%｜見觸價單追繳面板`, `🚨 Below ${LIQUIDATION_MR}% | see the margin-call panel`)
+                            : t(`4.3 已觸發｜${pathMeta[rescuePath].name} → MR ${fmtMr((rescuePath === 'A' ? rescue260.a : rescue260.b).mrAfter)}`,
+                                `4.3 triggered | ${pathMeta[rescuePath].name} → MR ${fmtMr((rescuePath === 'A' ? rescue260.a : rescue260.b).mrAfter)}`)}
+                        </span>
+                      )}
                       {/* v15.0 §4.9 快速下降狀態：active 赤字警示、unknown 灰字標註無法判定（視為未觸發） */}
                       {quickDropActive && (
                         <span className="text-xs font-black text-rose-600 dark:text-rose-400 mt-1 leading-tight">

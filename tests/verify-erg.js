@@ -93,7 +93,7 @@ chk('推算為負時夾到 0', r.g5.b, 0);
 console.log('');
 console.log('【P0 回歸】質押借款 L = 0 時 β 仍須算得出來（否則擔保品被當成沒跌）');
 {
-  const betaSrc = (() => { const f='      let portfolioBeta = 0; let maxMarketDrop = 0;'; const i=H.indexOf(f); return H.slice(i, H.indexOf('      const isCrashSafe', i)); })();
+  const betaSrc = (() => { const f='      let portfolioBeta = 0;'; const i=H.indexOf(f); return H.slice(i, H.indexOf('      /* v15.3 §4.8', i)); })();
   const betaOf = (C, L, c0050, c00733) => eval(`
     const b0050Val = 1.0, b00733Val = 1.35, limitMRVal = 130;
     ${betaSrc}
