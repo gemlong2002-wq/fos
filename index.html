@@ -432,7 +432,7 @@
     const { useState, useEffect, useRef, useMemo, Fragment } = React;
 
     // 網頁版本時間：每次改版務必手動更新（不是頁面載入時間，是程式碼最後修改時間）
-    const APP_VERSION = '2026/11/24 14:39';
+    const APP_VERSION = '2026/11/26 09:25';
 
     /* ===================================================================
        共用工具
@@ -576,8 +576,8 @@
        80/20，後者 24%/30% 三段），v15.0 要求兩者共用同一套規則，故收斂成這個純函式。
 
        分流順序（護城河一律第一順位，§4.7）：
-         🟢 GREEN ：護城河→12萬 → P1→1/3 L → 0050/00733 1:1 天平校準 → 餘額 80/20
-         🟡 YELLOW：護城河→12萬 → P1→1/3 L → 餘額 80/20
+         🟢 GREEN ：護城河→12萬 → P1→1/3 L → 0050/00733 1:1 天平校準 → 餘額 §9.2 雙引擎
+         🟡 YELLOW：護城河→12萬 → P1→1/3 L → 餘額 §9.2 雙引擎
          🔴 RED（含回復帶）／4.9：護城河→12萬 → 餘額全數「償還質押本金」
 
        凍結語意：🔴／4.9 時美股與加密「同步」凍結，餘額只能還本金。
@@ -586,7 +586,7 @@
        回傳金額皆為「本次要投入的金額」，各桶相加必等於可分配總額（見驗證）。
     =================================================================== */
     const P1_TARGET_RATIO = 1 / 3;        // §5.2 P1 目標唯一為 1/3 L
-    const GROWTH_STOCK_RATIO = 0.8;       // 餘額 80/20
+    const GROWTH_STOCK_RATIO = 0.8;       // §9.2 雙引擎預設值（美股 80／加密 20），只作 decideEngineSplit 的預設傳入
     const GROWTH_CRYPTO_RATIO = 0.2;
     const DELEVERAGE_TARGET_MR = 2.8;     // §4.3 拉回目標 280%
 
@@ -595,7 +595,7 @@
        依據白皮書 v15.1（§5.7 P1 上限再平衡、§6.1.2 增貸目標 MR 380%、§4.3.1 救火執行機制）
 
        Part 1 §5.7 上限再平衡：P1 超過 40% L 時，賣超額 → 買擔保品設質 →
-         增貸到 MR 380% → 補 P1 到 (L+B)/3 → 餘額 80/20
+         增貸到 MR 380% → 補 P1 到 (L+B)/3 → 餘額 §9.2 雙引擎
        Part 2 §4.3.1 救火執行機制：算跌到規則線 260% 時需償還多少本金、正2 觸價、
          以及賣 P1 還款後殘存 P1 是否擊穿死線
 
@@ -725,7 +725,7 @@
       const sellCost = actualSell * sellCostRate;
       const newC = C + actualSell - sellCost;
       const newMR = L > 0 ? (newC / L) * 100 : 0;
-      /* 可新增借款上限：增貸的錢要補 P1 與走 80/20，P1 與 B 帳戶都不計入 C，
+      /* 可新增借款上限：增貸的錢要補 P1 與走 §9.2 雙引擎，P1 與 B 帳戶都不計入 C，
          所以分母是 L + B 而分子只有新 C → B = max(0, 新C ÷ 3.8 − L)。
          不是「全額買擔保品」的 (C − 3.8L) ÷ 2.8 那條。 */
       const borrowCap = Math.max(0, newC / P1_RELEND_TARGET_MR - L);
@@ -734,7 +734,7 @@
       const p1TargetAfter = newL * P1_TARGET_RATIO;
       /* 補 P1 要以「賣完後實際剩下的 P1」為基準，不能假設它剛好停在 L/3 ——
          整張捨去後實際賣出會少於理論可賣額，P1 會停在 L/3 之上，
-         若仍用「新舊目標之差」會高估補 P1、低估走 80/20 的餘額。
+         若仍用「新舊目標之差」會高估補 P1、低估走雙引擎的餘額。
          再夾在可借額度內：這個夾限在 P1 已低於目標（state='none'，Part 1 不顯示但本函式
          仍可被這樣呼叫）時會真的生效 —— 此時缺口 (L+B)/3 − P1 會大於 B，
          額度全部拿去補 P1，沒有餘額走成長。 */
@@ -929,6 +929,27 @@
       return Number.isFinite(m) && m > 0 && m < LIQUIDATION_MR;
     }
 
+    /* v15.3 §9.2 — B 帳戶雙引擎分流（取代固定 80/20），全檔單一來源。
+       美股引擎 = QLD＋TSLA＋SPCX、加密引擎 = BTC＋ETH，現值與成本一律台幣。
+       報酬率 = 現值 ÷ 累計投入成本 − 1；較差者拿大份（預設 80%）、較好者拿小份（20%）。
+       任一引擎成本空白／≤ 0，或兩者報酬率相同 → 預設：美股大份、加密小份。不設上限。
+       回傳 { stock, crypto, mode: 'default'｜'crypto-behind'｜'us-behind', reason, usReturn, cryptoReturn } */
+    function decideEngineSplit(usValue, usCost, cryptoValue, cryptoCost, defaults) {
+      const major = defaults && Number.isFinite(defaults.major) ? defaults.major : GROWTH_STOCK_RATIO;
+      const minor = defaults && Number.isFinite(defaults.minor) ? defaults.minor : GROWTH_CRYPTO_RATIO;
+      const num = (v) => (v === '' || v === null || v === undefined) ? NaN : parseFloat(v);
+      const uc = num(usCost), cc = num(cryptoCost);
+      const base = { stock: major, crypto: minor, mode: 'default', usReturn: null, cryptoReturn: null };
+      if (!(uc > 0) || !(cc > 0)) return { ...base, reason: 'no-cost' };
+      const ur = (parseFloat(usValue) || 0) / uc - 1;
+      const cr = (parseFloat(cryptoValue) || 0) / cc - 1;
+      if (!Number.isFinite(ur) || !Number.isFinite(cr)) return { ...base, reason: 'no-cost' };
+      if (Math.abs(ur - cr) < 1e-12) return { ...base, reason: 'tie', usReturn: ur, cryptoReturn: cr };
+      return cr < ur
+        ? { stock: minor, crypto: major, mode: 'crypto-behind', reason: 'crypto-behind', usReturn: ur, cryptoReturn: cr }
+        : { stock: major, crypto: minor, mode: 'us-behind', reason: 'us-behind', usReturn: ur, cryptoReturn: cr };
+    }
+
     function allocateExternalFunds(amount, ctx) {
       // 🔴（含回復帶，zone 已由 getEffectiveMRZone 疊加）或 4.9 觸發 → 一律走還本金路徑。
       // frozen 是這個判定的唯一真相來源，呼叫端一律讀它，不要在元件裡重算同一條布林式。
@@ -979,10 +1000,11 @@
         }
       }
 
-      // 餘額 80/20
+      // 餘額走 §9.2 雙引擎（ctx.engineSplit；未提供 → 預設 80/20）
       if (left > 0) {
-        out.stock = left * GROWTH_STOCK_RATIO;
-        out.crypto = left * GROWTH_CRYPTO_RATIO;
+        const sp = (ctx && ctx.engineSplit) || decideEngineSplit();
+        out.stock = left * sp.stock;
+        out.crypto = left * sp.crypto;
         out.steps.push('growth');
       }
       return out;
@@ -1704,7 +1726,15 @@
       // 本機輸入值與最新存檔不一致且不自動覆蓋時的提示：{ dateId, mr, record }
       const [formStale, setFormStale] = useState(null);
       const [inputTab, setInputTab] = useState('A');
-      const [formDataB, setFormDataB] = useState({ tsla: '', qld: '', spcx: '', eth: '', btc: '', usdRate: safeGetStorage('fos_usdRate', '32.5') });
+      const [formDataB, setFormDataB] = useState({ tsla: '', qld: '', spcx: '', eth: '', btc: '', usdRate: safeGetStorage('fos_usdRate', '32.5'), usCost: '', cryptoCost: '' });
+      /* §9.2 成本防呆（逐欄）：該欄後端值尚未帶回（缺欄或 null）且使用者沒動過該欄 →
+         存檔時不送該欄（後端保留原值），避免空字串蓋掉試算表 H2／I2。 */
+      const bCostReadyRef = useRef({ usCost: false, cryptoCost: false });
+      const bPayload = () => {
+        const out = { ...formDataB };
+        ['usCost', 'cryptoCost'].forEach(k => { if (!bCostReadyRef.current[k]) delete out[k]; });
+        return out;
+      };
       // §10.6 收斂完成旗標與日期 — 只存本機 localStorage（換裝置會重跳確認提示）
       const [muskConvDone, setMuskConvDone] = useState(() => safeGetStorage(MUSK_CONVERGENCE_DONE_KEY, '') === '1');
       const [muskConvDate, setMuskConvDate] = useState(() => safeGetStorage(MUSK_CONVERGENCE_DATE_KEY, ''));
@@ -2225,7 +2255,14 @@
         try {
           await loadWithReadCache('getHistoryDataB', () => gasAPI('getHistoryDataB'), (res) => {
             if (res.success && res.data && Object.keys(res.data).length > 0) {
-              setFormDataB(p => ({ ...p, tsla: res.data.tsla ?? p.tsla, qld: res.data.qld ?? p.qld, spcx: res.data.spcx ?? p.spcx, eth: res.data.eth ?? p.eth, btc: res.data.btc ?? p.btc }));
+              // 後端（第 116 版起）有回傳成本欄 → 視為已帶回，存檔時才送成本
+              ['usCost', 'cryptoCost'].forEach(k => {
+                if (res.data[k] !== undefined && res.data[k] !== null) bCostReadyRef.current[k] = true;
+              });
+              setFormDataB(p => ({ ...p, tsla: res.data.tsla ?? p.tsla, qld: res.data.qld ?? p.qld, spcx: res.data.spcx ?? p.spcx, eth: res.data.eth ?? p.eth, btc: res.data.btc ?? p.btc,
+                // §9.2 成本：後端為唯一來源（不存 localStorage）；空白回傳空字串
+                usCost: res.data.usCost !== undefined && res.data.usCost !== null ? String(res.data.usCost) : p.usCost,
+                cryptoCost: res.data.cryptoCost !== undefined && res.data.cryptoCost !== null ? String(res.data.cryptoCost) : p.cryptoCost }));
             }
           }, (res) => !!res && !!res.success, cacheStatus.ctl);
         } catch (err) {}
@@ -2248,6 +2285,7 @@
       const handleInputBChange = (e) => {
         setFormDataB(p => ({ ...p, [e.target.name]: e.target.value }));
         if (e.target.name === 'usdRate') safeSetStorage('fos_usdRate', e.target.value);
+        if (e.target.name === 'usCost' || e.target.name === 'cryptoCost') bCostReadyRef.current[e.target.name] = true;
         setAiFields(p => { const n = {...p}; delete n[e.target.name]; return n; });
       };
 
@@ -2358,7 +2396,7 @@
          條件本身只寫在 allocateExternalFunds 的 defensive 那一行，這裡用 amount = 0
          呼叫它、只取 frozen 旗標，避免在第二個地方把同一條件再寫一次。
          （frozen 在 amount <= 0 的 early return 之前就算好，所以傳 0 也拿得到正確值。） */
-      const injectionFrozen = allocateExternalFunds(0, { zone: mrZoneInfo.zone, quickDropActive }).frozen;
+      const injectionFrozen = allocateExternalFunds(0, { zone: mrZoneInfo.zone, quickDropActive }).frozen;   // frozen 與分流比例無關
 
       // 穿透曝險計算 — 提出到 IIFE 外層，讓完整卡片與收合摘要列共用同一組真實計算值
       const pxTsla = parseFloat(formDataB.tsla) || 0;
@@ -2554,8 +2592,19 @@
         setMuskConvUndoArmed(false);
       };
 
+      /* v15.3 §9.2 — 雙引擎分流（單一來源）：美股以 USD 輸入 × 匯率換台幣、加密輸入即台幣 */
+      const bUsdRate = parseFloat(formDataB.usdRate) || 0;
+      const bUsValueTwd = ((parseFloat(formDataB.tsla) || 0) + (parseFloat(formDataB.qld) || 0) + (parseFloat(formDataB.spcx) || 0)) * bUsdRate;
+      const bCryptoValueTwd = (parseFloat(formDataB.eth) || 0) + (parseFloat(formDataB.btc) || 0);
+      const engineSplit = decideEngineSplit(bUsValueTwd, formDataB.usCost, bCryptoValueTwd, formDataB.cryptoCost);
+      const pctOf = (r) => Math.round(r * 100);
+      const engineSplitLabel = engineSplit.mode === 'default'
+        ? t(`美股 ${pctOf(engineSplit.stock)}%／加密 ${pctOf(engineSplit.crypto)}%（預設：成本未填或報酬相同）`, `US ${pctOf(engineSplit.stock)}% / crypto ${pctOf(engineSplit.crypto)}% (default: cost blank or equal returns)`)
+        : engineSplit.mode === 'crypto-behind'
+        ? t(`美股 ${pctOf(engineSplit.stock)}%／加密 ${pctOf(engineSplit.crypto)}%（加密落後）`, `US ${pctOf(engineSplit.stock)}% / crypto ${pctOf(engineSplit.crypto)}% (crypto behind)`)
+        : t(`美股 ${pctOf(engineSplit.stock)}%／加密 ${pctOf(engineSplit.crypto)}%（美股落後）`, `US ${pctOf(engineSplit.stock)}% / crypto ${pctOf(engineSplit.crypto)}% (US behind)`);
       const escapeVal = parseFloat(escapeAmount) || 0;
-      const stockInject = escapeVal * 0.8; const cryptoInject = escapeVal * 0.2;
+      const stockInject = escapeVal * engineSplit.stock;
       const splitResult = fixedRatioSplit(stockInject, injectionFrozen, muskConv.forceQldOnly);
 
       const handleSave = async (e) => {
@@ -2572,7 +2621,7 @@
 
       const handleSaveB = async (e) => {
         e.preventDefault(); if (writeLocked) return; setTerminalMsg('>> SYNCING B ACCOUNT...');
-        try { const res = await gasAPI('saveFOSDataB', formDataB); if (res.success) { fetchHistoryB(); setTerminalMsg('>> DONE.'); } else throw new Error(); }
+        try { const res = await gasAPI('saveFOSDataB', bPayload()); if (res.success) { fetchHistoryB(); setTerminalMsg('>> DONE.'); } else throw new Error(); }
         catch (err) { setTerminalMsg('>> FAILED.'); }
       };
 
@@ -2597,7 +2646,7 @@
         // 已寫入的那一邊直接視為成功，不再呼叫後端
         const [aOk, bOk] = await Promise.all([
           needA ? runSave('saveFOSData', saveAPayload) : Promise.resolve(true),
-          needB ? runSave('saveFOSDataB', formDataB) : Promise.resolve(true)
+          needB ? runSave('saveFOSDataB', bPayload()) : Promise.resolve(true)
         ]);
         if (needA && aOk) { safeRemoveStorage(FORM_EDITED_AT_KEY); setFormStale(null); fetchHistory(); }
         if (needB && bOk) fetchHistoryB();
@@ -2627,7 +2676,7 @@
         catch (err) { setHistory(previousHistory); setTerminalMsg('>> FAILED.'); }
       };
 
-      /* 現金護城河 CASH MOAT — 計算（純新增，不引用/不影響 MR、C、B帳戶市值、80/20分流、ASSET曲線）
+      /* 現金護城河 CASH MOAT — 計算（純新增，不引用/不影響 MR、C、B帳戶市值、雙引擎分流、ASSET曲線）
          v14.0 階段一：拿掉MONTHLY_DEBT×MONTHS公式與EXPOSED/BUILDING/FORTIFIED燈號，改成Boss手動
          填「目標水位」(targetAmount)，並新增自動計算的「佔總資產%」(讀ASSET分頁totalAssetsFromAsset，
          null/0時代表ASSET分頁尚未同步，佔比顯示為null，UI端降級成「—」，不算NaN)。 */
@@ -2741,10 +2790,10 @@
         price675: p1CalcInputs.price00675L, price631: p1CalcInputs.price00631L,
         sellCostRate: p1SellCostRate, microFloor: p1CalcInputs.microFloor
       });
-      /* 增貸後的 80/20：美股必須走既有的 fixedRatioSplit（吃 injectionFrozen 與 §10.6 收斂），
+      /* 增貸後的 §9.2 雙引擎分流：美股必須走既有的 fixedRatioSplit（吃 injectionFrozen 與 §10.6 收斂），
          加密標的沿用既有三態結果 consensusTarget，不另寫一套判定 */
-      const p1GrowthStock = p1Rebalance.growthRemainder * GROWTH_STOCK_RATIO;
-      const p1GrowthCrypto = p1Rebalance.growthRemainder * GROWTH_CRYPTO_RATIO;
+      const p1GrowthStock = p1Rebalance.growthRemainder * engineSplit.stock;
+      const p1GrowthCrypto = p1Rebalance.growthRemainder * engineSplit.crypto;
       const p1GrowthSplit = fixedRatioSplit(p1GrowthStock, injectionFrozen, muskConv.forceQldOnly);
 
       const p1Rescue = calcRescueBudget({
@@ -2977,7 +3026,7 @@
                       <div className="text-lg font-black font-mono text-amber-600 dark:text-amber-400">{formatNumber(Math.round(p1Rebalance.p1TopUp))}</div>
                     </div>
                     <div className="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
-                      <div className="text-xs font-bold text-slate-400">{t(`美股 ${(GROWTH_STOCK_RATIO * 100).toFixed(0)}%`, `US equity ${(GROWTH_STOCK_RATIO * 100).toFixed(0)}%`)}</div>
+                      <div className="text-xs font-bold text-slate-400">{t(`美股 ${pctOf(engineSplit.stock)}%`, `US equity ${pctOf(engineSplit.stock)}%`)}</div>
                       <div className="text-lg font-black font-mono text-sky-600 dark:text-sky-400">{formatNumber(Math.round(p1GrowthStock))}</div>
                       {p1GrowthSplit.frozen ? (
                         <div className="text-xs font-bold text-rose-500 mt-0.5">❄️ {t('🔴／4.9 凍結中', 'Frozen (RED / §4.9)')}</div>
@@ -2989,7 +3038,7 @@
                       )}
                     </div>
                     <div className="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
-                      <div className="text-xs font-bold text-slate-400">{t(`加密 ${(GROWTH_CRYPTO_RATIO * 100).toFixed(0)}% → ${consensusTarget}`, `Crypto ${(GROWTH_CRYPTO_RATIO * 100).toFixed(0)}% -> ${consensusTarget}`)}</div>
+                      <div className="text-xs font-bold text-slate-400">{t(`加密 ${pctOf(engineSplit.crypto)}% → ${consensusTarget}`, `Crypto ${pctOf(engineSplit.crypto)}% -> ${consensusTarget}`)}</div>
                       <div className="text-lg font-black font-mono text-violet-600 dark:text-violet-400">{formatNumber(Math.round(p1GrowthCrypto))}</div>
                       <div className="text-xs font-bold text-slate-400 mt-0.5">{t('依加密三態', 'Per the crypto 3-state rule')}</div>
                     </div>
@@ -3005,7 +3054,7 @@
                   <div>② {t('買入擔保品（須等交割）', 'Buy collateral (wait for settlement)')}</div>
                   <div>③ {t('設質（生效後才有新額度）', 'Pledge it (the new credit line appears only once it takes effect)')}</div>
                   <div>④ {t('增貸', 'Draw the new loan')}</div>
-                  <div>⑤ {t('補 P1 ＋ 餘額 80/20', 'Top up P1 + remainder 80/20')}</div>
+                  <div>⑤ {t(`補 P1 ＋ 餘額 ${engineSplitLabel}`, `Top up P1 + remainder ${engineSplitLabel}`)}</div>
                 </div>
               </div>
 
@@ -3477,8 +3526,8 @@
 
       const handleCopyReport = () => {
         const report = t(
-          `【A】\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)}（0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}） | P1: ${p1Ratio}%\n【美股固定比例分流 v12.4】\nTSLA ${(effectiveUsRatio.TSLA * 100).toFixed(0)}% | SPCX ${(effectiveUsRatio.SPCX * 100).toFixed(0)}% | QLD ${(effectiveUsRatio.QLD * 100).toFixed(0)}%${muskConv.forceQldOnly ? ' (§10.6 收斂中：全額 QLD)' : ''}\n燈號: ${mrZoneInfo.label} ${splitResult.frozen ? (quickDropActive ? '→ 注資凍結（§4.9 快速下降）' : '→ 注資凍結（🔴 含回復帶）') : '→ 放行'}\n【加密三態】\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n【現金護城河】CASH: ${formatNumber(cmCash)} | TARGET: ${formatNumber(cmTarget)} | 佔總資產: ${cmTargetPctOfAssets != null ? cmTargetPctOfAssets.toFixed(2) + '%' : '—'} | 狀態: ${cmTier === 'danger' ? '未達標' : '已達標'}`,
-          `[A]\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} (0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}) | P1: ${p1Ratio}%\n[US EQUITY SPLIT v12.4]\nTSLA ${(effectiveUsRatio.TSLA * 100).toFixed(0)}% | SPCX ${(effectiveUsRatio.SPCX * 100).toFixed(0)}% | QLD ${(effectiveUsRatio.QLD * 100).toFixed(0)}%${muskConv.forceQldOnly ? ' (§10.6 converging: QLD only)' : ''}\nSignal: ${mrZoneInfo.label} ${splitResult.frozen ? (quickDropActive ? '→ INJECTION FROZEN (§4.9 QUICK DROP)' : '→ INJECTION FROZEN (RED incl. recovery band)') : '→ RELEASED'}\n[CRYPTO 3-STATE]\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n[CASH MOAT] CASH: ${formatNumber(cmCash)} | TARGET: ${formatNumber(cmTarget)} | % of assets: ${cmTargetPctOfAssets != null ? cmTargetPctOfAssets.toFixed(2) + '%' : '—'} | Status: ${cmTier === 'danger' ? 'BELOW TARGET' : 'ON TARGET'}`
+          `【A】\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)}（0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}） | P1: ${p1Ratio}%\n【美股固定比例分流 v12.4】\nTSLA ${(effectiveUsRatio.TSLA * 100).toFixed(0)}% | SPCX ${(effectiveUsRatio.SPCX * 100).toFixed(0)}% | QLD ${(effectiveUsRatio.QLD * 100).toFixed(0)}%${muskConv.forceQldOnly ? ' (§10.6 收斂中：全額 QLD)' : ''}\n燈號: ${mrZoneInfo.label} ${splitResult.frozen ? (quickDropActive ? '→ 注資凍結（§4.9 快速下降）' : '→ 注資凍結（🔴 含回復帶）') : '→ 放行'}\n【B 雙引擎 §9.2】${engineSplitLabel}\n【加密三態】\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n【現金護城河】CASH: ${formatNumber(cmCash)} | TARGET: ${formatNumber(cmTarget)} | 佔總資產: ${cmTargetPctOfAssets != null ? cmTargetPctOfAssets.toFixed(2) + '%' : '—'} | 狀態: ${cmTier === 'danger' ? '未達標' : '已達標'}`,
+          `[A]\nMR: ${nominalMR}% (${mrZoneInfo.label}) | L: ${formatNumber(L)} | C: ${formatNumber(C)} (0050: ${formatNumber(c0050)} / 00733: ${formatNumber(c00733)}) | P1: ${p1Ratio}%\n[US EQUITY SPLIT v12.4]\nTSLA ${(effectiveUsRatio.TSLA * 100).toFixed(0)}% | SPCX ${(effectiveUsRatio.SPCX * 100).toFixed(0)}% | QLD ${(effectiveUsRatio.QLD * 100).toFixed(0)}%${muskConv.forceQldOnly ? ' (§10.6 converging: QLD only)' : ''}\nSignal: ${mrZoneInfo.label} ${splitResult.frozen ? (quickDropActive ? '→ INJECTION FROZEN (§4.9 QUICK DROP)' : '→ INJECTION FROZEN (RED incl. recovery band)') : '→ RELEASED'}\n[B TWO-ENGINE §9.2] ${engineSplitLabel}\n[CRYPTO 3-STATE]\nETH/BTC: ${ethBtcRatio} → ${consensusTarget}\n[CASH MOAT] CASH: ${formatNumber(cmCash)} | TARGET: ${formatNumber(cmTarget)} | % of assets: ${cmTargetPctOfAssets != null ? cmTargetPctOfAssets.toFixed(2) + '%' : '—'} | Status: ${cmTier === 'danger' ? 'BELOW TARGET' : 'ON TARGET'}`
         );
         navigator.clipboard.writeText(report).then(() => setTerminalMsg('>> REPORT COPIED.')).catch(() => setTerminalMsg('>> COPY FAILED.'));
       };
@@ -3490,10 +3539,10 @@
       /* v15.0 §6.3.1 — 改用與「資金分配指令」卡共用的 allocateExternalFunds。
          舊版三段式（護城河→P1 30%→80/20，且凍結時把餘額全灌進加密）已整段汰除；
          v13.1 時代「兩張卡刻意不共用門檻」的設計決定也隨之作廢。
-         stockInject/cryptoInject/splitResult 這組舊變數仍原樣保留給「美股固定比例分流引擎」
-         卡片與複製報告文字使用，維持固定 80/20，不受本次改動影響。 */
+         stockInject/splitResult 保留給「美股固定比例分流引擎」卡片與複製報告文字使用，
+         比例改由 §9.2 engineSplit 決定（v15.3，取代固定 80/20）。 */
       const fiatAlloc = allocateExternalFunds(escapeVal, {
-        zone: mrZoneInfo.zone, quickDropActive, cmTarget, cmCash, L, P1, c0050, c00733
+        zone: mrZoneInfo.zone, quickDropActive, cmTarget, cmCash, L, P1, c0050, c00733, engineSplit
       });
       const fiatCashAlloc = fiatAlloc.cash;
       const fiatP1Alloc = fiatAlloc.p1;
@@ -3568,14 +3617,14 @@
           if (only === 'cash') return t('現金護城河未達標，優先補滿', 'Cash moat below target — filling it first');
           if (only === 'p1') return t('護城河已足，補 P1 至 1/3 L', 'Moat sufficient — topping up P1 to 1/3 L');
           if (only === 'balance') return t('P1 已達標，校準 0050／00733 至 1:1', 'P1 on target — rebalancing 0050/00733 to 1:1');
-          if (only === 'growth') return t('防禦到位，進成長部位 80/20', 'Defenses in place — entering 80/20 growth');
+          if (only === 'growth') return t(`防禦到位，進成長部位：${engineSplitLabel}`, `Defenses in place — entering growth: ${engineSplitLabel}`);
           if (only === 'repay') return t('🔴／4.9 凍結注資，全數償還質押本金', 'RED/4.9 frozen — all funds repay pledged principal');
         }
         const label = {
           cash: t(`護城河 ${formatNumber(fiatCashAlloc)}`, `moat ${formatNumber(fiatCashAlloc)}`),
           p1: t(`補 P1 至 1/3 L ${formatNumber(fiatP1Alloc)}`, `P1 to 1/3 L ${formatNumber(fiatP1Alloc)}`),
           balance: t(`天平校準買 ${fiatAlloc.balanceTarget} ${formatNumber(fiatBalanceAlloc)}`, `rebalance into ${fiatAlloc.balanceTarget} ${formatNumber(fiatBalanceAlloc)}`),
-          growth: t('餘額 80/20', 'remainder 80/20'),
+          growth: t(`餘額 ${engineSplitLabel}`, `remainder ${engineSplitLabel}`),
           repay: t(`償還質押本金 ${formatNumber(fiatRepayAlloc)}`, `repay principal ${formatNumber(fiatRepayAlloc)}`)
         };
         return steps.map(k => label[k]).join(' → ');
@@ -3704,6 +3753,7 @@
                           </div>
                           <div className="bg-white dark:bg-slate-800 p-4 text-center rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm scale-card cursor-default">
                             <div className="text-sm font-bold mb-1 text-slate-400 uppercase">{t('美股引擎', 'US EQUITY')}</div>
+                            <div data-testid="fiat-engine-label" className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 normal-case">{engineSplitLabel}</div>
                             <div className="text-2xl font-black text-sky-500 dark:text-sky-400 font-mono data-text">{formatNumber(fiatStockAlloc)}</div>
                             <div className="text-xs text-slate-400 mt-0.5">{(fiatStockAlloc / escapeVal * 100).toFixed(0)}%</div>
                           </div>
@@ -4041,6 +4091,21 @@
                           <input type="number" inputMode="decimal" name="crypto" value={cryptoDisplayValue} onChange={handleCryptoChange} onKeyDown={handleEnterJump(bInputRefs, 4)} ref={el => bInputRefs.current[4] = el} className={`w-full tech-input text-lg py-2 font-mono ${(aiFields.eth || aiFields.btc) ? 'ring-2 ring-violet-400 ring-offset-1 dark:ring-offset-slate-900' : 'focus:border-amber-400'}`} placeholder="0" />
                           {(aiFields.eth || aiFields.btc) && <span className="absolute top-0 right-1 text-sm font-black text-violet-500 bg-violet-100 dark:bg-violet-900/50 px-1.5 py-0.5 rounded-bl-lg rounded-tr-xl">AI</span>}
                         </div>
+                      </div>
+
+                      {/* v15.3 §9.2 雙引擎成本（台幣）：存 B 帳戶時一併送出，後端 H2／I2 為唯一來源 */}
+                      <div data-testid="engine-cost-inputs" className="space-y-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          {[{ name: 'usCost', label: t('美股累計投入成本（台幣）', 'US equity cumulative cost (NT$)') },
+                            { name: 'cryptoCost', label: t('加密累計投入成本（台幣）', 'Crypto cumulative cost (NT$)') }].map(f => (
+                            <div key={f.name}>
+                              <label className="block text-sm font-bold mb-1 text-slate-500 dark:text-slate-400">{f.label}</label>
+                              <input type="number" inputMode="decimal" name={f.name} value={formDataB[f.name]} onChange={handleInputBChange} className="w-full tech-input text-lg py-2 font-mono" placeholder={t('留空＝無成本', 'blank = no cost')} />
+                            </div>
+                          ))}
+                        </div>
+                        <div className="text-xs font-bold text-slate-400">{t('每次投入新資金時累加，平常不用改', 'Add to it each time you put in new money; otherwise leave it alone')}</div>
+                        <div data-testid="engine-split-label" className="text-sm font-black text-emerald-600 dark:text-emerald-400">{t('本期雙引擎：', 'This period: ')}{engineSplitLabel}</div>
                       </div>
                     </div>
                   )}
@@ -4754,7 +4819,7 @@ Ask this box before you withdraw.`
                     <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-800 text-sm text-emerald-700 dark:text-emerald-400 space-y-1 font-bold">
                       <div>✅ {t('目標水位已達成', 'Target reached')}</div>
                       <div>{t('超額現金', 'Surplus cash')}: ${formatNumber(cmSurplus)}</div>
-                      <div className="font-normal">{t('超額部分可走 80/20 分流。', 'Only the surplus may go through the 80/20 split.')}</div>
+                      <div className="font-normal">{t('超額部分可走 §9.2 雙引擎分流。', 'Only the surplus may go through the §9.2 two-engine split.')}</div>
                     </div>
                   ) : (
                     <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-300 dark:border-rose-800 text-sm text-rose-700 dark:text-rose-400 whitespace-pre-line font-bold">
@@ -4836,14 +4901,14 @@ Build the wall first. Attack second.`)}
               const allocP1Target = L * P1_TARGET_RATIO;
               // 用一筆「代表性金額」問共用函式：下一塊錢會流向哪裡，就是當前指令
               const allocProbe = allocateExternalFunds(1, {
-                zone: mrZoneInfo.zone, quickDropActive, cmTarget, cmCash, L, P1, c0050, c00733
+                zone: mrZoneInfo.zone, quickDropActive, cmTarget, cmCash, L, P1, c0050, c00733, engineSplit
               });
               const allocNextStep = allocProbe.steps[0] || 'growth';
               const allocLabel = {
                 cash: t('100% 補現金護城河', '100% TO CASH MOAT'),
                 p1: t('100% 買 P1', '100% BUY P1'),
                 balance: t(`1:1 天平校準・買 ${allocProbe.balanceTarget}`, `1:1 REBALANCE · ${allocProbe.balanceTarget}`),
-                growth: t('80/20 成長部位', '80/20 GROWTH'),
+                growth: t(`成長部位｜${engineSplitLabel}`, `GROWTH | ${engineSplitLabel}`),
                 repay: t('100% 償還質押本金', '100% REPAY PRINCIPAL')
               }[allocNextStep];
               const allocBorderClass = { cash: 'border-amber-500', p1: 'border-sky-500', balance: 'border-teal-500', growth: 'border-emerald-500', repay: 'border-rose-500' }[allocNextStep];
@@ -4875,7 +4940,7 @@ Build the wall first. Attack second.`)}
                             <div>{t('\u2460 \u73fe\u91d1\u8b77\u57ce\u6cb3\u88dc\u81f3 120,000\uff08\u6240\u6709\u71c8\u865f\u7b2c\u4e00\u9806\u4f4d\uff09', '\u2460 Fill cash moat to 120,000 (first priority in all zones)')}</div>
                             <div>{t('\u2461 P1 \u88dc\u81f3 1/3 L', '\u2461 Top up P1 to 1/3 L')}</div>
                             <div>{t('\u2462 \U0001f7e2 \u5c08\u5c6c\uff1a0050／00733 1:1 \u5929\u5e73\u6821\u6e96\uff08\u8cb7\u843d\u5f8c\u7684\uff0c\u9808\u4ea4\u5272\u5f8c\u8a2d\u8cea\uff09', '\u2462 \U0001f7e2 only: rebalance 0050/00733 to 1:1 (buy the laggard; must pledge after settlement)')}</div>
-                            <div>{t('\u2463 \u9918\u984d 80/20\uff08\u7f8e\u80a1／\u52a0\u5bc6\uff09', '\u2463 Remainder 80/20 (US equity / crypto)')}</div>
+                            <div>{t(`④ 餘額 ${engineSplitLabel}`, `④ Remainder ${engineSplitLabel}`)}</div>
                             <div className="text-rose-500">{t('\U0001f534\uff08\u542b\u56de\u5fa9\u5e36\uff09／4.9\uff1a\u8b77\u57ce\u6cb3\u5f8c\u9918\u984d\u5168\u6578\u511f\u9084\u8cea\u62bc\u672c\u91d1\uff0c\u7f8e\u80a1\u8207\u52a0\u5bc6\u540c\u6b65\u51cd\u7d50', '\U0001f534 (incl. recovery band) / 4.9: after the moat, all remaining funds repay pledged principal; US equities and crypto frozen together')}</div>
                           </div>
                           <div className="text-sm opacity-70">{t('註：本指令只管新資金往哪去，不改變 P1 的 1/3 目標水位、7.14% 死線、350/260 燈號等既有條文', 'Note: this only governs where new money goes — it does not change the 1/3 P1 target, the 7.14% death line, or the 350/260 signal rules')}</div>

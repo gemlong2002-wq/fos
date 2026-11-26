@@ -93,6 +93,7 @@ async function runInjectScenario(aBehavior, bBehavior, initialDone) {
     const { gasAPI, setTerminalMsg, setInjectDone, fetchHistory, fetchHistoryB, onInjectPrefill,
             setIsInjecting, writeLocked, isInjecting, L, c0050, c00733, P1, currentBtc, currentEth,
             nominalMR, p1Ratio, ethBtcRatio, formData, formDataB, FORM_EDITED_AT_KEY, setFormStale } = this;
+    const bPayload = () => formDataB;
     const injectDone = this.injectDone;
     ${injectSrc}
     await handleInjectAll();
